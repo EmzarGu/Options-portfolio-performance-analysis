@@ -895,7 +895,7 @@ def main():
         st.caption("Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally.")
 
     # cache_bust is a static knob to force rerun after logic changes
-    state = build_pipeline(as_of_input, include_unrealized, cache_bust=2)
+    state = build_pipeline(as_of_input, include_unrealized, cache_bust=3)
     yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
     monthly_cycles = state["monthly_cycles"]
 
@@ -1039,6 +1039,7 @@ def main():
         st.markdown("##### Data / connectivity issues")
         if not price_errors and not issues:
             st.success("No issues detected.")
+        st.write(f"Build version: {APP_BUILD_VERSION}")
         if issues:
             st.write("General issues:")
             st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
