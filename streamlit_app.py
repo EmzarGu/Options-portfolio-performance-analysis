@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # py3.9/3.10
 import numpy as np
 import pandas as pd
 import streamlit as st
+import altair as alt
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
@@ -467,17 +468,33 @@ def _cycle_end(dt_val):
     return exp
 
 
-def build_monthly_cycles(df_opts: pd.DataFrame, realized_sales: List[RealizedSale], capital_daily: pd.DataFrame, dividends_df: pd.DataFrame):
+def build_monthly_cycles(
+    df_opts: pd.DataFrame,
+    realized_sales: List[RealizedSale],
+    capital_daily: pd.DataFrame,
+    dividends_df: pd.DataFrame,
+    as_of: pd.Timestamp,
+):
     def cyc(d):
         return _cycle_end(d)
 
-    opts_cycle = df_opts.groupby(df_opts["trans_date"].apply(cyc))["total_pnl"].sum().rename("options_pnl_m")
+    opts = df_opts[df_opts["trans_date"] <= as_of]
+    opts_cycle = opts.groupby(opts["trans_date"].apply(cyc))["total_pnl"].sum().rename("options_pnl_m")
     if realized_sales:
-        rs_df = pd.DataFrame({"date": [r.date for r in realized_sales], "pnl": [r.pnl for r in realized_sales]})
+        rs_df = pd.DataFrame(
+            {
+                "date": [r.date for r in realized_sales if pd.Timestamp(r.date) <= as_of],
+                "pnl": [r.pnl for r in realized_sales if pd.Timestamp(r.date) <= as_of],
+            }
+        )
         stock_cycle = rs_df.groupby(rs_df["date"].apply(cyc))["pnl"].sum().rename("stock_realized_pnl_m")
     else:
         stock_cycle = pd.Series(dtype=float, name="stock_realized_pnl_m")
-    div_cycle = dividends_df.groupby(dividends_df["ex_date"].apply(cyc))["cash"].sum().rename("dividends_m") if not dividends_df.empty else pd.Series(dtype=float, name="dividends_m")
+    div_cycle = pd.Series(dtype=float, name="dividends_m")
+    if not dividends_df.empty:
+        div_filtered = dividends_df[dividends_df["ex_date"] <= as_of].copy()
+        if not div_filtered.empty:
+            div_cycle = div_filtered.groupby(div_filtered["ex_date"].apply(cyc))["cash"].sum().rename("dividends_m")
     combined = pd.concat([opts_cycle, stock_cycle, div_cycle], axis=1).fillna(0.0)
     combined["combined_realized_m"] = combined["options_pnl_m"] + combined["stock_realized_pnl_m"]
     combined["combined_realized_m_w_div"] = combined["combined_realized_m"] + combined["dividends_m"]
@@ -487,7 +504,7 @@ def build_monthly_cycles(df_opts: pd.DataFrame, realized_sales: List[RealizedSal
     combined = combined.join(avg_cap, how="left").fillna(0.0)
     combined["return_m"] = np.where(combined["avg_capital_m"] > 0, combined["combined_realized_m"] / combined["avg_capital_m"], np.nan)
     combined["return_m_w_div"] = np.where(combined["avg_capital_m"] > 0, combined["combined_realized_m_w_div"] / combined["avg_capital_m"], np.nan)
-    return combined.sort_index()
+    return combined[combined.index <= as_of].sort_index()
 
 
 def twr_annualized_by_year(ret_series):
@@ -495,6 +512,107 @@ def twr_annualized_by_year(ret_series):
         return pd.Series(dtype=float)
     grouped = ret_series.groupby(ret_series.index.year)
     return grouped.apply(lambda r: (1 + r).prod() ** (12 / len(r)) - 1)
+
+
+def expectancies(df_opts: pd.DataFrame, stock_txns: List[StockTxn], monthly_cycles: pd.DataFrame):
+    rows = []
+    def add_row(name, pnls):
+        if len(pnls) == 0:
+            return
+        pnls = np.array([p for p in pnls if pd.notna(p)], dtype=float)
+        wins = pnls[pnls > 0]
+        losses = pnls[pnls < 0]
+        win_rate = (pnls > 0).mean() if len(pnls) else np.nan
+        avg_win = wins.mean() if len(wins) else 0.0
+        avg_loss = losses.mean() if len(losses) else 0.0
+        expectancy = win_rate * avg_win + (1 - win_rate) * avg_loss
+        rows.append(
+            {
+                "Category": name,
+                "Count": len(pnls),
+                "Win rate": win_rate,
+                "Avg win": avg_win,
+                "Avg loss": avg_loss,
+                "Expectancy": expectancy,
+                "Total P&L": pnls.sum(),
+            }
+        )
+
+    add_row("Options Trades", df_opts["total_pnl"].tolist())
+    if stock_txns:
+        stock_pnls = [r.pnl for r in compute_stock_realized_and_inventory(stock_txns)[0]]
+        add_row("Stock Trades", stock_pnls)
+    if not monthly_cycles.empty and "combined_realized_m_w_div" in monthly_cycles:
+        add_row("Monthly Cycles", monthly_cycles["combined_realized_m_w_div"].tolist())
+
+    return pd.DataFrame(rows)
+
+
+def calculate_performance_metrics(ret_series: pd.Series, rf: float = 0.04):
+    if ret_series.empty:
+        return {}
+    m = len(ret_series)
+    ec = (1 + ret_series).cumprod()
+    cagr = ec.iloc[-1] ** (12 / m) - 1 if m > 0 else 0.0
+    ann_vol = ret_series.std() * np.sqrt(12)
+    rf_m = (1 + rf) ** (1 / 12) - 1
+    excess = ret_series - rf_m
+    sharpe = (excess.mean() / ret_series.std()) * np.sqrt(12) if ret_series.std() != 0 else np.nan
+    down_std = np.sqrt((excess[excess < 0] ** 2).sum() / m) if m > 0 else 0
+    sortino = (excess.mean() / down_std) * np.sqrt(12) if down_std != 0 else np.nan
+    # prepend baseline equity of 1.0 so an initial negative month counts as a drawdown
+    ec_dd = pd.concat([pd.Series([1.0]), ec.reset_index(drop=True)], ignore_index=True)
+    max_dd = (ec_dd / ec_dd.cummax() - 1).min()
+    return {"CAGR": cagr, "Volatility": ann_vol, "Sharpe": sharpe, "Sortino": sortino, "Max Drawdown": max_dd}
+
+
+def align_benchmarks_monthly(tickers: Dict[str, str], idx: pd.DatetimeIndex):
+    """Return dict name->Series of monthly returns aligned to given month-end index."""
+    if yf is None or len(idx) == 0:
+        return {}
+    start = idx.min() - pd.DateOffset(months=2)
+    end = idx.max() + pd.DateOffset(days=1)
+    all_tickers_list = list(tickers.values())
+    try:
+        px_data = yf.download(all_tickers_list, start=start, end=end, progress=False, auto_adjust=True)
+        if px_data.empty:
+            return {}
+        px_data = px_data["Close"] if "Close" in px_data.columns else px_data
+    except Exception:
+        return {}
+    aligned = {}
+    for name, ticker in tickers.items():
+        try:
+            px = px_data[ticker] if len(all_tickers_list) > 1 else px_data
+            px = px.dropna()
+            if px.empty:
+                continue
+            # resample to month-end to match strategy returns
+            monthly_px = px.resample("M").last()
+            monthly_ret = monthly_px.pct_change().dropna()
+            monthly_ret = monthly_ret.reindex(idx, method="ffill")
+            aligned[name] = monthly_ret
+        except Exception:
+            continue
+    return aligned
+
+
+def period_returns(ret_series: pd.Series):
+    out = {}
+    if ret_series.empty or not hasattr(ret_series.index, "year"):
+        return out
+    srt = ret_series.sort_index()
+    def trailing_n(n):
+        sub = srt.tail(n)
+        return (1 + sub).prod() - 1 if len(sub) else np.nan
+    out["Return 3M"] = trailing_n(3)
+    out["Return 6M"] = trailing_n(6)
+    out["Return 1Y"] = trailing_n(12)
+    latest_year = srt.index.max().year
+    ytd = srt[srt.index.year == latest_year]
+    out["Return YTD"] = (1 + ytd).prod() - 1 if not ytd.empty else np.nan
+    out["Return SI"] = (1 + srt).prod() - 1 if len(srt) else np.nan
+    return out
 
 
 def options_pnl_by_year(df: pd.DataFrame) -> pd.DataFrame:
@@ -548,12 +666,18 @@ def combine_yearly(options_df, realized_df, capital_df, as_of, capital_daily):
     return out
 
 
-def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale]) -> pd.DataFrame:
-    o = df_opts.copy()
+def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale], as_of: pd.Timestamp) -> pd.DataFrame:
+    o = df_opts[df_opts["trans_date"] <= as_of].copy()
     o["year"] = o["trans_date"].dt.year
     o_t = o.groupby(["year", "ticker"])["total_pnl"].sum().rename("options_pnl").reset_index()
     if realized_sales:
-        s = pd.DataFrame([{"date": r.date, "ticker": r.ticker, "pnl": r.pnl} for r in realized_sales])
+        s = pd.DataFrame(
+            [
+                {"date": r.date, "ticker": r.ticker, "pnl": r.pnl}
+                for r in realized_sales
+                if pd.Timestamp(r.date) <= as_of
+            ]
+        )
         s["year"] = s["date"].dt.year
         s_t = s.groupby(["year", "ticker"])["pnl"].sum().rename("stock_realized_pnl").reset_index()
     else:
@@ -563,7 +687,7 @@ def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale])
     return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
-APP_BUILD_VERSION = "2025-11-30T18:55:00Z"
+APP_BUILD_VERSION = "2025-11-30T22:18:00Z"
 
 
 def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
@@ -714,7 +838,7 @@ def calculate_advanced_unrealized_pnl(ending_inventory, open_options, live_stock
     return pd.DataFrame(unrealized_rows).groupby("ticker")["unrealized_pnl"].sum()
 
 
-def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None):
+def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, hide_index=False):
     df = df.copy()
     formatter = {}
     if currency_cols:
@@ -722,8 +846,14 @@ def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=Non
     if pct_cols:
         formatter.update({c: "{:.1%}".format for c in pct_cols if c in df.columns})
     if int_cols:
-        formatter.update({c: "{:,.0f}".format for c in int_cols if c in df.columns})
-    return df.style.format(formatter).set_properties(**{"text-align": "right"})
+        formatter.update({c: "{:.0f}".format for c in int_cols if c in df.columns})
+    styler = df.style.format(formatter).set_properties(**{"text-align": "right"})
+    if hide_index:
+        try:
+            styler = styler.hide(axis="index")
+        except Exception:
+            styler = styler.hide_index()
+    return styler
 
 
 def metric_card(label, value, delta=None):
@@ -744,12 +874,13 @@ def metric_card(label, value, delta=None):
     )
 
 
-@st.cache_data(show_spinner=True)
 def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, SHEETS)
     as_of_ts = pd.Timestamp(as_of)
     issues: List[str] = []
     price_errors: List[str] = []
+
+    df_opts = df_opts[df_opts["trans_date"] <= as_of_ts].copy()
 
     lots = build_short_lots_from_rows(df_opts)
     apply_buy_to_close_closeouts(lots, df_opts)
@@ -790,8 +921,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         except Exception:
             div_df = pd.DataFrame()
 
-    monthly_cycles = build_monthly_cycles(df_opts, realized_sales, capital_daily, div_df)
-    final_monthly_returns_w_div = monthly_cycles["return_m_w_div"].dropna()
+    monthly_cycles = build_monthly_cycles(df_opts, realized_sales, capital_daily, div_df, as_of_ts)
+    final_monthly_returns_w_div = monthly_cycles.loc[monthly_cycles.index <= as_of_ts, "return_m_w_div"].dropna()
     open_options_df = find_open_options(df_opts, as_of_ts)
 
     tickers_to_price = sorted({lot.ticker for lot in ending_inventory})
@@ -806,35 +937,29 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         "options_fetched": opt_summary.get("fetched", 0),
     }
 
-    # If any price errors or missing coverage, do not trust unrealized; zero it and log.
-    unrealized_blocked = bool(price_errors)
-    coverage_incomplete = (
-        price_summary["stocks_fetched"] < price_summary["stocks_requested"]
-        or price_summary["options_fetched"] < price_summary["options_requested"]
-    )
-    if coverage_incomplete:
-        unrealized_blocked = True
-    inv_df = pd.DataFrame()
-    advanced_unreal = pd.Series(dtype=float)
-    total_unreal = 0.0
-    if not unrealized_blocked:
-        inv_df, total_unreal = unrealized_as_of(ending_inventory, live_prices)
-        advanced_unreal = calculate_advanced_unrealized_pnl(ending_inventory, open_options_df, live_prices, live_option_prices)
-        # If we still ended up with no unrealized but had positions, treat as blocked
-        if (ending_inventory and inv_df.empty) or (not open_options_df.empty and advanced_unreal.empty):
-            unrealized_blocked = True
-            total_unreal = 0.0
-            advanced_unreal = pd.Series(dtype=float)
+    # Unrealized: use live prices for stocks and options; if missing, still compute with what we have and log coverage gaps.
+    inv_df, stock_unreal = unrealized_as_of(ending_inventory, live_prices)
+    advanced_unreal = calculate_advanced_unrealized_pnl(ending_inventory, open_options_df, live_prices, live_option_prices)
+    total_unreal = float(advanced_unreal.sum()) if not advanced_unreal.empty else 0.0
 
-    if unrealized_blocked:
-        issues.append("Live prices unavailable or incomplete; unrealized P&L suppressed. See Logs tab.")
+    coverage_gaps = []
+    if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
+        coverage_gaps.append(f"Stocks priced: {price_summary['stocks_fetched']}/{price_summary['stocks_requested']}")
+    if price_summary["options_fetched"] < price_summary["options_requested"]:
+        coverage_gaps.append(f"Options priced: {price_summary['options_fetched']}/{price_summary['options_requested']}")
+    if coverage_gaps:
+        issues.append("Price coverage incomplete: " + "; ".join(coverage_gaps))
+    if price_errors:
+        issues.extend([f"Price error: {e}" for e in price_errors])
 
     opts_year = options_pnl_by_year(df_opts)
     stock_year = realized_stock_pnl_by_year(realized_sales)
     cap_year = capital_stats_by_year(capital_daily)
     yearly = combine_yearly(opts_year, stock_year, cap_year, as_of_ts, capital_daily)
-    twr_annualized = twr_annualized_by_year(monthly_cycles["return_m"].dropna())
+    twr_annualized = twr_annualized_by_year(final_monthly_returns_w_div.dropna())
     yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
+    year_ret_raw = final_monthly_returns_w_div.groupby(final_monthly_returns_w_div.index.year).apply(lambda r: (1 + r).prod() - 1)
+    yearly = yearly.merge(year_ret_raw.rename("year_return_raw"), left_on="year", right_index=True, how="left")
 
     yearly_with_unreal = yearly.copy()
     yearly_with_unreal["combined_incl_unreal"] = yearly_with_unreal["combined_realized"]
@@ -854,7 +979,44 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
             yearly_with_unreal.loc[mask, "annualized_return_on_avg_incl_unreal"] = yearly_with_unreal.loc[mask, "return_on_avg_incl_unreal"] * factor
             yearly_with_unreal.loc[mask, "annualized_return_on_peak_incl_unreal"] = yearly_with_unreal.loc[mask, "return_on_peak_incl_unreal"] * factor
 
-    per_ticker = per_ticker_yearly(df_opts, realized_sales)
+    per_ticker = per_ticker_yearly(df_opts, realized_sales, as_of_ts)
+    per_ticker_totals = (
+        per_ticker.groupby("ticker")[["options_pnl", "stock_realized_pnl", "combined_realized"]]
+        .sum()
+        .reset_index()
+    )
+    unreal_series = advanced_unreal.reindex(per_ticker_totals["ticker"]).fillna(0.0) if not advanced_unreal.empty else 0.0
+    per_ticker_totals["unrealized_pnl"] = unreal_series.values if hasattr(unreal_series, "values") else unreal_series
+    per_ticker_totals["total_pnl"] = per_ticker_totals["combined_realized"] + per_ticker_totals["unrealized_pnl"]
+
+    # Benchmarks using monthly returns alignment (clip to as_of)
+    benchmark_tickers = {"Cboe BXM": "^BXM", "PUTW ETF": "PUTW", "SCHD ETF": "SCHD"}
+    strat_rets = final_monthly_returns_w_div.copy()
+    if not strat_rets.empty:
+        strat_rets.index = pd.to_datetime(strat_rets.index).to_period("M").to_timestamp("M")
+        strat_rets = strat_rets[strat_rets.index <= as_of_ts.normalize()]
+    aligned_bench_returns = align_benchmarks_monthly(benchmark_tickers, strat_rets.index if not strat_rets.empty else pd.DatetimeIndex([]))
+    benchmark_metrics_rows = []
+    # Limit to last 12 months for risk metrics (Sharpe/Vol/Sortino/DD)
+    strat_for_metrics = strat_rets.tail(12) if not strat_rets.empty else strat_rets
+    strat_full = calculate_performance_metrics(strat_rets)
+    strat_risk = calculate_performance_metrics(strat_for_metrics)
+    strategy_row = {"Series": "My Strategy", **strat_full, **period_returns(strat_rets)}
+    # Override risk fields with last-12m values
+    for key in ["Volatility", "Sharpe", "Sortino", "Max Drawdown"]:
+        if key in strat_risk:
+            strategy_row[key] = strat_risk[key]
+    benchmark_metrics_rows.append(strategy_row)
+    for name, rets in aligned_bench_returns.items():
+        rets_clean = rets.dropna()
+        full = calculate_performance_metrics(rets_clean)
+        risk = calculate_performance_metrics(rets_clean.tail(12))
+        row = {"Series": name, **full, **period_returns(rets_clean)}
+        for key in ["Volatility", "Sharpe", "Sortino", "Max Drawdown"]:
+            if key in risk:
+                row[key] = risk[key]
+        benchmark_metrics_rows.append(row)
+    benchmark_metrics_df = pd.DataFrame(benchmark_metrics_rows)
 
     return {
         "df_opts": df_opts,
@@ -878,8 +1040,14 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         "as_of": as_of_ts,
         "issues": issues,
         "price_errors": price_errors,
-        "unrealized_blocked": unrealized_blocked,
+        "unrealized_blocked": False,
         "price_summary": price_summary,
+        "stock_prices": live_prices,
+        "option_prices": live_option_prices,
+        "advanced_unreal": advanced_unreal,
+        "benchmark_metrics": benchmark_metrics_df,
+        "aligned_bench_returns": aligned_bench_returns,
+        "per_ticker_totals": per_ticker_totals,
     }
 
 
@@ -894,14 +1062,25 @@ def main():
         st.markdown("Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`")
         st.caption("Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally.")
 
-    # cache_bust is a static knob to force rerun after logic changes
-    state = build_pipeline(as_of_input, include_unrealized, cache_bust=3)
+    # cache_bust is kept for API compatibility; build_pipeline no longer cached
+    state = build_pipeline(as_of_input, include_unrealized, cache_bust=4)
     yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
     monthly_cycles = state["monthly_cycles"]
 
-    latest_year = yearly["year"].max()
-    realized_total = yearly["combined_realized"].sum()
-    grand_total = realized_total + state["total_unreal"]
+    as_of_year = state["as_of"].year
+    ytd_row = yearly[yearly["year"] == as_of_year]
+    ytd_row = ytd_row.iloc[0] if not ytd_row.empty else pd.Series(
+        {
+            "combined_realized": 0.0,
+            "combined_incl_unreal": 0.0,
+            "annualized_return_twr": pd.NA,
+        }
+    )
+    realized_total = float(ytd_row.get("combined_realized", 0.0) or 0.0)
+    ytd_total = float(
+        ytd_row.get("combined_incl_unreal" if include_unrealized else "combined_realized", realized_total) or 0.0
+    )
+    ytd_twr = ytd_row.get("annualized_return_twr", pd.NA)
     peak_cap = yearly["peak_capital"].max()
     issues = state.get("issues", [])
     price_errors = state.get("price_errors", [])
@@ -918,106 +1097,317 @@ def main():
             or price_summary.get("options_fetched", 0) < price_summary.get("options_requested", 0)
         )
     ):
-        st.info("Price fetch issues detected. See Logs tab for details.")
+        st.error("Price fetch issues detected. See Logs tab for details.")
 
     with col_main:
         st.markdown("#### Portfolio Snapshot")
         mc1, mc2, mc3, mc4 = st.columns(4)
         with mc1:
-            metric_card("Grand Total P&L", f"${grand_total:,.0f}", delta=None)
+            metric_card("YTD Total P&L", f"${ytd_total:,.0f}", delta=None)
         with mc2:
-            metric_card("Realized P&L (w/ div)", f"${realized_total:,.0f}")
+            metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
         with mc3:
             metric_card("Unrealized P&L", f"${state['total_unreal']:,.0f}")
         with mc4:
-            metric_card("Return on Peak (total)", f"{(grand_total/peak_cap):.1%}" if peak_cap else "n/a")
+            metric_card(
+                "YTD Annualized TWR",
+                f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
+            )
 
     tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_logs = st.tabs(["Yearly", "Monthly cycles", "Per ticker", "Positions", "Logs / data issues"])
 
     with tab_yearly:
-        st.markdown("##### Yearly performance")
-        display_cols = [
+        # Comprehensive Yearly Performance (Realized View)
+        st.markdown("##### Comprehensive Yearly Performance (Realized View)")
+        realized_cols = [
             "year",
             "options_pnl",
             "stock_realized_pnl",
             "avg_capital",
             "peak_capital",
             "combined_realized",
-            "combined_incl_unreal" if include_unrealized else "combined_realized",
+            "days_elapsed",
             "return_on_avg",
+            "return_on_peak",
             "annualized_return_on_avg",
+            "annualized_return_on_peak",
             "annualized_return_twr",
         ]
-        display_cols = [c for c in display_cols if c in yearly.columns]
+        realized_map = {
+            "year": "Year",
+            "options_pnl": "Options P&L",
+            "stock_realized_pnl": "Stock P&L",
+            "avg_capital": "Avg capital",
+            "peak_capital": "Peak capital",
+            "combined_realized": "Realized P&L",
+            "days_elapsed": "Days",
+            "return_on_avg": "RoAC",
+            "return_on_peak": "RoPC",
+            "annualized_return_on_avg": "Ann. RoAC",
+            "annualized_return_on_peak": "Ann. RoPC",
+            "annualized_return_twr": "Ann. TWR",
+        }
+        realized_display = yearly[[c for c in realized_cols if c in yearly.columns]].rename(columns=realized_map)
         st.dataframe(
             _format_df(
-                yearly[display_cols],
-                currency_cols=["options_pnl", "stock_realized_pnl", "avg_capital", "peak_capital", "combined_realized", "combined_incl_unreal"],
-                pct_cols=["return_on_avg", "annualized_return_on_avg", "annualized_return_twr"],
-                int_cols=["year"],
+                realized_display.reset_index(drop=True),
+                currency_cols=["Options P&L", "Stock P&L", "Avg capital", "Peak capital", "Realized P&L"],
+                pct_cols=["RoAC", "RoPC", "Ann. RoAC", "Ann. RoPC", "Ann. TWR"],
+                int_cols=["Year", "Days"],
+                hide_index=True,
             ),
             use_container_width=True,
         )
-        st.markdown("##### Key performance snapshot")
-        snapshot_rows = [
-            ("Cumulative realized P&L (incl. dividends)", realized_total, "currency"),
-            ("Current unrealized P&L (stocks + options)", state["total_unreal"], "currency"),
-            ("Grand total P&L (inception-to-date)", grand_total, "currency"),
-            ("Peak capital deployed", peak_cap, "currency"),
-            ("Return on peak capital (total P&L)", grand_total / peak_cap if peak_cap else np.nan, "percent"),
+
+        # Comprehensive Yearly Performance (MTM view)
+        st.markdown("##### Comprehensive Yearly Performance (MTM view)")
+        mtm_cols = [
+            "year",
+            "combined_realized",
+            "combined_incl_unreal",
+            "return_on_avg",
+            "return_on_peak",
+            "annualized_return_on_avg",
+            "annualized_return_on_peak",
+            "annualized_return_twr",
+            "year_return_raw",
         ]
-        snapshot = pd.DataFrame(
-            {
-                "Metric": [r[0] for r in snapshot_rows],
-                "Value": [r[1] for r in snapshot_rows],
-                "Display": [
-                    f"${r[1]:,.0f}" if r[2] == "currency" and pd.notna(r[1]) else (f"{r[1]:.1%}" if pd.notna(r[1]) else "n/a")
-                    for r in snapshot_rows
-                ],
-            }
-        )
-        snap_view = snapshot[["Metric", "Display"]].rename(columns={"Display": "Value"})
+        mtm_map = {
+            "year": "Year",
+            "combined_realized": "Realized P&L",
+            "combined_incl_unreal": "Total P&L (incl unreal)",
+            "return_on_avg": "Return on avg",
+            "return_on_peak": "Return on peak",
+            "annualized_return_on_avg": "Ann. return on avg",
+            "annualized_return_on_peak": "Ann. return on peak",
+            "annualized_return_twr": "Ann. TWR",
+            "year_return_raw": "Year return (raw)",
+        }
+        mtm_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
+        mtm_display = mtm_source[[c for c in mtm_cols if c in mtm_source.columns]].rename(columns=mtm_map)
         st.dataframe(
-            snap_view.style.set_properties(subset=["Value"], **{"text-align": "right"}).hide(axis="index"),
+            _format_df(
+                mtm_display.reset_index(drop=True),
+                currency_cols=["Realized P&L", "Total P&L (incl unreal)"],
+                pct_cols=["Return on avg", "Return on peak", "Ann. return on avg", "Ann. return on peak", "Ann. TWR", "Year return (raw)"],
+                int_cols=["Year"],
+                hide_index=True,
+            ),
             use_container_width=True,
         )
 
-    with tab_monthly:
-        st.markdown("##### Monthly option cycles")
-        show_cols = ["options_pnl_m", "stock_realized_pnl_m", "dividends_m", "combined_realized_m_w_div", "avg_capital_m", "return_m_w_div"]
-        show_cols = [c for c in show_cols if c in monthly_cycles.columns]
+        # Expectancy Analysis
+        st.markdown("##### Expectancy Analysis")
+        exp_df = expectancies(state["df_opts"], state["stock_txns"], state["monthly_cycles"])
         st.dataframe(
             _format_df(
-                monthly_cycles[show_cols],
-                currency_cols=["options_pnl_m", "stock_realized_pnl_m", "dividends_m", "combined_realized_m_w_div", "avg_capital_m"],
-                pct_cols=["return_m_w_div"],
+                exp_df,
+                currency_cols=["Avg win", "Avg loss", "Expectancy", "Total P&L"],
+                pct_cols=["Win rate"],
+                int_cols=["Count"],
+                hide_index=True,
+            ),
+            use_container_width=True,
+        )
+
+        # Benchmark metrics
+        st.markdown("##### Key Performance Metrics (vs. Benchmarks)")
+        bench_df = state.get("benchmark_metrics", pd.DataFrame())
+        if not bench_df.empty:
+            bench_display = bench_df.copy()
+            bench_display = bench_display.rename(columns={
+                "CAGR": "CAGR",
+                "Volatility": "Volatility",
+                "Sharpe": "Sharpe",
+                "Sortino": "Sortino",
+                "Max Drawdown": "Max drawdown",
+                "Return 3M": "Return 3M",
+                "Return 6M": "Return 6M",
+                "Return YTD": "Return YTD",
+                "Return 1Y": "Return 1Y",
+                "Return SI": "Return SI",
+            })
+            st.dataframe(
+                _format_df(
+                    bench_display,
+                    pct_cols=["CAGR", "Volatility", "Max drawdown", "Return 3M", "Return 6M", "Return YTD", "Return 1Y", "Return SI"],
+                    hide_index=True,
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info("Benchmark data unavailable (yfinance fetch failed).")
+
+        # Charts
+        st.markdown("##### Charts")
+        aligned_bench = state.get("aligned_bench_returns", {})
+        strat_curve = (1 + state["monthly_returns_w_div"]).cumprod() if not state["monthly_returns_w_div"].empty else pd.Series(dtype=float)
+        if not strat_curve.empty:
+            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
+        curves = []
+        if not strat_curve.empty:
+            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+        for name, series in aligned_bench.items():
+            if not series.empty:
+                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
+        if curves:
+            eq_df = pd.concat(curves, ignore_index=True)
+            chart = (
+                alt.Chart(eq_df)
+                .mark_line()
+                .encode(
+                    x=alt.X("Date:T", title="Date"),
+                    y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(nice=True)),
+                    color=alt.Color("Series:N", title="Series"),
+                    tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
+                )
+                .properties(height=260, title="Cumulative Growth vs Benchmarks")
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+        # P&L by options cycle
+        if "combined_realized_m_w_div" in state["monthly_cycles"]:
+            pnl_df = state["monthly_cycles"][["combined_realized_m_w_div"]].reset_index().rename(columns={"index": "cycle"})
+            pnl_df = pnl_df.rename(columns={"combined_realized_m_w_div": "pnl"})
+            pnl_df["color"] = np.where(pnl_df["pnl"] >= 0, "Positive", "Negative")
+            bar = (
+                alt.Chart(pnl_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("cycle:T", title="Option cycle"),
+                    y=alt.Y("pnl:Q", title="P&L ($)"),
+                    color=alt.Color("color:N", scale=alt.Scale(domain=["Positive", "Negative"], range=["#22c55e", "#ef4444"]), legend=None),
+                    tooltip=["cycle:T", alt.Tooltip("pnl:Q", format=",.0f")],
+                )
+                .properties(height=260, title="P&L by Options Cycle")
+            )
+            st.altair_chart(bar, use_container_width=True)
+
+        # Monthly return line (strategy only)
+        if not state["monthly_returns_w_div"].empty:
+            ret_df = pd.DataFrame({"Date": state["monthly_returns_w_div"].index, "Return": state["monthly_returns_w_div"].values})
+            ret_chart = (
+                alt.Chart(ret_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("Date:T", title="Date"),
+                    y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%")),
+                    tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
+                )
+                .properties(height=220, title="Monthly Returns (w/ Div)")
+            )
+            st.altair_chart(ret_chart, use_container_width=True)
+
+    with tab_monthly:
+        st.markdown("##### Monthly option cycles")
+        col_map = {
+            "index": "Cycle",
+            "cycle": "Cycle",
+            "options_pnl_m": "Options P&L",
+            "stock_realized_pnl_m": "Stock P&L",
+            "dividends_m": "Dividends",
+            "combined_realized_m_w_div": "Total P&L (w/ div)",
+            "avg_capital_m": "Avg capital",
+            "return_m_w_div": "Return (w/ div)",
+        }
+        show_cols = ["Cycle", "Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Return (w/ div)"]
+        monthly_table = monthly_cycles.reset_index().rename(columns=col_map)
+        if "Cycle" in monthly_table.columns:
+            monthly_table["Cycle"] = pd.to_datetime(monthly_table["Cycle"]).dt.strftime("%Y-%m-%d")
+        monthly_table = monthly_table[[c for c in show_cols if c in monthly_table.columns]]
+        st.dataframe(
+            _format_df(
+                monthly_table[show_cols],
+                currency_cols=["Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital"],
+                pct_cols=["Return (w/ div)"],
+                hide_index=True,
             ),
             use_container_width=True,
         )
         if not state["monthly_returns_w_div"].empty:
             equity_curve = (1 + state["monthly_returns_w_div"]).cumprod()
-            st.line_chart(equity_curve, height=260)
+            curve_df = pd.DataFrame(
+                {
+                    "Cycle": state["monthly_returns_w_div"].index,
+                    "Growth": equity_curve.values,
+                }
+            )
+            y_min = float(curve_df["Growth"].min() * 0.98)
+            y_max = float(curve_df["Growth"].max() * 1.02)
+            curve_chart = (
+                alt.Chart(curve_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("Cycle:T", title="Option cycle"),
+                    y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=[y_min, y_max], nice=True)),
+                    tooltip=["Cycle:T", alt.Tooltip("Growth:Q", format=".3f")],
+                )
+                .properties(height=260, title="Cumulative growth by option cycle")
+            )
+            st.altair_chart(curve_chart, use_container_width=True)
 
     with tab_ticker:
         st.markdown("##### Per-ticker P&L (realized)")
+        realized_map = {
+            "year": "Year",
+            "ticker": "Ticker",
+            "options_pnl": "Options P&L",
+            "stock_realized_pnl": "Stock P&L",
+            "combined_realized": "Total realized P&L",
+        }
+        realized_df = state["per_ticker"].rename(columns=realized_map)
         st.dataframe(
             _format_df(
-                state["per_ticker"],
-                currency_cols=["options_pnl", "stock_realized_pnl", "combined_realized"],
-                int_cols=["year"],
+                realized_df,
+                currency_cols=["Options P&L", "Stock P&L", "Total realized P&L"],
+                int_cols=["Year"],
+                hide_index=True,
             ),
             use_container_width=True,
         )
+        totals_df = state.get("per_ticker_totals", pd.DataFrame())
+        if not totals_df.empty:
+            st.markdown("##### Per-ticker P&L (realized + unrealized)")
+            totals_map = {
+                "ticker": "Ticker",
+                "options_pnl": "Options P&L",
+                "stock_realized_pnl": "Stock P&L",
+                "combined_realized": "Total realized P&L",
+                "unrealized_pnl": "Unrealized P&L",
+                "total_pnl": "Total P&L",
+            }
+            totals_display = totals_df.rename(columns=totals_map)
+            st.dataframe(
+                _format_df(
+                    totals_display,
+                    currency_cols=["Options P&L", "Stock P&L", "Total realized P&L", "Unrealized P&L", "Total P&L"],
+                    hide_index=True,
+                ),
+                use_container_width=True,
+            )
 
     with tab_positions:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("##### Assigned holdings (inventory)")
+            inv_df = state["inv_df"].copy()
+            if "buy_date" in inv_df.columns:
+                inv_df["buy_date"] = pd.to_datetime(inv_df["buy_date"]).dt.strftime("%Y-%m-%d")
+            inv_df = inv_df.rename(
+                columns={
+                    "ticker": "Ticker",
+                    "buy_date": "Buy date",
+                    "shares": "Shares",
+                    "cost_per_share": "Cost/share",
+                    "current_price": "Current price",
+                    "unrealized_pnl": "Unrealized P&L",
+                }
+            )
             st.dataframe(
                 _format_df(
-                    state["inv_df"],
-                    currency_cols=["cost_per_share", "current_price", "unrealized_pnl"],
-                    int_cols=["shares"],
+                    inv_df,
+                    currency_cols=["Cost/share", "Current price", "Unrealized P&L"],
+                    int_cols=["Shares"],
                 ),
                 use_container_width=True,
             )
@@ -1026,47 +1416,87 @@ def main():
             if state["open_options"].empty:
                 st.info("No open short options.")
             else:
+                oo = state["open_options"][["ticker", "type", "strike", "qty", "expiration", "trans_date"]].copy()
+                for dcol in ["expiration", "trans_date"]:
+                    if dcol in oo.columns:
+                        oo[dcol] = pd.to_datetime(oo[dcol]).dt.strftime("%Y-%m-%d")
+                oo = oo.rename(
+                    columns={
+                        "ticker": "Ticker",
+                        "type": "Type",
+                        "strike": "Strike",
+                        "qty": "Qty",
+                        "expiration": "Expiration",
+                        "trans_date": "Opened",
+                    }
+                )
                 st.dataframe(
                     _format_df(
-                        state["open_options"][["ticker", "type", "strike", "qty", "expiration", "trans_date"]],
-                        currency_cols=["strike"],
-                        int_cols=["qty"],
+                        oo,
+                        currency_cols=["Strike"],
+                        int_cols=["Qty"],
                     ),
                     use_container_width=True,
                 )
 
     with tab_logs:
         st.markdown("##### Data / connectivity issues")
-        if not price_errors and not issues:
-            st.success("No issues detected.")
         st.write(f"Build version: {APP_BUILD_VERSION}")
-        if issues:
-            st.write("General issues:")
-            st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
-        if price_summary:
-            st.write("Price fetch coverage:")
+        coverage_problem = price_summary and (
+            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+            or price_summary.get("options_fetched", 0) < price_summary.get("options_requested", 0)
+        )
+        if issues or price_errors or coverage_problem:
+            if issues:
+                st.warning("Issues:")
+                st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
+            if price_summary:
+                st.write("Price fetch coverage:")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "asset": "stocks",
+                                "requested": price_summary.get("stocks_requested", 0),
+                                "fetched": price_summary.get("stocks_fetched", 0),
+                            },
+                            {
+                                "asset": "options",
+                                "requested": price_summary.get("options_requested", 0),
+                                "fetched": price_summary.get("options_fetched", 0),
+                            },
+                        ]
+                    ),
+                    use_container_width=True,
+                )
+            if price_errors:
+                st.write("Price fetch issues:")
+                st.dataframe(pd.DataFrame({"error": price_errors}), use_container_width=True)
+            if unrealized_blocked:
+                st.info("Unrealized P&L and related metrics were suppressed due to missing prices.")
+        else:
+            st.success("No issues detected.")
+        if state.get("stock_prices"):
+            st.write("Stock prices used:")
             st.dataframe(
                 pd.DataFrame(
-                    [
-                        {
-                            "asset": "stocks",
-                            "requested": price_summary.get("stocks_requested", 0),
-                            "fetched": price_summary.get("stocks_fetched", 0),
-                        },
-                        {
-                            "asset": "options",
-                            "requested": price_summary.get("options_requested", 0),
-                            "fetched": price_summary.get("options_fetched", 0),
-                        },
-                    ]
-                ),
+                    [{"ticker": k, "price": v} for k, v in state["stock_prices"].items()]
+                ).sort_values("ticker"),
                 use_container_width=True,
             )
-        if price_errors:
-            st.write("Price fetch issues:")
-            st.dataframe(pd.DataFrame({"error": price_errors}), use_container_width=True)
-        if unrealized_blocked:
-            st.info("Unrealized P&L and related metrics were suppressed due to missing prices.")
+        if state.get("option_prices"):
+            st.write("Option prices used:")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"symbol": k, "price": v} for k, v in state["option_prices"].items()]
+                ).sort_values("symbol").head(50),
+                use_container_width=True,
+            )
+        if state.get("advanced_unreal") is not None and not getattr(state.get("advanced_unreal"), "empty", True):
+            st.write("Unrealized by ticker (options/stocks):")
+            adv_df = state["advanced_unreal"].reset_index()
+            adv_df.columns = ["ticker", "unrealized_pnl"]
+            st.dataframe(_format_df(adv_df, currency_cols=["unrealized_pnl"]), use_container_width=True)
         st.markdown("---")
         st.markdown("##### Debug / raw data")
         st.write("Options raw", state["df_opts"].head())
