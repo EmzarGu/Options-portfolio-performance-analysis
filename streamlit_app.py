@@ -48,15 +48,35 @@ CONTRACT_MULTIPLIER = 100
 # ------------------------------------------------------------
 def _load_credentials():
     raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    # fallbacks if the secret is stored as a dict/table instead of a JSON string
+    if raw is None:
+        for key in ("gcp_service_account", "service_account"):
+            if key in st.secrets:
+                raw = st.secrets[key]
+                break
     if raw is None:
         raise RuntimeError("Secret GOOGLE_SERVICE_ACCOUNT_JSON is missing in Streamlit secrets.")
-    if isinstance(raw, str):
-        txt = raw.strip()
-        if txt.startswith('"') and txt.endswith('"'):
-            txt = txt.strip('"')
-        info = json.loads(txt)
-    else:
-        info = dict(raw)
+
+    def parse(raw_val):
+        if isinstance(raw_val, dict):
+            return raw_val
+        if isinstance(raw_val, str):
+            txt = raw_val.strip()
+            for triple in ('"""', "'''"):
+                if txt.startswith(triple) and txt.endswith(triple):
+                    txt = txt[len(triple):-len(triple)]
+                    txt = txt.strip()
+            try:
+                return json.loads(txt)
+            except json.JSONDecodeError:
+                # Some users paste single-quoted JSON; attempt a naive fix
+                try:
+                    return json.loads(txt.replace("'", '"'))
+                except Exception:
+                    pass
+        raise RuntimeError("Could not parse GOOGLE_SERVICE_ACCOUNT_JSON; please paste raw JSON for the service account.")
+
+    info = parse(raw)
     scopes = [
         "https://www.googleapis.com/auth/drive.readonly",
         "https://www.googleapis.com/auth/spreadsheets.readonly",
