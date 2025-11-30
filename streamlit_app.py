@@ -57,11 +57,11 @@ CONTRACT_MULTIPLIER = 100
 # Secrets / credentials
 # ------------------------------------------------------------
 def _load_credentials():
-def parse(raw_val):
-    if isinstance(raw_val, dict):
-        return raw_val
-    if isinstance(raw_val, str):
-        txt = raw_val.strip()
+    def parse(raw_val):
+        if isinstance(raw_val, dict):
+            return raw_val
+        if isinstance(raw_val, str):
+            txt = raw_val.strip()
             for triple in ('"""', "'''"):
                 if txt.startswith(triple) and txt.endswith(triple):
                     txt = txt[len(triple) : -len(triple)]
@@ -80,7 +80,7 @@ def parse(raw_val):
                         val_fixed = val.replace("\r\n", "\n").replace("\n", "\\n")
                         return f'"private_key": "{val_fixed}"'
 
-                    txt_esc = re.sub(r'"private_key"\\s*:\\s*"(.*?)"', _fix_pk, txt, flags=re.DOTALL)
+                    txt_esc = re.sub(r'"private_key"\s*:\s*"(.*?)"', _fix_pk, txt, flags=re.DOTALL)
                     return json.loads(txt_esc)
                 except Exception:
                     pass
@@ -700,7 +700,7 @@ def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale],
     return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
-APP_BUILD_VERSION = "2025-11-30T22:28:00Z"
+APP_BUILD_VERSION = "2025-11-30T22:42:00Z"
 
 
 def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
