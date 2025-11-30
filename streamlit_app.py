@@ -1,9 +1,11 @@
 import io
 import json
 import math
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -66,14 +68,24 @@ def _load_credentials():
                 if txt.startswith(triple) and txt.endswith(triple):
                     txt = txt[len(triple):-len(triple)]
                     txt = txt.strip()
+            # 1) normal JSON
             try:
                 return json.loads(txt)
             except json.JSONDecodeError:
-                # Some users paste single-quoted JSON; attempt a naive fix
-                try:
-                    return json.loads(txt.replace("'", '"'))
-                except Exception:
-                    pass
+                pass
+            # 2) single-quoted JSON (naive)
+            try:
+                return json.loads(txt.replace("'", '"'))
+            except Exception:
+                pass
+            # 3) literal_eval for TOML-ish dicts
+            try:
+                import ast
+                val = ast.literal_eval(txt)
+                if isinstance(val, dict):
+                    return val
+            except Exception:
+                pass
         raise RuntimeError("Could not parse GOOGLE_SERVICE_ACCOUNT_JSON; please paste raw JSON for the service account.")
 
     info = parse(raw)
@@ -86,6 +98,13 @@ def _load_credentials():
 
 @st.cache_data(show_spinner=False)
 def _download_excel(sheet_id: str) -> bytes:
+    override = os.getenv("LOCAL_EXCEL_PATH")
+    if override:
+        p = Path(override).expanduser()
+        if not p.exists():
+            raise RuntimeError(f"LOCAL_EXCEL_PATH is set but file not found: {p}")
+        return p.read_bytes()
+
     creds = _load_credentials()
     authed = AuthorizedSession(creds)
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
@@ -784,6 +803,7 @@ with col_side:
     as_of_input = st.date_input("As of date", value=date.today())
     include_unrealized = st.checkbox("Include unrealized in current year", value=True)
     st.markdown("Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`")
+    st.caption("Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally.")
 
 state = build_pipeline(as_of_input, include_unrealized)
 yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
