@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+yfinance
+google-auth
+google-auth-httplib2
+openpyxl
