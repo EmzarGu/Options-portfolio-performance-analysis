@@ -7,6 +7,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+try:
+    import tomllib  # py311+
+except ModuleNotFoundError:  # py3.9/3.10
+    try:
+        import tomli as tomllib  # type: ignore
+    except ModuleNotFoundError:
+        tomllib = None
 
 import numpy as np
 import pandas as pd
@@ -49,16 +56,6 @@ CONTRACT_MULTIPLIER = 100
 # Secrets / credentials
 # ------------------------------------------------------------
 def _load_credentials():
-    raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    # fallbacks if the secret is stored as a dict/table instead of a JSON string
-    if raw is None:
-        for key in ("gcp_service_account", "service_account"):
-            if key in st.secrets:
-                raw = st.secrets[key]
-                break
-    if raw is None:
-        raise RuntimeError("Secret GOOGLE_SERVICE_ACCOUNT_JSON is missing in Streamlit secrets.")
-
     def parse(raw_val):
         if isinstance(raw_val, dict):
             return raw_val
@@ -66,7 +63,7 @@ def _load_credentials():
             txt = raw_val.strip()
             for triple in ('"""', "'''"):
                 if txt.startswith(triple) and txt.endswith(triple):
-                    txt = txt[len(triple):-len(triple)]
+                    txt = txt[len(triple) : -len(triple)]
                     txt = txt.strip()
             # 1) normal JSON
             try:
@@ -81,12 +78,44 @@ def _load_credentials():
             # 3) literal_eval for TOML-ish dicts
             try:
                 import ast
+
                 val = ast.literal_eval(txt)
                 if isinstance(val, dict):
                     return val
             except Exception:
                 pass
         raise RuntimeError("Could not parse GOOGLE_SERVICE_ACCOUNT_JSON; please paste raw JSON for the service account.")
+
+    # Priority: st.secrets -> env var -> local secrets file -> fallback keys in st.secrets
+    raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw is None:
+        env_val = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+        if env_val:
+            raw = env_val
+    if raw is None:
+        secrets_path = os.getenv("LOCAL_SECRETS_PATH")
+        if secrets_path:
+            p = Path(secrets_path).expanduser()
+            if not p.exists():
+                raise RuntimeError(f"LOCAL_SECRETS_PATH is set but file not found: {p}")
+            if p.suffix.lower() == ".toml":
+                if tomllib is None:
+                    raise RuntimeError("tomllib/tomli not available; install tomli or use JSON secrets.")
+                data = tomllib.loads(p.read_text())
+                raw = (
+                    data.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+                    or data.get("google_service_account_json")
+                    or data.get("service_account")
+                )
+            else:
+                raw = p.read_text()
+    if raw is None:
+        for key in ("gcp_service_account", "service_account"):
+            if key in st.secrets:
+                raw = st.secrets[key]
+                break
+    if raw is None:
+        raise RuntimeError("Secret GOOGLE_SERVICE_ACCOUNT_JSON is missing in Streamlit secrets, env var, or LOCAL_SECRETS_PATH.")
 
     info = parse(raw)
     scopes = [
@@ -462,6 +491,8 @@ def build_monthly_cycles(df_opts: pd.DataFrame, realized_sales: List[RealizedSal
 
 
 def twr_annualized_by_year(ret_series):
+    if ret_series.empty or not hasattr(ret_series.index, "year"):
+        return pd.Series(dtype=float)
     grouped = ret_series.groupby(ret_series.index.year)
     return grouped.apply(lambda r: (1 + r).prod() ** (12 / len(r)) - 1)
 
@@ -532,13 +563,21 @@ def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale])
     return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
-def fetch_current_prices_yf(tickers) -> Dict[str, float]:
+APP_BUILD_VERSION = "2025-11-30T18:55:00Z"
+
+
+def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
+    """Fetch latest stock prices; return prices, error messages, and coverage summary."""
+    errors: List[str] = []
+    summary = {"requested": 0, "fetched": 0}
     if yf is None:
-        return {}
+        errors.append("yfinance not installed; cannot fetch live stock prices.")
+        return {}, errors, summary
     tickers = sorted({str(t).upper().strip() for t in tickers if isinstance(t, str) and t.strip()})
+    summary["requested"] = len(tickers)
     prices: Dict[str, float] = {}
     if not tickers:
-        return prices
+        return prices, errors, summary
     try:
         data = yf.download(tickers=tickers, period="5d", interval="1d", auto_adjust=False, progress=False, group_by="ticker", threads=True)
         if isinstance(data.columns, pd.MultiIndex):
@@ -555,8 +594,8 @@ def fetch_current_prices_yf(tickers) -> Dict[str, float]:
             series = data["Adj Close"].dropna() if "Adj Close" in data else data["Close"].dropna()
             if not series.empty and len(tickers) == 1:
                 prices[tickers[0]] = float(series.iloc[-1])
-    except Exception:
-        pass
+    except Exception as exc:
+        errors.append(f"Primary price download failed: {exc}")
     missing = [t for t in tickers if t not in prices]
     for t in missing:
         try:
@@ -568,9 +607,13 @@ def fetch_current_prices_yf(tickers) -> Dict[str, float]:
             p = getattr(tk.fast_info, "last_price", None)
             if p:
                 prices[t] = float(p)
-        except Exception:
-            continue
-    return prices
+        except Exception as exc:
+            errors.append(f"{t}: {exc}")
+    still_missing = [t for t in tickers if t not in prices]
+    summary["fetched"] = len(prices)
+    if still_missing:
+        errors.append(f"Missing prices for tickers: {', '.join(still_missing)}")
+    return prices, errors, summary
 
 
 def unrealized_as_of(inventory: List[OpenLot], prices: Dict[str, float]) -> Tuple[pd.DataFrame, float]:
@@ -617,9 +660,14 @@ def find_open_options(df_opts: pd.DataFrame, as_of_date: pd.Timestamp):
 
 
 def fetch_current_option_prices_yf(open_opts_df):
-    if yf is None or open_opts_df.empty:
-        return {}
+    """Fetch option prices for open short positions; return prices, errors, and coverage summary."""
+    if yf is None:
+        return {}, ["yfinance not installed; cannot fetch live option prices."], {"requested": 0, "fetched": 0}
+    if open_opts_df.empty:
+        return {}, [], {"requested": 0, "fetched": 0}
     prices = {}
+    errors: List[str] = []
+    symbols = []
     for _, opt in open_opts_df.iterrows():
         if pd.isna(opt["strike"]):
             continue
@@ -629,12 +677,17 @@ def fetch_current_option_prices_yf(open_opts_df):
             opt_type = opt["type"][0].upper()
             strike_str = f"{int(opt['strike'] * 1000):08d}"
             option_symbol = f"{ticker}{exp_str}{opt_type}{strike_str}"
+            symbols.append(option_symbol)
             price = yf.Ticker(option_symbol).fast_info.get("lastPrice")
             if price is not None and price > 0:
                 prices[option_symbol] = price
-        except Exception:
-            continue
-    return prices
+        except Exception as exc:
+            errors.append(f"{opt.get('ticker', 'UNK')}: {exc}")
+    missing = [s for s in symbols if s not in prices]
+    if missing:
+        errors.append(f"Missing option prices for: {', '.join(missing[:10])}" + (" ..." if len(missing) > 10 else ""))
+    summary = {"requested": len(symbols), "fetched": len(prices)}
+    return prices, errors, summary
 
 
 def calculate_advanced_unrealized_pnl(ending_inventory, open_options, live_stock_prices, live_option_prices):
@@ -692,9 +745,11 @@ def metric_card(label, value, delta=None):
 
 
 @st.cache_data(show_spinner=True)
-def build_pipeline(as_of: date, include_unrealized_current_year: bool):
+def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, SHEETS)
     as_of_ts = pd.Timestamp(as_of)
+    issues: List[str] = []
+    price_errors: List[str] = []
 
     lots = build_short_lots_from_rows(df_opts)
     apply_buy_to_close_closeouts(lots, df_opts)
@@ -740,10 +795,39 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool):
     open_options_df = find_open_options(df_opts, as_of_ts)
 
     tickers_to_price = sorted({lot.ticker for lot in ending_inventory})
-    live_prices = fetch_current_prices_yf(tickers_to_price)
-    live_option_prices = fetch_current_option_prices_yf(open_options_df)
-    inv_df, total_unreal = unrealized_as_of(ending_inventory, live_prices)
-    advanced_unreal = calculate_advanced_unrealized_pnl(ending_inventory, open_options_df, live_prices, live_option_prices)
+    live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(tickers_to_price)
+    live_option_prices, option_price_errors, opt_summary = fetch_current_option_prices_yf(open_options_df)
+    price_errors.extend(stock_price_errors)
+    price_errors.extend(option_price_errors)
+    price_summary = {
+        "stocks_requested": stock_summary.get("requested", 0),
+        "stocks_fetched": stock_summary.get("fetched", 0),
+        "options_requested": opt_summary.get("requested", 0),
+        "options_fetched": opt_summary.get("fetched", 0),
+    }
+
+    # If any price errors or missing coverage, do not trust unrealized; zero it and log.
+    unrealized_blocked = bool(price_errors)
+    coverage_incomplete = (
+        price_summary["stocks_fetched"] < price_summary["stocks_requested"]
+        or price_summary["options_fetched"] < price_summary["options_requested"]
+    )
+    if coverage_incomplete:
+        unrealized_blocked = True
+    inv_df = pd.DataFrame()
+    advanced_unreal = pd.Series(dtype=float)
+    total_unreal = 0.0
+    if not unrealized_blocked:
+        inv_df, total_unreal = unrealized_as_of(ending_inventory, live_prices)
+        advanced_unreal = calculate_advanced_unrealized_pnl(ending_inventory, open_options_df, live_prices, live_option_prices)
+        # If we still ended up with no unrealized but had positions, treat as blocked
+        if (ending_inventory and inv_df.empty) or (not open_options_df.empty and advanced_unreal.empty):
+            unrealized_blocked = True
+            total_unreal = 0.0
+            advanced_unreal = pd.Series(dtype=float)
+
+    if unrealized_blocked:
+        issues.append("Live prices unavailable or incomplete; unrealized P&L suppressed. See Logs tab.")
 
     opts_year = options_pnl_by_year(df_opts)
     stock_year = realized_stock_pnl_by_year(realized_sales)
@@ -792,145 +876,202 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool):
         "per_ticker": per_ticker,
         "div_df": div_df,
         "as_of": as_of_ts,
+        "issues": issues,
+        "price_errors": price_errors,
+        "unrealized_blocked": unrealized_blocked,
+        "price_summary": price_summary,
     }
 
 
-st.title("Options ROI Dashboard")
-st.caption("Live from Google Sheets with Streamlit")
+def main():
+    st.title("Options ROI Dashboard")
+    st.caption("Live from Google Sheets with Streamlit")
 
-col_side, col_main = st.columns([1, 4])
-with col_side:
-    as_of_input = st.date_input("As of date", value=date.today())
-    include_unrealized = st.checkbox("Include unrealized in current year", value=True)
-    st.markdown("Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`")
-    st.caption("Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally.")
+    col_side, col_main = st.columns([1, 4])
+    with col_side:
+        as_of_input = st.date_input("As of date", value=date.today())
+        include_unrealized = st.checkbox("Include unrealized in current year", value=True)
+        st.markdown("Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`")
+        st.caption("Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally.")
 
-state = build_pipeline(as_of_input, include_unrealized)
-yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
-monthly_cycles = state["monthly_cycles"]
+    # cache_bust is a static knob to force rerun after logic changes
+    state = build_pipeline(as_of_input, include_unrealized, cache_bust=2)
+    yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
+    monthly_cycles = state["monthly_cycles"]
 
-latest_year = yearly["year"].max()
-realized_total = yearly["combined_realized"].sum()
-grand_total = realized_total + state["total_unreal"]
-peak_cap = yearly["peak_capital"].max()
+    latest_year = yearly["year"].max()
+    realized_total = yearly["combined_realized"].sum()
+    grand_total = realized_total + state["total_unreal"]
+    peak_cap = yearly["peak_capital"].max()
+    issues = state.get("issues", [])
+    price_errors = state.get("price_errors", [])
+    unrealized_blocked = state.get("unrealized_blocked", False)
+    price_summary = state.get("price_summary", {})
 
-with col_main:
-    st.markdown("#### Portfolio Snapshot")
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    with mc1:
-        metric_card("Grand Total P&L", f"${grand_total:,.0f}", delta=None)
-    with mc2:
-        metric_card("Realized P&L (w/ div)", f"${realized_total:,.0f}")
-    with mc3:
-        metric_card("Unrealized P&L", f"${state['total_unreal']:,.0f}")
-    with mc4:
-        metric_card("Return on Peak (total)", f"{(grand_total/peak_cap):.1%}" if peak_cap else "n/a")
+    if issues:
+        for msg in issues:
+            st.warning(msg)
+    if price_errors or (
+        price_summary
+        and (
+            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+            or price_summary.get("options_fetched", 0) < price_summary.get("options_requested", 0)
+        )
+    ):
+        st.info("Price fetch issues detected. See Logs tab for details.")
 
-tab_yearly, tab_monthly, tab_ticker, tab_positions = st.tabs(["Yearly", "Monthly cycles", "Per ticker", "Positions"])
+    with col_main:
+        st.markdown("#### Portfolio Snapshot")
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        with mc1:
+            metric_card("Grand Total P&L", f"${grand_total:,.0f}", delta=None)
+        with mc2:
+            metric_card("Realized P&L (w/ div)", f"${realized_total:,.0f}")
+        with mc3:
+            metric_card("Unrealized P&L", f"${state['total_unreal']:,.0f}")
+        with mc4:
+            metric_card("Return on Peak (total)", f"{(grand_total/peak_cap):.1%}" if peak_cap else "n/a")
 
-with tab_yearly:
-    st.markdown("##### Yearly performance")
-    display_cols = [
-        "year",
-        "options_pnl",
-        "stock_realized_pnl",
-        "avg_capital",
-        "peak_capital",
-        "combined_realized",
-        "combined_incl_unreal" if include_unrealized else "combined_realized",
-        "return_on_avg",
-        "annualized_return_on_avg",
-        "annualized_return_twr",
-    ]
-    display_cols = [c for c in display_cols if c in yearly.columns]
-    st.dataframe(
-        _format_df(
-            yearly[display_cols],
-            currency_cols=["options_pnl", "stock_realized_pnl", "avg_capital", "peak_capital", "combined_realized", "combined_incl_unreal"],
-            pct_cols=["return_on_avg", "annualized_return_on_avg", "annualized_return_twr"],
-            int_cols=["year"],
-        ),
-        use_container_width=True,
-    )
-    st.markdown("##### Key performance snapshot")
-    snapshot = pd.DataFrame(
-        {
-            "Metric": [
-                "Cumulative realized P&L (incl. dividends)",
-                "Current unrealized P&L (stocks + options)",
-                "Grand total P&L (inception-to-date)",
-                "Peak capital deployed",
-                "Return on peak capital (total P&L)",
-            ],
-            "Value": [
-                realized_total,
-                state["total_unreal"],
-                grand_total,
-                peak_cap,
-                grand_total / peak_cap if peak_cap else np.nan,
-            ],
-        }
-    )
-    st.dataframe(
-        _format_df(snapshot, currency_cols=["Value"], pct_cols=["Value"]),
-        use_container_width=True,
-    )
+    tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_logs = st.tabs(["Yearly", "Monthly cycles", "Per ticker", "Positions", "Logs / data issues"])
 
-with tab_monthly:
-    st.markdown("##### Monthly option cycles")
-    show_cols = ["options_pnl_m", "stock_realized_pnl_m", "dividends_m", "combined_realized_m_w_div", "avg_capital_m", "return_m_w_div"]
-    show_cols = [c for c in show_cols if c in monthly_cycles.columns]
-    st.dataframe(
-        _format_df(
-            monthly_cycles[show_cols],
-            currency_cols=["options_pnl_m", "stock_realized_pnl_m", "dividends_m", "combined_realized_m_w_div", "avg_capital_m"],
-            pct_cols=["return_m_w_div"],
-        ),
-        use_container_width=True,
-    )
-    if not state["monthly_returns_w_div"].empty:
-        equity_curve = (1 + state["monthly_returns_w_div"]).cumprod()
-        st.line_chart(equity_curve, height=260)
-
-with tab_ticker:
-    st.markdown("##### Per-ticker P&L (realized)")
-    st.dataframe(
-        _format_df(
-            state["per_ticker"],
-            currency_cols=["options_pnl", "stock_realized_pnl", "combined_realized"],
-            int_cols=["year"],
-        ),
-        use_container_width=True,
-    )
-
-with tab_positions:
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("##### Assigned holdings (inventory)")
+    with tab_yearly:
+        st.markdown("##### Yearly performance")
+        display_cols = [
+            "year",
+            "options_pnl",
+            "stock_realized_pnl",
+            "avg_capital",
+            "peak_capital",
+            "combined_realized",
+            "combined_incl_unreal" if include_unrealized else "combined_realized",
+            "return_on_avg",
+            "annualized_return_on_avg",
+            "annualized_return_twr",
+        ]
+        display_cols = [c for c in display_cols if c in yearly.columns]
         st.dataframe(
             _format_df(
-                state["inv_df"],
-                currency_cols=["cost_per_share", "current_price", "unrealized_pnl"],
-                int_cols=["shares"],
+                yearly[display_cols],
+                currency_cols=["options_pnl", "stock_realized_pnl", "avg_capital", "peak_capital", "combined_realized", "combined_incl_unreal"],
+                pct_cols=["return_on_avg", "annualized_return_on_avg", "annualized_return_twr"],
+                int_cols=["year"],
             ),
             use_container_width=True,
         )
-    with c2:
-        st.markdown("##### Open option shorts")
-        if state["open_options"].empty:
-            st.info("No open short options.")
-        else:
+        st.markdown("##### Key performance snapshot")
+        snapshot_rows = [
+            ("Cumulative realized P&L (incl. dividends)", realized_total, "currency"),
+            ("Current unrealized P&L (stocks + options)", state["total_unreal"], "currency"),
+            ("Grand total P&L (inception-to-date)", grand_total, "currency"),
+            ("Peak capital deployed", peak_cap, "currency"),
+            ("Return on peak capital (total P&L)", grand_total / peak_cap if peak_cap else np.nan, "percent"),
+        ]
+        snapshot = pd.DataFrame(
+            {
+                "Metric": [r[0] for r in snapshot_rows],
+                "Value": [r[1] for r in snapshot_rows],
+                "Display": [
+                    f"${r[1]:,.0f}" if r[2] == "currency" and pd.notna(r[1]) else (f"{r[1]:.1%}" if pd.notna(r[1]) else "n/a")
+                    for r in snapshot_rows
+                ],
+            }
+        )
+        snap_view = snapshot[["Metric", "Display"]].rename(columns={"Display": "Value"})
+        st.dataframe(
+            snap_view.style.set_properties(subset=["Value"], **{"text-align": "right"}).hide(axis="index"),
+            use_container_width=True,
+        )
+
+    with tab_monthly:
+        st.markdown("##### Monthly option cycles")
+        show_cols = ["options_pnl_m", "stock_realized_pnl_m", "dividends_m", "combined_realized_m_w_div", "avg_capital_m", "return_m_w_div"]
+        show_cols = [c for c in show_cols if c in monthly_cycles.columns]
+        st.dataframe(
+            _format_df(
+                monthly_cycles[show_cols],
+                currency_cols=["options_pnl_m", "stock_realized_pnl_m", "dividends_m", "combined_realized_m_w_div", "avg_capital_m"],
+                pct_cols=["return_m_w_div"],
+            ),
+            use_container_width=True,
+        )
+        if not state["monthly_returns_w_div"].empty:
+            equity_curve = (1 + state["monthly_returns_w_div"]).cumprod()
+            st.line_chart(equity_curve, height=260)
+
+    with tab_ticker:
+        st.markdown("##### Per-ticker P&L (realized)")
+        st.dataframe(
+            _format_df(
+                state["per_ticker"],
+                currency_cols=["options_pnl", "stock_realized_pnl", "combined_realized"],
+                int_cols=["year"],
+            ),
+            use_container_width=True,
+        )
+
+    with tab_positions:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("##### Assigned holdings (inventory)")
             st.dataframe(
                 _format_df(
-                    state["open_options"][["ticker", "type", "strike", "qty", "expiration", "trans_date"]],
-                    currency_cols=["strike"],
-                    int_cols=["qty"],
+                    state["inv_df"],
+                    currency_cols=["cost_per_share", "current_price", "unrealized_pnl"],
+                    int_cols=["shares"],
                 ),
                 use_container_width=True,
             )
+        with c2:
+            st.markdown("##### Open option shorts")
+            if state["open_options"].empty:
+                st.info("No open short options.")
+            else:
+                st.dataframe(
+                    _format_df(
+                        state["open_options"][["ticker", "type", "strike", "qty", "expiration", "trans_date"]],
+                        currency_cols=["strike"],
+                        int_cols=["qty"],
+                    ),
+                    use_container_width=True,
+                )
 
-st.markdown("---")
-with st.expander("Debug / raw data"):
-    st.write("Options raw", state["df_opts"].head())
-    st.write("Capital daily tail", state["capital_daily"].tail())
-    st.write("Dividends", state["div_df"].head())
+    with tab_logs:
+        st.markdown("##### Data / connectivity issues")
+        if not price_errors and not issues:
+            st.success("No issues detected.")
+        if issues:
+            st.write("General issues:")
+            st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
+        if price_summary:
+            st.write("Price fetch coverage:")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "asset": "stocks",
+                            "requested": price_summary.get("stocks_requested", 0),
+                            "fetched": price_summary.get("stocks_fetched", 0),
+                        },
+                        {
+                            "asset": "options",
+                            "requested": price_summary.get("options_requested", 0),
+                            "fetched": price_summary.get("options_fetched", 0),
+                        },
+                    ]
+                ),
+                use_container_width=True,
+            )
+        if price_errors:
+            st.write("Price fetch issues:")
+            st.dataframe(pd.DataFrame({"error": price_errors}), use_container_width=True)
+        if unrealized_blocked:
+            st.info("Unrealized P&L and related metrics were suppressed due to missing prices.")
+        st.markdown("---")
+        st.markdown("##### Debug / raw data")
+        st.write("Options raw", state["df_opts"].head())
+        st.write("Capital daily tail", state["capital_daily"].tail())
+        st.write("Dividends", state["div_df"].head())
+
+
+if __name__ == "__main__":
+    main()
