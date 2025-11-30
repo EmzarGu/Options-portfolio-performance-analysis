@@ -70,7 +70,13 @@ def _load_credentials():
             try:
                 return json.loads(txt)
             except json.JSONDecodeError:
-                pass
+                # If TOML basic string expanded \n into real newlines inside private_key,
+                # re-escape newlines and retry.
+                try:
+                    txt_esc = txt.replace("\n", "\\n")
+                    return json.loads(txt_esc)
+                except Exception:
+                    pass
             # 2) single-quoted JSON (naive)
             try:
                 return json.loads(txt.replace("'", '"'))
@@ -687,7 +693,7 @@ def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale],
     return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
-APP_BUILD_VERSION = "2025-11-30T22:18:00Z"
+APP_BUILD_VERSION = "2025-11-30T22:24:00Z"
 
 
 def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
