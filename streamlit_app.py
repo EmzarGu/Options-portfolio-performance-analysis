@@ -331,7 +331,7 @@ def _price_per_share(row: pd.Series) -> float:
         net_cash = float(amount_val) - float(commission_val)
     if net_cash is None:
         return 0.0
-    return abs(net_cash) / (qty * CONTRACT_MULTIPLIER)
+    return net_cash / (qty * CONTRACT_MULTIPLIER)
 
 
 def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
@@ -384,6 +384,8 @@ def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
             # Ignore standalone protective longs
             continue
         price = _price_per_share(r)
+        if action == "Buy":
+            price = abs(price)
         qty = int(round(float(r.qty))) if pd.notna(r.qty) else 0
         trades.append(
             OptionTrade(
@@ -1005,6 +1007,7 @@ def calculate_unrealized_positions(
                         "covered_shares": 0,
                         "covered_strike": lot.strike,
                         "unrealized_pnl": stock_component,
+                        "source": "put_gap",
                     }
                 )
 
@@ -1044,6 +1047,7 @@ def calculate_unrealized_positions(
                 "covered_shares": covered_used,
                 "covered_strike": covered_strike_min,
                 "unrealized_pnl": lot_pnl,
+                "source": "stock_lot",
             }
         )
 
@@ -1342,6 +1346,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
     }
 
     inv_df, per_ticker_unreal, total_unreal = calculate_unrealized_positions(open_option_lots, ending_inventory, live_prices)
+    stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
+    option_unreal = total_unreal - stock_unreal
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
@@ -1418,6 +1424,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         "live_option_prices": {},
         "inv_df": inv_df,
         "total_unreal": total_unreal,
+        "option_unreal": option_unreal,
+        "stock_unreal": stock_unreal,
         "advanced_unreal": per_ticker_unreal,
         "yearly": yearly,
         "yearly_with_unreal": yearly_with_unreal,
@@ -1497,6 +1505,9 @@ def main():
                 "YTD Annualized TWR",
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
+        st.caption(
+            f"Unrealized breakdown: options ${state.get('option_unreal', 0.0):,.0f} | stock ${state.get('stock_unreal', 0.0):,.0f}"
+        )
 
     tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_logs = st.tabs(["Yearly", "Monthly cycles", "Per ticker", "Positions", "Logs / data issues"])
 
@@ -1783,8 +1794,11 @@ def main():
                     "covered_shares": "Covered shares",
                     "covered_strike": "Covered strike",
                     "unrealized_pnl": "Unrealized P&L",
+                    "source": "Source",
                 }
             )
+            if "Source" in inv_df.columns:
+                inv_df = inv_df[inv_df["Source"].isin(["stock_lot", "put_gap"])]
             st.dataframe(
                 _format_df(
                     inv_df,
