@@ -326,6 +326,24 @@ def _price_per_share(row: pd.Series) -> float:
 def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
     trades: List[OptionTrade] = []
     rows = df.sort_values(["ticker", "trans_date"]).reset_index(drop=True)
+    # Pre-count sells per option key to ignore standalone long buys (protective hedges)
+    sell_counts: Dict[Tuple, int] = defaultdict(int)
+    for r in rows.itertuples(index=False):
+        t_raw = str(r.type).strip()
+        action = r.action
+        strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
+        otype = None
+        if t_raw in ("Put", "Call"):
+            otype = t_raw
+        elif ("put/call" in t_raw.lower()) or ("call/put" in t_raw.lower()):
+            leg, inferred_strike = infer_mixed_short_leg(r._asdict())
+            if pd.notna(inferred_strike):
+                otype = leg
+                strike_val = float(inferred_strike)
+        if action == "Sell" and otype is not None and not pd.isna(strike_val):
+            key = (str(r.ticker).upper().strip(), otype, strike_val, pd.to_datetime(r.expiration).normalize())
+            sell_counts[key] += 1
+
     for r in rows.itertuples(index=False):
         action = r.action
         if action not in ("Sell", "Buy"):
@@ -349,6 +367,10 @@ def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
                 otype = leg
                 strike_val = float(inferred_strike)
         if otype is None or pd.isna(strike_val):
+            continue
+        key = (str(r.ticker).upper().strip(), otype, strike_val, pd.to_datetime(r.expiration).normalize())
+        if action == "Buy" and sell_counts.get(key, 0) == 0:
+            # Ignore standalone protective longs
             continue
         price = _price_per_share(r)
         qty = int(round(float(r.qty))) if pd.notna(r.qty) else 0
@@ -482,8 +504,8 @@ def compute_stock_realized_and_inventory(txns: List[StockTxn], issues: Optional[
                 if lot.shares_remaining == 0:
                     by_ticker[t.ticker].pop(0)
             if qty_to_sell > 0:
-                # not enough inventory to match; assume flat cost at sale price and log issue
-                if issues is not None:
+                # Not enough inventory; assume pre-owned shares for assigned calls -> zero P&L on uncovered portion
+                if issues is not None and t.source != "Assigned Call":
                     issues.append(f"Selling {t.shares} shares of {t.ticker} on {t.date.date()} exceeded inventory by {qty_to_sell}.")
                 cost_accum += qty_to_sell * t.price
                 qty_to_sell = 0
@@ -1154,7 +1176,8 @@ def metric_card(label, value, delta=None):
 
 def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, SHEETS)
-    as_of_ts = pd.Timestamp(as_of)
+    today_norm = pd.Timestamp.today().normalize()
+    as_of_ts = min(pd.Timestamp(as_of), today_norm)
     issues: List[str] = []
     price_errors: List[str] = []
 
@@ -1360,8 +1383,7 @@ def main():
     price_summary = state.get("price_summary", {})
 
     if issues:
-        for msg in issues:
-            st.warning(msg)
+        st.warning(f"Issues detected: {len(issues)} (see Logs tab)")
     if price_errors or (
         price_summary
         and (
