@@ -1116,8 +1116,8 @@ def build_chains(stock_txns: List[StockTxn], option_events: List[OptionPnLEvent]
                 assigned_chain = ch
                 break
         if assigned_chain is None:
-            # standalone option chain with no stock flow
-            ch = {"start": ev.date, "end": ev.date if ev.reason == "assignment" else None, "txns": [], "option_events": [ev]}
+            # standalone option chain with no stock flow; treat any realized event as a closed chain
+            ch = {"start": ev.date, "end": ev.date, "txns": [], "option_events": [ev]}
             chains[tk].append(ch)
         else:
             assigned_chain["option_events"].append(ev)
