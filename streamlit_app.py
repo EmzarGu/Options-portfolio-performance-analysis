@@ -260,6 +260,7 @@ class RealizedSale:
     proceeds: float
     cost: float
     pnl: float
+    source: str = ""
 
 
 @dataclass
@@ -277,6 +278,16 @@ class HoldSeg:
     end: pd.Timestamp
     shares: int
     cost_per_share: float
+
+
+@dataclass
+class ChainOutcome:
+    ticker: str
+    start: pd.Timestamp
+    end: Optional[pd.Timestamp]
+    option_pnl: float
+    stock_pnl: float
+    total_pnl: float
 
 
 # ------------------------------------------------------------
@@ -511,7 +522,7 @@ def compute_stock_realized_and_inventory(txns: List[StockTxn], issues: Optional[
                 qty_to_sell = 0
             proceeds = t.shares * t.price
             cost = cost_accum
-            realized.append(RealizedSale(t.date, t.ticker, t.shares, proceeds, cost, proceeds - cost))
+            realized.append(RealizedSale(t.date, t.ticker, t.shares, proceeds, cost, proceeds - cost, t.source))
     inventory: List[OpenLot] = []
     for _, lots_list in by_ticker.items():
         for lot in lots_list:
@@ -653,7 +664,7 @@ def build_monthly_summary(
     combined["roac"] = np.where(combined["avg_capital"] > 0, combined["total_realized_pnl"] / combined["avg_capital"], np.nan)
     combined["ropc"] = np.where(combined["peak_capital"] > 0, combined["total_realized_pnl"] / combined["peak_capital"], np.nan)
     combined.index.name = "month"
-    combined = combined[combined.index <= month_end(as_of)].sort_index()
+    combined = combined[combined.index <= as_of.normalize()].sort_index()
     return combined
 
 
@@ -761,7 +772,7 @@ def twr_annualized_by_year(ret_series):
     return grouped.apply(lambda r: (1 + r).prod() ** (12 / len(r)) - 1)
 
 
-def expectancies(realized_option_events: List[OptionPnLEvent], realized_sales: List[RealizedSale], monthly_summary: pd.DataFrame):
+def expectancies(realized_option_events: List[OptionPnLEvent], realized_sales: List[RealizedSale], monthly_summary: pd.DataFrame, chain_outcomes: List["ChainOutcome"]):
     rows = []
     def add_row(name, pnls):
         if len(pnls) == 0:
@@ -789,6 +800,8 @@ def expectancies(realized_option_events: List[OptionPnLEvent], realized_sales: L
     add_row("Stock Trades", [r.pnl for r in realized_sales])
     if monthly_summary is not None and not monthly_summary.empty and "total_realized_pnl" in monthly_summary:
         add_row("Monthly Totals", monthly_summary["total_realized_pnl"].tolist())
+    if chain_outcomes:
+        add_row("Chains", [c.total_pnl for c in chain_outcomes if c.end is not None])
 
     return pd.DataFrame(rows)
 
@@ -1040,6 +1053,82 @@ def calculate_unrealized_positions(
     return inv_df, per_ticker_series, total_unreal
 
 
+def _chain_stock_realized(stock_txns: List[StockTxn]) -> float:
+    by_ticker: Dict[str, List[OpenLot]] = defaultdict(list)
+    realized = 0.0
+    for t in sorted(stock_txns, key=lambda x: (x.date, x.ticker)):
+        if t.side == "BUY":
+            by_ticker[t.ticker].append(OpenLot(t.ticker, t.date, t.shares, t.price))
+        else:
+            qty = t.shares
+            cost_accum = 0.0
+            while qty > 0 and by_ticker[t.ticker]:
+                lot = by_ticker[t.ticker][0]
+                take = min(qty, lot.shares_remaining)
+                cost_accum += take * lot.cost_per_share
+                lot.shares_remaining -= take
+                qty -= take
+                if lot.shares_remaining == 0:
+                    by_ticker[t.ticker].pop(0)
+            # uncovered sells assume zero profit (pre-owned)
+            cost_accum += qty * t.price
+            realized += t.shares * t.price - cost_accum
+    return realized
+
+
+def build_chains(stock_txns: List[StockTxn], option_events: List[OptionPnLEvent], as_of: pd.Timestamp) -> List[ChainOutcome]:
+    chains: Dict[str, List[Dict]] = defaultdict(list)
+    balances: Dict[str, int] = defaultdict(int)
+    # Build chains from stock txn flow
+    for t in sorted(stock_txns, key=lambda x: (x.date, x.ticker)):
+        tk = t.ticker
+        cur_balance = balances[tk]
+        active = chains[tk][-1] if chains[tk] else None
+        if active is None:
+            active = {"start": t.date, "end": None, "txns": [], "option_events": []}
+            chains[tk].append(active)
+        active["txns"].append(t)
+        if t.side == "BUY":
+            cur_balance += t.shares
+        else:
+            cur_balance = max(0, cur_balance - t.shares)
+        balances[tk] = cur_balance
+        if cur_balance == 0:
+            active["end"] = t.date
+    # Attach option events to chains by ticker and date window
+    for ev in sorted(option_events, key=lambda x: (x.date, x.ticker)):
+        tk = ev.ticker
+        assigned_chain = None
+        for ch in chains.get(tk, []):
+            end_date = ch["end"] if ch["end"] is not None else as_of
+            if ch["start"] <= ev.date <= end_date:
+                assigned_chain = ch
+                break
+        if assigned_chain is None:
+            # standalone option chain with no stock flow
+            ch = {"start": ev.date, "end": ev.date if ev.reason == "assignment" else None, "txns": [], "option_events": [ev]}
+            chains[tk].append(ch)
+        else:
+            assigned_chain["option_events"].append(ev)
+
+    outcomes: List[ChainOutcome] = []
+    for tk, ch_list in chains.items():
+        for ch in ch_list:
+            stock_pnl = _chain_stock_realized(ch["txns"])
+            option_pnl = sum(e.pnl for e in ch["option_events"])
+            outcomes.append(
+                ChainOutcome(
+                    ticker=tk,
+                    start=pd.to_datetime(ch["start"]),
+                    end=pd.to_datetime(ch["end"]) if ch["end"] is not None else None,
+                    option_pnl=option_pnl,
+                    stock_pnl=stock_pnl,
+                    total_pnl=option_pnl + stock_pnl,
+                )
+            )
+    return outcomes
+
+
 def unrealized_as_of(inventory: List[OpenLot], prices: Dict[str, float]) -> Tuple[pd.DataFrame, float]:
     rows = []
     total_unreal = 0.0
@@ -1187,6 +1276,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
     realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
     issues.extend(trade_issues)
     realized_sales, ending_inventory = compute_stock_realized_and_inventory(stock_txns, issues)
+    chain_outcomes = build_chains(stock_txns, realized_option_events, as_of_ts)
     start_date = df_opts["trans_date"].min() if not df_opts.empty else as_of_ts
     price_history = fetch_price_history_yf({t.ticker for t in stock_txns}, pd.to_datetime(start_date).normalize(), as_of_ts.normalize()) if pd.notna(start_date) else {}
     capital_daily = build_capital_timeline(all_option_lots, stock_txns, as_of_ts, df_opts, price_history)
@@ -1346,6 +1436,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         "grand_total": grand_total,
         "cumulative_realized": cumulative_realized,
         "realized_option_events": realized_option_events,
+        "chain_outcomes": chain_outcomes,
     }
 
 
@@ -1485,7 +1576,7 @@ def main():
 
         # Expectancy Analysis
         st.markdown("##### Expectancy Analysis")
-        exp_df = expectancies(state.get("realized_option_events", []), state.get("realized_sales", []), state["monthly_cycles"])
+        exp_df = expectancies(state.get("realized_option_events", []), state.get("realized_sales", []), state["monthly_cycles"], state.get("chain_outcomes", []))
         st.dataframe(
             _format_df(
                 exp_df,
