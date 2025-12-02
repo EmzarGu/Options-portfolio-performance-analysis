@@ -175,6 +175,7 @@ def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
                 "Amount": "amount",
                 "Comission": "commission",
                 "Total P&L": "total_pnl",
+                "Assigned": "assigned_flag",
                 "Comment": "comment",
             }
         )
@@ -186,6 +187,8 @@ def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
         df["action"] = df["action"].astype(str).str.title().str.strip()
         df["type"] = df["type"].astype(str).str.title().str.strip()
         df["comment"] = df["comment"].astype(str)
+        if "assigned_flag" in df.columns:
+            df["assigned_flag"] = pd.to_numeric(df["assigned_flag"], errors="coerce").fillna(0).astype(float)
         df["source_sheet"] = sh
         frames.append(df)
     df_all = pd.concat(frames, ignore_index=True)
@@ -197,18 +200,46 @@ def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
 # Domain models
 # ------------------------------------------------------------
 @dataclass
-class OptionLot:
+class OptionTrade:
+    date: pd.Timestamp
     ticker: str
-    otype: str  # "Put" or "Call" (short leg)
+    otype: str  # "Put" or "Call"
+    action: str  # "Sell" (open short) or "Buy" (close)
     strike: float
-    qty: float
-    open_date: pd.Timestamp
     expiration: pd.Timestamp
-    premium_net: float
+    qty: int
+    price: float  # per-share net price (after commission; always positive)
     comment: str
     assigned: bool
-    close_date: pd.Timestamp
-    close_reason: str  # "expiration" | "closed_early" | "assigned_expiration"
+
+
+@dataclass
+class OptionLot:
+    ticker: str
+    otype: str
+    strike: float
+    qty: int
+    open_date: pd.Timestamp
+    expiration: pd.Timestamp
+    open_price: float  # per-share net credit/debit when opened
+    comment: str
+    assigned: bool
+    close_date: Optional[pd.Timestamp] = None
+    close_price: Optional[float] = None
+    close_reason: Optional[str] = None
+
+
+@dataclass
+class OptionPnLEvent:
+    date: pd.Timestamp
+    ticker: str
+    otype: str
+    strike: float
+    qty: int
+    pnl: float
+    p_open: float
+    p_close: float
+    reason: str  # close | expiration | assignment
 
 
 @dataclass
@@ -273,104 +304,167 @@ def infer_mixed_short_leg(row: pd.Series) -> Tuple[str, float]:
     return "Put", put_strike
 
 
-def build_short_lots_from_rows(df: pd.DataFrame) -> List[OptionLot]:
-    lots: List[OptionLot] = []
+def _price_per_share(row: pd.Series) -> float:
+    accessor = row.get if hasattr(row, "get") else lambda k, default=None: getattr(row, k, default)
+    qty_raw = accessor("qty", 0)
+    qty = abs(float(qty_raw) if pd.notna(qty_raw) else 0.0)
+    if qty == 0:
+        return 0.0
+    pnl_val = accessor("total_pnl", None)
+    amount_val = accessor("amount", None)
+    commission_val = accessor("commission", 0.0) or 0.0
+    net_cash = None
+    if pd.notna(pnl_val):
+        net_cash = float(pnl_val)
+    elif pd.notna(amount_val):
+        net_cash = float(amount_val) - float(commission_val)
+    if net_cash is None:
+        return 0.0
+    return abs(net_cash) / (qty * CONTRACT_MULTIPLIER)
+
+
+def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
+    trades: List[OptionTrade] = []
     rows = df.sort_values(["ticker", "trans_date"]).reset_index(drop=True)
     for r in rows.itertuples(index=False):
-        t_raw = str(r.type).strip()
         action = r.action
+        if action not in ("Sell", "Buy"):
+            continue
+        t_raw = str(r.type).strip()
         cmt = r.comment if pd.notna(r.comment) else ""
-        assigned = "assigned" in cmt.lower()
-
+        assigned_flag = False
+        if hasattr(r, "assigned_flag"):
+            try:
+                assigned_flag = float(getattr(r, "assigned_flag")) > 0
+            except Exception:
+                assigned_flag = False
+        assigned = assigned_flag or ("assigned" in cmt.lower())
+        strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
+        otype = None
         if t_raw in ("Put", "Call"):
-            if action != "Sell":
-                continue
-            lot = OptionLot(
-                ticker=r.ticker,
-                otype=t_raw,
-                strike=float(r.strike) if pd.notna(r.strike) else math.nan,
-                qty=float(r.qty) if pd.notna(r.qty) else 0.0,
-                open_date=r.trans_date,
-                expiration=r.expiration,
-                premium_net=float(r.total_pnl) if pd.notna(r.total_pnl) else 0.0,
-                comment=cmt,
-                assigned=assigned,
-                close_date=r.expiration,
-                close_reason="assigned_expiration" if assigned else "expiration",
-            )
-            lots.append(lot)
+            otype = t_raw
         elif ("put/call" in t_raw.lower()) or ("call/put" in t_raw.lower()):
-            short_leg, short_strike = infer_mixed_short_leg(r._asdict())
-            if pd.isna(short_strike):
-                continue
-            lot = OptionLot(
+            leg, inferred_strike = infer_mixed_short_leg(r._asdict())
+            if pd.notna(inferred_strike):
+                otype = leg
+                strike_val = float(inferred_strike)
+        if otype is None or pd.isna(strike_val):
+            continue
+        price = _price_per_share(r)
+        qty = int(round(float(r.qty))) if pd.notna(r.qty) else 0
+        trades.append(
+            OptionTrade(
+                date=pd.to_datetime(r.trans_date),
                 ticker=r.ticker,
-                otype=short_leg,
-                strike=float(short_strike),
-                qty=float(r.qty) if pd.notna(r.qty) else 0.0,
-                open_date=r.trans_date,
-                expiration=r.expiration,
-                premium_net=float(r.total_pnl) if pd.notna(r.total_pnl) else 0.0,
+                otype=otype,
+                action=action,
+                strike=strike_val,
+                expiration=pd.to_datetime(r.expiration),
+                qty=qty,
+                price=price,
                 comment=cmt,
                 assigned=assigned,
-                close_date=r.expiration,
-                close_reason="assigned_expiration" if assigned else "expiration",
             )
-            lots.append(lot)
-    return lots
-
-
-def apply_buy_to_close_closeouts(lots: List[OptionLot], df: pd.DataFrame) -> None:
-    key_to_indices: Dict[Tuple, List[int]] = defaultdict(list)
-    for i, lot in enumerate(lots):
-        exp = pd.to_datetime(lot.expiration)
-        exp = exp.normalize() if pd.notna(exp) else pd.NaT
-        key = (lot.ticker, lot.otype, lot.strike, exp)
-        key_to_indices[key].append(i)
-
-    buys = df[(df["action"] == "Buy") & (df["type"].isin(["Put", "Call"]))].copy()
-    buys = buys.sort_values("trans_date")
-    for _, b in buys.iterrows():
-        exp = pd.to_datetime(b["expiration"])
-        exp = exp.normalize() if pd.notna(exp) else pd.NaT
-        key = (
-            str(b["ticker"]).upper().strip(),
-            str(b["type"]),
-            float(b["strike"]),
-            exp,
         )
-        indices = key_to_indices.get(key, [])
-        if not indices:
-            continue
-        buy_date = b["trans_date"]
-        for idx in indices:
-            lot = lots[idx]
-            if lot.open_date <= buy_date < lot.close_date:
-                lot.close_date = buy_date
-                lot.close_reason = "closed_early"
-                break
+    return trades
 
 
-def stock_txns_from_assigned_lots(lots: List[OptionLot]) -> List[StockTxn]:
-    txns: List[StockTxn] = []
-    for lot in lots:
-        if not lot.assigned:
-            continue
-        shares = int(round(lot.qty * CONTRACT_MULTIPLIER))
-        if shares == 0:
-            continue
-        if lot.otype == "Put":
-            txns.append(
-                StockTxn(lot.close_date.normalize(), lot.ticker, "BUY", shares, lot.strike, "Assigned")
+def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
+    open_map: Dict[Tuple, List[OptionLot]] = defaultdict(list)
+    realized_events: List[OptionPnLEvent] = []
+    stock_txns: List[StockTxn] = []
+    issues: List[str] = []
+    all_lots: List[OptionLot] = []
+    for t in sorted(trades, key=lambda x: (x.date, x.ticker)):
+        key = (t.ticker, t.otype, t.strike, pd.to_datetime(t.expiration).normalize())
+        if t.action == "Sell":
+            lot = OptionLot(
+                ticker=t.ticker,
+                otype=t.otype,
+                strike=t.strike,
+                qty=t.qty,
+                open_date=pd.to_datetime(t.date),
+                expiration=pd.to_datetime(t.expiration),
+                open_price=t.price,
+                comment=t.comment,
+                assigned=t.assigned,
             )
+            open_map[key].append(lot)
+            all_lots.append(lot)
         else:
-            txns.append(
-                StockTxn(lot.close_date.normalize(), lot.ticker, "SELL", shares, lot.strike, "Assigned")
-            )
-    return txns
+            qty_to_close = t.qty
+            buckets = open_map.get(key, [])
+            if qty_to_close > 0 and not buckets:
+                issues.append(f"Buy {t.ticker} {t.otype} {t.strike} on {t.date.date()} had no open short to close.")
+            while qty_to_close > 0 and buckets:
+                lot = buckets[0]
+                take = min(qty_to_close, lot.qty)
+                pnl = (lot.open_price - t.price) * take * CONTRACT_MULTIPLIER
+                realized_events.append(
+                    OptionPnLEvent(
+                        date=pd.to_datetime(t.date),
+                        ticker=t.ticker,
+                        otype=t.otype,
+                        strike=t.strike,
+                        qty=take,
+                        pnl=pnl,
+                        p_open=lot.open_price,
+                        p_close=t.price,
+                        reason="close",
+                    )
+                )
+                lot.qty -= take
+                lot.close_date = pd.to_datetime(t.date)
+                lot.close_price = t.price
+                lot.close_reason = "close"
+                qty_to_close -= take
+                if lot.qty == 0:
+                    buckets.pop(0)
+            if qty_to_close > 0:
+                issues.append(f"Unmatched buy quantity for {t.ticker} {t.otype} {t.strike} on {t.date.date()}: {qty_to_close} remaining.")
+            open_map[key] = buckets
+
+    open_lots: List[OptionLot] = []
+    for buckets in open_map.values():
+        for lot in buckets:
+            if pd.isna(lot.expiration):
+                continue
+            if as_of.normalize() >= pd.to_datetime(lot.expiration).normalize():
+                close_date = pd.to_datetime(lot.expiration).normalize()
+                pnl = (lot.open_price - 0.0) * lot.qty * CONTRACT_MULTIPLIER
+                reason = "assignment" if lot.assigned else "expiration"
+                realized_events.append(
+                    OptionPnLEvent(
+                        date=close_date,
+                        ticker=lot.ticker,
+                        otype=lot.otype,
+                        strike=lot.strike,
+                        qty=lot.qty,
+                        pnl=pnl,
+                        p_open=lot.open_price,
+                        p_close=0.0,
+                        reason=reason,
+                    )
+                )
+                lot.close_date = close_date
+                lot.close_price = 0.0
+                lot.close_reason = reason
+                shares = int(round(lot.qty * CONTRACT_MULTIPLIER))
+                if lot.assigned and shares > 0:
+                    if lot.otype == "Put":
+                        stock_txns.append(
+                            StockTxn(close_date, lot.ticker, "BUY", shares, lot.strike, "Assigned Put")
+                        )
+                    else:
+                        stock_txns.append(
+                            StockTxn(close_date, lot.ticker, "SELL", shares, lot.strike, "Assigned Call")
+                        )
+            else:
+                open_lots.append(lot)
+    return realized_events, open_lots, stock_txns, issues, all_lots
 
 
-def compute_stock_realized_and_inventory(txns: List[StockTxn]):
+def compute_stock_realized_and_inventory(txns: List[StockTxn], issues: Optional[List[str]] = None):
     by_ticker: Dict[str, List[OpenLot]] = defaultdict(list)
     realized: List[RealizedSale] = []
     for t in sorted(txns, key=lambda x: (x.date, x.ticker)):
@@ -387,8 +481,14 @@ def compute_stock_realized_and_inventory(txns: List[StockTxn]):
                 qty_to_sell -= take
                 if lot.shares_remaining == 0:
                     by_ticker[t.ticker].pop(0)
+            if qty_to_sell > 0:
+                # not enough inventory to match; assume flat cost at sale price and log issue
+                if issues is not None:
+                    issues.append(f"Selling {t.shares} shares of {t.ticker} on {t.date.date()} exceeded inventory by {qty_to_sell}.")
+                cost_accum += qty_to_sell * t.price
+                qty_to_sell = 0
             proceeds = t.shares * t.price
-            cost = cost_accum + (qty_to_sell * t.price if qty_to_sell > 0 else 0.0)
+            cost = cost_accum
             realized.append(RealizedSale(t.date, t.ticker, t.shares, proceeds, cost, proceeds - cost))
     inventory: List[OpenLot] = []
     for _, lots_list in by_ticker.items():
@@ -441,83 +541,195 @@ def daterange_days(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
     return pd.date_range(start, end, freq="D", inclusive="left")
 
 
-def build_capital_timeline(lots: List[OptionLot], txns: List[StockTxn], as_of: pd.Timestamp, df_opts: pd.DataFrame) -> pd.DataFrame:
+def build_capital_timeline(
+    option_lots: List[OptionLot],
+    txns: List[StockTxn],
+    as_of: pd.Timestamp,
+    df_opts: pd.DataFrame,
+    price_history: Dict[str, pd.Series],
+) -> pd.DataFrame:
     rows = []
-    for lot in lots:
-        if lot.otype == "Put":
-            open_d = lot.open_date
-            close_d = pd.to_datetime(lot.close_date)
-            if pd.isna(close_d):
-                close_d = as_of
-            else:
-                close_d = min(close_d, as_of)
-            reserve = lot.strike * CONTRACT_MULTIPLIER * int(round(lot.qty))
-            for d in daterange_days(open_d, close_d):
-                rows.append((d, "puts_reserve", reserve))
+    for lot in option_lots:
+        if lot.otype != "Put":
+            continue
+        open_d = pd.to_datetime(lot.open_date).normalize()
+        close_candidate = lot.close_date if lot.close_date is not None else lot.expiration
+        close_d = pd.to_datetime(close_candidate if pd.notna(close_candidate) else as_of).normalize()
+        close_d = min(close_d, as_of.normalize())
+        if pd.isna(open_d) or pd.isna(close_d):
+            continue
+        reserve = lot.strike * CONTRACT_MULTIPLIER * int(round(lot.qty))
+        for d in daterange_days(open_d, close_d):
+            rows.append((d, "puts_reserve", reserve))
+
     segs = build_holding_segments(txns, as_of)
     for seg in segs:
-        invested = seg.shares * seg.cost_per_share
+        px_series = price_history.get(seg.ticker)
         for d in daterange_days(seg.start, seg.end):
+            price_on_day = None
+            if px_series is not None:
+                try:
+                    price_on_day = float(px_series.get(d, np.nan))
+                except Exception:
+                    price_on_day = np.nan
+            if pd.isna(price_on_day):
+                price_on_day = seg.cost_per_share
+            invested = seg.shares * price_on_day
             rows.append((d, "shares_invested", invested))
+
     cap = pd.DataFrame(rows, columns=["date", "component", "amount"])
     if cap.empty:
-        idx = pd.date_range(df_opts["trans_date"].min().normalize(), as_of, freq="D")
+        start_date = df_opts["trans_date"].min().normalize() if not df_opts.empty else as_of.normalize()
+        idx = pd.date_range(start_date, as_of, freq="D")
         cap = pd.DataFrame({"date": idx, "component": ["puts_reserve"] * len(idx), "amount": [0.0] * len(idx)})
     daily = cap.groupby(["date", "component"])["amount"].sum().unstack(fill_value=0.0)
     daily["total"] = daily.sum(axis=1)
     return daily
 
 
-def _third_friday(dt_val):
-    dt_val = pd.Timestamp(dt_val)
-    return dt_val.replace(day=1) + pd.offsets.WeekOfMonth(week=2, weekday=4)
-
-
-def _cycle_end(dt_val):
-    dt_val = pd.Timestamp(dt_val)
-    exp = _third_friday(dt_val)
-    if dt_val > exp:
-        exp = _third_friday(dt_val + pd.offsets.MonthBegin(1))
-    return exp
-
-
-def build_monthly_cycles(
-    df_opts: pd.DataFrame,
+def build_monthly_summary(
+    realized_option_events: List[OptionPnLEvent],
     realized_sales: List[RealizedSale],
     capital_daily: pd.DataFrame,
     dividends_df: pd.DataFrame,
     as_of: pd.Timestamp,
-):
-    def cyc(d):
-        return _cycle_end(d)
+) -> pd.DataFrame:
+    def month_end(d):
+        return pd.to_datetime(d).to_period("M").to_timestamp("M")
 
-    opts = df_opts[df_opts["trans_date"] <= as_of]
-    opts_cycle = opts.groupby(opts["trans_date"].apply(cyc))["total_pnl"].sum().rename("options_pnl_m")
+    opt_series = pd.Series(dtype=float, name="realized_options_pnl")
+    if realized_option_events:
+        df = pd.DataFrame(
+            [{"date": e.date, "pnl": e.pnl} for e in realized_option_events if pd.to_datetime(e.date) <= as_of]
+        )
+        if not df.empty:
+            opt_series = df.groupby(df["date"].apply(month_end))["pnl"].sum().rename("realized_options_pnl")
+
+    stock_series = pd.Series(dtype=float, name="realized_stock_pnl")
     if realized_sales:
         rs_df = pd.DataFrame(
-            {
-                "date": [r.date for r in realized_sales if pd.Timestamp(r.date) <= as_of],
-                "pnl": [r.pnl for r in realized_sales if pd.Timestamp(r.date) <= as_of],
-            }
+            [{"date": r.date, "pnl": r.pnl} for r in realized_sales if pd.to_datetime(r.date) <= as_of]
         )
-        stock_cycle = rs_df.groupby(rs_df["date"].apply(cyc))["pnl"].sum().rename("stock_realized_pnl_m")
-    else:
-        stock_cycle = pd.Series(dtype=float, name="stock_realized_pnl_m")
-    div_cycle = pd.Series(dtype=float, name="dividends_m")
-    if not dividends_df.empty:
-        div_filtered = dividends_df[dividends_df["ex_date"] <= as_of].copy()
+        if not rs_df.empty:
+            stock_series = rs_df.groupby(rs_df["date"].apply(month_end))["pnl"].sum().rename("realized_stock_pnl")
+
+    div_series = pd.Series(dtype=float, name="dividends")
+    if dividends_df is not None and not dividends_df.empty:
+        div_filtered = dividends_df[dividends_df["pay_date"] <= as_of] if "pay_date" in dividends_df else dividends_df.copy()
         if not div_filtered.empty:
-            div_cycle = div_filtered.groupby(div_filtered["ex_date"].apply(cyc))["cash"].sum().rename("dividends_m")
-    combined = pd.concat([opts_cycle, stock_cycle, div_cycle], axis=1).fillna(0.0)
-    combined["combined_realized_m"] = combined["options_pnl_m"] + combined["stock_realized_pnl_m"]
-    combined["combined_realized_m_w_div"] = combined["combined_realized_m"] + combined["dividends_m"]
+            date_col = "pay_date" if "pay_date" in div_filtered else "ex_date"
+            div_series = div_filtered.groupby(div_filtered[date_col].apply(month_end))["cash"].sum().rename("dividends")
+
     cap = capital_daily.copy()
-    cap["cycle"] = cap.index.to_series().apply(cyc)
-    avg_cap = cap.groupby("cycle")["total"].mean().rename("avg_capital_m")
-    combined = combined.join(avg_cap, how="left").fillna(0.0)
-    combined["return_m"] = np.where(combined["avg_capital_m"] > 0, combined["combined_realized_m"] / combined["avg_capital_m"], np.nan)
-    combined["return_m_w_div"] = np.where(combined["avg_capital_m"] > 0, combined["combined_realized_m_w_div"] / combined["avg_capital_m"], np.nan)
-    return combined[combined.index <= as_of].sort_index()
+    cap.index = pd.to_datetime(cap.index).normalize()
+    cap["month"] = cap.index.to_series().apply(month_end)
+    avg_cap = cap.groupby("month")["total"].mean().rename("avg_capital")
+    peak_cap = cap.groupby("month")["total"].max().rename("peak_capital")
+
+    combined = pd.concat([opt_series, stock_series, div_series, avg_cap, peak_cap], axis=1).fillna(0.0)
+    combined["total_realized_pnl"] = combined["realized_options_pnl"] + combined["realized_stock_pnl"] + combined["dividends"]
+    combined["roac"] = np.where(combined["avg_capital"] > 0, combined["total_realized_pnl"] / combined["avg_capital"], np.nan)
+    combined["ropc"] = np.where(combined["peak_capital"] > 0, combined["total_realized_pnl"] / combined["peak_capital"], np.nan)
+    combined.index.name = "month"
+    combined = combined[combined.index <= month_end(as_of)].sort_index()
+    return combined
+
+
+def yearly_summary_from_monthly(monthly_df: pd.DataFrame, capital_daily: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
+    if monthly_df is None or monthly_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "year",
+                "realized_options_pnl",
+                "realized_stock_pnl",
+                "dividends",
+                "total_realized_pnl",
+                "avg_capital",
+                "peak_capital",
+                "roac_year",
+                "ropc_year",
+                "ann_roac",
+                "ann_ropc",
+            ]
+        )
+    m = monthly_df.copy()
+    m["year"] = m.index.year
+    agg = (
+        m.groupby("year")
+        .agg(
+            realized_options_pnl=("realized_options_pnl", "sum"),
+            realized_stock_pnl=("realized_stock_pnl", "sum"),
+            dividends=("dividends", "sum"),
+            total_realized_pnl=("total_realized_pnl", "sum"),
+            roac_year=("roac", lambda s: (1 + s.dropna()).prod() - 1 if len(s.dropna()) else np.nan),
+            ropc_year=("ropc", lambda s: (1 + s.dropna()).prod() - 1 if len(s.dropna()) else np.nan),
+        )
+        .reset_index()
+    )
+    cap_stats = capital_stats_by_year(capital_daily)
+    agg = agg.merge(cap_stats, on="year", how="left")
+    month_counts = m.groupby("year").size()
+    days_elapsed = (
+        capital_daily.reset_index()
+        .assign(year=lambda d: pd.to_datetime(d["date"]).dt.year)
+        .groupby("year")["date"]
+        .nunique()
+    )
+    agg["ann_roac"] = agg["roac_year"]
+    agg["ann_ropc"] = agg["ropc_year"]
+    for idx, row in agg.iterrows():
+        year = row["year"]
+        months = month_counts.get(year, 0)
+        if months == 12:
+            continue
+        days = days_elapsed.get(year, np.nan)
+        if pd.notna(row["roac_year"]) and pd.notna(days) and days > 0:
+            agg.at[idx, "ann_roac"] = (1 + row["roac_year"]) ** (365.0 / days) - 1
+        if pd.notna(row["ropc_year"]) and pd.notna(days) and days > 0:
+            agg.at[idx, "ann_ropc"] = (1 + row["ropc_year"]) ** (365.0 / days) - 1
+    agg = agg.sort_values("year")
+    return agg
+
+
+def realized_option_pnl_by_year(realized_option_events: List[OptionPnLEvent]) -> pd.DataFrame:
+    if not realized_option_events:
+        return pd.DataFrame(columns=["year", "options_pnl"])
+    df = pd.DataFrame([{"date": e.date, "pnl": e.pnl} for e in realized_option_events])
+    df["year"] = pd.to_datetime(df["date"]).dt.year
+    return df.groupby("year")["pnl"].sum().rename("options_pnl").reset_index()
+
+
+def realized_stock_pnl_by_year(realized_sales: List[RealizedSale]) -> pd.DataFrame:
+    if not realized_sales:
+        return pd.DataFrame(columns=["year", "stock_realized_pnl"])
+    df = pd.DataFrame([{"date": r.date, "pnl": r.pnl} for r in realized_sales])
+    df["year"] = pd.to_datetime(df["date"]).dt.year
+    return df.groupby("year")["pnl"].sum().rename("stock_realized_pnl").reset_index()
+
+
+def per_ticker_yearly_from_realized(
+    realized_option_events: List[OptionPnLEvent],
+    realized_sales: List[RealizedSale],
+    as_of: pd.Timestamp,
+) -> pd.DataFrame:
+    rows = []
+    if realized_option_events:
+        for e in realized_option_events:
+            if pd.to_datetime(e.date) <= as_of:
+                rows.append({"year": pd.to_datetime(e.date).year, "ticker": e.ticker, "options_pnl": e.pnl})
+    opt_df = pd.DataFrame(rows)
+    stock_rows = []
+    for r in realized_sales or []:
+        if pd.to_datetime(r.date) <= as_of:
+            stock_rows.append({"year": pd.to_datetime(r.date).year, "ticker": r.ticker, "stock_realized_pnl": r.pnl})
+    stock_df = pd.DataFrame(stock_rows)
+    if opt_df.empty:
+        opt_df = pd.DataFrame(columns=["year", "ticker", "options_pnl"])
+    if stock_df.empty:
+        stock_df = pd.DataFrame(columns=["year", "ticker", "stock_realized_pnl"])
+    out = opt_df.merge(stock_df, on=["year", "ticker"], how="outer").fillna(0.0)
+    out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"]
+    return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
 def twr_annualized_by_year(ret_series):
@@ -527,7 +739,7 @@ def twr_annualized_by_year(ret_series):
     return grouped.apply(lambda r: (1 + r).prod() ** (12 / len(r)) - 1)
 
 
-def expectancies(df_opts: pd.DataFrame, stock_txns: List[StockTxn], monthly_cycles: pd.DataFrame):
+def expectancies(realized_option_events: List[OptionPnLEvent], realized_sales: List[RealizedSale], monthly_summary: pd.DataFrame):
     rows = []
     def add_row(name, pnls):
         if len(pnls) == 0:
@@ -551,12 +763,10 @@ def expectancies(df_opts: pd.DataFrame, stock_txns: List[StockTxn], monthly_cycl
             }
         )
 
-    add_row("Options Trades", df_opts["total_pnl"].tolist())
-    if stock_txns:
-        stock_pnls = [r.pnl for r in compute_stock_realized_and_inventory(stock_txns)[0]]
-        add_row("Stock Trades", stock_pnls)
-    if not monthly_cycles.empty and "combined_realized_m_w_div" in monthly_cycles:
-        add_row("Monthly Cycles", monthly_cycles["combined_realized_m_w_div"].tolist())
+    add_row("Options Trades", [e.pnl for e in realized_option_events])
+    add_row("Stock Trades", [r.pnl for r in realized_sales])
+    if monthly_summary is not None and not monthly_summary.empty and "total_realized_pnl" in monthly_summary:
+        add_row("Monthly Totals", monthly_summary["total_realized_pnl"].tolist())
 
     return pd.DataFrame(rows)
 
@@ -628,76 +838,10 @@ def period_returns(ret_series: pd.Series):
     return out
 
 
-def options_pnl_by_year(df: pd.DataFrame) -> pd.DataFrame:
-    tmp = df.copy()
-    tmp["year"] = tmp["trans_date"].dt.year
-    return tmp.groupby("year")["total_pnl"].sum().rename("options_pnl").reset_index()
-
-
-def realized_stock_pnl_by_year(realized_sales: List[RealizedSale]) -> pd.DataFrame:
-    if not realized_sales:
-        return pd.DataFrame(columns=["year", "stock_realized_pnl"])
-    df = pd.DataFrame([{"date": r.date, "ticker": r.ticker, "shares": r.shares, "pnl": r.pnl} for r in realized_sales])
-    df["year"] = df["date"].dt.year
-    return df.groupby("year")["pnl"].sum().rename("stock_realized_pnl").reset_index()
-
-
 def capital_stats_by_year(capital_daily: pd.DataFrame) -> pd.DataFrame:
     df = capital_daily.reset_index()
     df["year"] = df["date"].dt.year
     return df.groupby("year").agg(avg_capital=("total", "mean"), peak_capital=("total", "max")).reset_index()
-
-
-def combine_yearly(options_df, realized_df, capital_df, as_of, capital_daily):
-    years = sorted(set(capital_df["year"]).union(options_df["year"]).union(realized_df["year"]))
-    out = pd.DataFrame({"year": years})
-    out = (
-        out.merge(options_df, on="year", how="left")
-        .merge(realized_df, on="year", how="left")
-        .merge(capital_df, on="year", how="left")
-    )
-    out = out.fillna(0.0)
-    out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"]
-    elapsed_days = (
-        pd.DataFrame({"date": capital_daily.index})
-        .assign(year=lambda d: d["date"].dt.year)
-        .groupby("year")["date"]
-        .nunique()
-        .rename("days_elapsed")
-        .reset_index()
-    )
-    out = out.merge(elapsed_days, on="year", how="left").fillna({"days_elapsed": 365})
-    out["return_on_avg"] = out["combined_realized"] / out["avg_capital"].replace({0: pd.NA})
-    out["return_on_peak"] = out["combined_realized"] / out["peak_capital"].replace({0: pd.NA})
-    current_year = as_of.year
-    mask_curr = (out["year"] == current_year) & (out["days_elapsed"] < 365)
-    factor = 365.0 / out["days_elapsed"]
-    out["annualized_return_on_avg"] = out["return_on_avg"]
-    out.loc[mask_curr, "annualized_return_on_avg"] = out.loc[mask_curr, "return_on_avg"] * factor[mask_curr]
-    out["annualized_return_on_peak"] = out["return_on_peak"]
-    out.loc[mask_curr, "annualized_return_on_peak"] = out.loc[mask_curr, "return_on_peak"] * factor[mask_curr]
-    return out
-
-
-def per_ticker_yearly(df_opts: pd.DataFrame, realized_sales: List[RealizedSale], as_of: pd.Timestamp) -> pd.DataFrame:
-    o = df_opts[df_opts["trans_date"] <= as_of].copy()
-    o["year"] = o["trans_date"].dt.year
-    o_t = o.groupby(["year", "ticker"])["total_pnl"].sum().rename("options_pnl").reset_index()
-    if realized_sales:
-        s = pd.DataFrame(
-            [
-                {"date": r.date, "ticker": r.ticker, "pnl": r.pnl}
-                for r in realized_sales
-                if pd.Timestamp(r.date) <= as_of
-            ]
-        )
-        s["year"] = s["date"].dt.year
-        s_t = s.groupby(["year", "ticker"])["pnl"].sum().rename("stock_realized_pnl").reset_index()
-    else:
-        s_t = pd.DataFrame(columns=["year", "ticker", "stock_realized_pnl"])
-    out = o_t.merge(s_t, on=["year", "ticker"], how="outer").fillna(0.0)
-    out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"]
-    return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
 APP_BUILD_VERSION = "2025-11-30T22:42:00Z"
@@ -751,6 +895,127 @@ def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[
     if still_missing:
         errors.append(f"Missing prices for tickers: {', '.join(still_missing)}")
     return prices, errors, summary
+
+
+def fetch_price_history_yf(tickers, start: pd.Timestamp, end: pd.Timestamp) -> Dict[str, pd.Series]:
+    """Daily close prices per ticker between start and end (inclusive end)."""
+    history: Dict[str, pd.Series] = {}
+    if yf is None:
+        return history
+    tickers = sorted({t for t in tickers if t})
+    if not tickers or pd.isna(start) or pd.isna(end):
+        return history
+    try:
+        data = yf.download(
+            tickers=tickers,
+            start=start,
+            end=end + pd.Timedelta(days=1),
+            progress=False,
+            auto_adjust=False,
+            group_by="ticker",
+        )
+        if isinstance(data.columns, pd.MultiIndex):
+            for t in tickers:
+                try:
+                    series = data[(t, "Adj Close")].dropna() if (t, "Adj Close") in data else data[(t, "Close")].dropna()
+                    if not series.empty:
+                        history[t] = series.tz_localize(None).rename(t)
+                except Exception:
+                    continue
+        else:
+            series = data["Adj Close"].dropna() if "Adj Close" in data else data.get("Close", pd.Series(dtype=float)).dropna()
+            if not series.empty and len(tickers) == 1:
+                history[tickers[0]] = series.tz_localize(None).rename(tickers[0])
+    except Exception:
+        return history
+    # normalize date index
+    for t, s in list(history.items()):
+        s.index = pd.to_datetime(s.index).normalize()
+        history[t] = s
+    return history
+
+
+def calculate_unrealized_positions(
+    open_options: List[OptionLot],
+    inventory: List[OpenLot],
+    prices: Dict[str, float],
+) -> Tuple[pd.DataFrame, pd.Series, float]:
+    """Compute unrealized P&L by ticker using rules for short options and covered calls."""
+    per_ticker = defaultdict(float)
+    stock_rows = []
+    # Build coverage map for open calls (shares capped at strike)
+    coverage: Dict[str, List[Dict[str, float]]] = defaultdict(list)
+    for lot in open_options:
+        if lot.otype == "Call" and lot.qty > 0:
+            coverage[lot.ticker].append({"strike": lot.strike, "shares": lot.qty * CONTRACT_MULTIPLIER})
+    for cov_list in coverage.values():
+        cov_list.sort(key=lambda x: x["strike"])  # use lowest strikes first
+
+    # Option unrealized (premium received) + short put stock component
+    for lot in open_options:
+        premium_total = lot.open_price * lot.qty * CONTRACT_MULTIPLIER
+        per_ticker[lot.ticker] += premium_total
+        if lot.otype == "Put":
+            px = prices.get(lot.ticker)
+            if px is not None and not pd.isna(px) and px < lot.strike:
+                stock_component = (px - lot.strike) * lot.qty * CONTRACT_MULTIPLIER
+                per_ticker[lot.ticker] += stock_component
+                stock_rows.append(
+                    {
+                        "ticker": lot.ticker,
+                        "buy_date": None,
+                        "shares": lot.qty * CONTRACT_MULTIPLIER,
+                        "cost_per_share": lot.strike,
+                        "current_price": px,
+                        "covered_shares": 0,
+                        "covered_strike": lot.strike,
+                        "unrealized_pnl": stock_component,
+                    }
+                )
+
+    # Stock inventory unrealized with covered call cap
+    for lot in inventory:
+        px = prices.get(lot.ticker)
+        if px is None or pd.isna(px):
+            continue
+        shares_remaining = lot.shares_remaining
+        lot_pnl = 0.0
+        covered_used = 0
+        covered_strike_min = None
+        cov_list = coverage.get(lot.ticker, [])
+        while shares_remaining > 0:
+            if cov_list:
+                leg = cov_list[0]
+                use = min(shares_remaining, leg["shares"])
+                effective_px = min(px, leg["strike"])
+                lot_pnl += (effective_px - lot.cost_per_share) * use
+                covered_used += use
+                covered_strike_min = leg["strike"] if covered_strike_min is None else min(covered_strike_min, leg["strike"])
+                leg["shares"] -= use
+                shares_remaining -= use
+                if leg["shares"] == 0:
+                    cov_list.pop(0)
+            else:
+                lot_pnl += (px - lot.cost_per_share) * shares_remaining
+                shares_remaining = 0
+        per_ticker[lot.ticker] += lot_pnl
+        stock_rows.append(
+            {
+                "ticker": lot.ticker,
+                "buy_date": lot.buy_date,
+                "shares": lot.shares_remaining,
+                "cost_per_share": lot.cost_per_share,
+                "current_price": px,
+                "covered_shares": covered_used,
+                "covered_strike": covered_strike_min,
+                "unrealized_pnl": lot_pnl,
+            }
+        )
+
+    inv_df = pd.DataFrame(stock_rows)
+    per_ticker_series = pd.Series(per_ticker, dtype=float)
+    total_unreal = float(per_ticker_series.sum()) if not per_ticker_series.empty else 0.0
+    return inv_df, per_ticker_series, total_unreal
 
 
 def unrealized_as_of(inventory: List[OpenLot], prices: Dict[str, float]) -> Tuple[pd.DataFrame, float]:
@@ -895,11 +1160,13 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
 
     df_opts = df_opts[df_opts["trans_date"] <= as_of_ts].copy()
 
-    lots = build_short_lots_from_rows(df_opts)
-    apply_buy_to_close_closeouts(lots, df_opts)
-    stock_txns = stock_txns_from_assigned_lots(lots)
-    realized_sales, ending_inventory = compute_stock_realized_and_inventory(stock_txns)
-    capital_daily = build_capital_timeline(lots, stock_txns, as_of_ts, df_opts)
+    trades = build_option_trades(df_opts)
+    realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
+    issues.extend(trade_issues)
+    realized_sales, ending_inventory = compute_stock_realized_and_inventory(stock_txns, issues)
+    start_date = df_opts["trans_date"].min() if not df_opts.empty else as_of_ts
+    price_history = fetch_price_history_yf({t.ticker for t in stock_txns}, pd.to_datetime(start_date).normalize(), as_of_ts.normalize()) if pd.notna(start_date) else {}
+    capital_daily = build_capital_timeline(all_option_lots, stock_txns, as_of_ts, df_opts, price_history)
 
     div_df = pd.DataFrame()
     if yf is not None:
@@ -918,11 +1185,12 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
                         div_hist.index = pd.to_datetime(div_hist.index).tz_localize(None).normalize()
                         for start, end, shares in seg_list:
                             divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
-                            for ex_date, per_share in divs_in_period.items():
+                            for pay_date, per_share in divs_in_period.items():
                                 div_rows.append(
                                     {
                                         "ticker": ticker,
-                                        "ex_date": ex_date,
+                                        "ex_date": pay_date,
+                                        "pay_date": pay_date,
                                         "per_share": per_share,
                                         "shares": shares,
                                         "cash": per_share * shares,
@@ -934,77 +1202,69 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         except Exception:
             div_df = pd.DataFrame()
 
-    monthly_cycles = build_monthly_cycles(df_opts, realized_sales, capital_daily, div_df, as_of_ts)
-    final_monthly_returns_w_div = monthly_cycles.loc[monthly_cycles.index <= as_of_ts, "return_m_w_div"].dropna()
-    open_options_df = find_open_options(df_opts, as_of_ts)
+    monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
+    monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
 
-    tickers_to_price = sorted({lot.ticker for lot in ending_inventory})
+    open_options_df = pd.DataFrame(
+        [
+            {
+                "ticker": lot.ticker,
+                "type": lot.otype,
+                "strike": lot.strike,
+                "qty": lot.qty,
+                "expiration": lot.expiration,
+                "trans_date": lot.open_date,
+                "open_price": lot.open_price,
+            }
+            for lot in open_option_lots
+        ]
+    )
+
+    tickers_to_price = sorted({lot.ticker for lot in ending_inventory}.union({lot.ticker for lot in open_option_lots}))
     live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(tickers_to_price)
-    live_option_prices, option_price_errors, opt_summary = fetch_current_option_prices_yf(open_options_df)
     price_errors.extend(stock_price_errors)
-    price_errors.extend(option_price_errors)
     price_summary = {
         "stocks_requested": stock_summary.get("requested", 0),
         "stocks_fetched": stock_summary.get("fetched", 0),
-        "options_requested": opt_summary.get("requested", 0),
-        "options_fetched": opt_summary.get("fetched", 0),
     }
 
-    # Unrealized: use live prices for stocks and options; if missing, still compute with what we have and log coverage gaps.
-    inv_df, stock_unreal = unrealized_as_of(ending_inventory, live_prices)
-    advanced_unreal = calculate_advanced_unrealized_pnl(ending_inventory, open_options_df, live_prices, live_option_prices)
-    total_unreal = float(advanced_unreal.sum()) if not advanced_unreal.empty else 0.0
+    inv_df, per_ticker_unreal, total_unreal = calculate_unrealized_positions(open_option_lots, ending_inventory, live_prices)
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
         coverage_gaps.append(f"Stocks priced: {price_summary['stocks_fetched']}/{price_summary['stocks_requested']}")
-    if price_summary["options_fetched"] < price_summary["options_requested"]:
-        coverage_gaps.append(f"Options priced: {price_summary['options_fetched']}/{price_summary['options_requested']}")
     if coverage_gaps:
         issues.append("Price coverage incomplete: " + "; ".join(coverage_gaps))
     if price_errors:
         issues.extend([f"Price error: {e}" for e in price_errors])
 
-    opts_year = options_pnl_by_year(df_opts)
-    stock_year = realized_stock_pnl_by_year(realized_sales)
-    cap_year = capital_stats_by_year(capital_daily)
-    yearly = combine_yearly(opts_year, stock_year, cap_year, as_of_ts, capital_daily)
-    twr_annualized = twr_annualized_by_year(final_monthly_returns_w_div.dropna())
-    yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
-    year_ret_raw = final_monthly_returns_w_div.groupby(final_monthly_returns_w_div.index.year).apply(lambda r: (1 + r).prod() - 1)
-    yearly = yearly.merge(year_ret_raw.rename("year_return_raw"), left_on="year", right_index=True, how="left")
+    yearly = yearly_summary_from_monthly(monthly_summary, capital_daily, as_of_ts)
+    twr_annualized = twr_annualized_by_year(monthly_returns.dropna())
+    if not twr_annualized.empty:
+        yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
 
     yearly_with_unreal = yearly.copy()
-    yearly_with_unreal["combined_incl_unreal"] = yearly_with_unreal["combined_realized"]
-    yearly_with_unreal["return_on_avg_incl_unreal"] = yearly_with_unreal["return_on_avg"]
-    yearly_with_unreal["return_on_peak_incl_unreal"] = yearly_with_unreal["return_on_peak"]
-    yearly_with_unreal["annualized_return_on_avg_incl_unreal"] = yearly_with_unreal["annualized_return_on_avg"]
-    yearly_with_unreal["annualized_return_on_peak_incl_unreal"] = yearly_with_unreal["annualized_return_on_peak"]
-
-    if include_unrealized_current_year and total_unreal != 0:
+    yearly_with_unreal["total_pnl_incl_unreal"] = yearly_with_unreal.get("total_realized_pnl", pd.Series(dtype=float))
+    if include_unrealized_current_year and total_unreal != 0 and not yearly_with_unreal.empty:
         mask_curr = yearly_with_unreal["year"].eq(as_of_ts.year)
-        if mask_curr.any():
-            yearly_with_unreal.loc[mask_curr, "combined_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "combined_realized"] + total_unreal
-            yearly_with_unreal.loc[mask_curr, "return_on_avg_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "combined_incl_unreal"] / yearly_with_unreal.loc[mask_curr, "avg_capital"].replace({0: pd.NA})
-            yearly_with_unreal.loc[mask_curr, "return_on_peak_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "combined_incl_unreal"] / yearly_with_unreal.loc[mask_curr, "peak_capital"].replace({0: pd.NA})
-            mask = mask_curr & yearly_with_unreal["days_elapsed"].lt(365)
-            factor = 365.0 / yearly_with_unreal.loc[mask, "days_elapsed"]
-            yearly_with_unreal.loc[mask, "annualized_return_on_avg_incl_unreal"] = yearly_with_unreal.loc[mask, "return_on_avg_incl_unreal"] * factor
-            yearly_with_unreal.loc[mask, "annualized_return_on_peak_incl_unreal"] = yearly_with_unreal.loc[mask, "return_on_peak_incl_unreal"] * factor
+        yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "total_realized_pnl"] + total_unreal
 
-    per_ticker = per_ticker_yearly(df_opts, realized_sales, as_of_ts)
+    per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
     per_ticker_totals = (
         per_ticker.groupby("ticker")[["options_pnl", "stock_realized_pnl", "combined_realized"]]
         .sum()
         .reset_index()
     )
-    unreal_series = advanced_unreal.reindex(per_ticker_totals["ticker"]).fillna(0.0) if not advanced_unreal.empty else 0.0
+    unreal_series = per_ticker_unreal.reindex(per_ticker_totals["ticker"]).fillna(0.0) if not per_ticker_unreal.empty else 0.0
     per_ticker_totals["unrealized_pnl"] = unreal_series.values if hasattr(unreal_series, "values") else unreal_series
     per_ticker_totals["total_pnl"] = per_ticker_totals["combined_realized"] + per_ticker_totals["unrealized_pnl"]
 
+    cumulative_realized = float(monthly_summary["total_realized_pnl"].sum()) if not monthly_summary.empty else 0.0
+    grand_total = cumulative_realized + total_unreal
+
     # Benchmarks using monthly returns alignment (clip to as_of)
     benchmark_tickers = {"Cboe BXM": "^BXM", "PUTW ETF": "PUTW", "SCHD ETF": "SCHD"}
-    strat_rets = final_monthly_returns_w_div.copy()
+    strat_rets = monthly_returns.copy()
     if not strat_rets.empty:
         strat_rets.index = pd.to_datetime(strat_rets.index).to_period("M").to_timestamp("M")
         strat_rets = strat_rets[strat_rets.index <= as_of_ts.normalize()]
@@ -1033,19 +1293,19 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
 
     return {
         "df_opts": df_opts,
-        "lots": lots,
+        "lots": all_option_lots,
         "stock_txns": stock_txns,
         "realized_sales": realized_sales,
         "ending_inventory": ending_inventory,
         "capital_daily": capital_daily,
-        "monthly_cycles": monthly_cycles,
-        "monthly_returns_w_div": final_monthly_returns_w_div,
+        "monthly_cycles": monthly_summary,
+        "monthly_returns_w_div": monthly_returns,
         "open_options": open_options_df,
         "live_prices": live_prices,
-        "live_option_prices": live_option_prices,
+        "live_option_prices": {},
         "inv_df": inv_df,
         "total_unreal": total_unreal,
-        "advanced_unreal": advanced_unreal,
+        "advanced_unreal": per_ticker_unreal,
         "yearly": yearly,
         "yearly_with_unreal": yearly_with_unreal,
         "per_ticker": per_ticker,
@@ -1056,11 +1316,13 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         "unrealized_blocked": False,
         "price_summary": price_summary,
         "stock_prices": live_prices,
-        "option_prices": live_option_prices,
-        "advanced_unreal": advanced_unreal,
+        "option_prices": {},
         "benchmark_metrics": benchmark_metrics_df,
         "aligned_bench_returns": aligned_bench_returns,
         "per_ticker_totals": per_ticker_totals,
+        "grand_total": grand_total,
+        "cumulative_realized": cumulative_realized,
+        "realized_option_events": realized_option_events,
     }
 
 
@@ -1084,17 +1346,14 @@ def main():
     ytd_row = yearly[yearly["year"] == as_of_year]
     ytd_row = ytd_row.iloc[0] if not ytd_row.empty else pd.Series(
         {
-            "combined_realized": 0.0,
-            "combined_incl_unreal": 0.0,
+            "total_realized_pnl": 0.0,
+            "ann_roac": pd.NA,
             "annualized_return_twr": pd.NA,
         }
     )
-    realized_total = float(ytd_row.get("combined_realized", 0.0) or 0.0)
-    ytd_total = float(
-        ytd_row.get("combined_incl_unreal" if include_unrealized else "combined_realized", realized_total) or 0.0
-    )
+    realized_total = float(ytd_row.get("total_realized_pnl", 0.0) or 0.0)
+    ytd_total = realized_total + (state["total_unreal"] if include_unrealized else 0.0)
     ytd_twr = ytd_row.get("annualized_return_twr", pd.NA)
-    peak_cap = yearly["peak_capital"].max()
     issues = state.get("issues", [])
     price_errors = state.get("price_errors", [])
     unrealized_blocked = state.get("unrealized_blocked", False)
@@ -1107,7 +1366,6 @@ def main():
         price_summary
         and (
             price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-            or price_summary.get("options_fetched", 0) < price_summary.get("options_requested", 0)
         )
     ):
         st.error("Price fetch issues detected. See Logs tab for details.")
@@ -1134,39 +1392,39 @@ def main():
         st.markdown("##### Comprehensive Yearly Performance (Realized View)")
         realized_cols = [
             "year",
-            "options_pnl",
-            "stock_realized_pnl",
+            "realized_options_pnl",
+            "realized_stock_pnl",
+            "dividends",
+            "total_realized_pnl",
             "avg_capital",
             "peak_capital",
-            "combined_realized",
-            "days_elapsed",
-            "return_on_avg",
-            "return_on_peak",
-            "annualized_return_on_avg",
-            "annualized_return_on_peak",
+            "roac_year",
+            "ropc_year",
+            "ann_roac",
+            "ann_ropc",
             "annualized_return_twr",
         ]
         realized_map = {
             "year": "Year",
-            "options_pnl": "Options P&L",
-            "stock_realized_pnl": "Stock P&L",
+            "realized_options_pnl": "Options P&L",
+            "realized_stock_pnl": "Stock P&L",
+            "dividends": "Dividends",
+            "total_realized_pnl": "Realized P&L",
             "avg_capital": "Avg capital",
             "peak_capital": "Peak capital",
-            "combined_realized": "Realized P&L",
-            "days_elapsed": "Days",
-            "return_on_avg": "RoAC",
-            "return_on_peak": "RoPC",
-            "annualized_return_on_avg": "Ann. RoAC",
-            "annualized_return_on_peak": "Ann. RoPC",
+            "roac_year": "RoAC",
+            "ropc_year": "RoPC",
+            "ann_roac": "Ann. RoAC",
+            "ann_ropc": "Ann. RoPC",
             "annualized_return_twr": "Ann. TWR",
         }
         realized_display = yearly[[c for c in realized_cols if c in yearly.columns]].rename(columns=realized_map)
         st.dataframe(
             _format_df(
                 realized_display.reset_index(drop=True),
-                currency_cols=["Options P&L", "Stock P&L", "Avg capital", "Peak capital", "Realized P&L"],
+                currency_cols=["Options P&L", "Stock P&L", "Dividends", "Realized P&L", "Avg capital", "Peak capital"],
                 pct_cols=["RoAC", "RoPC", "Ann. RoAC", "Ann. RoPC", "Ann. TWR"],
-                int_cols=["Year", "Days"],
+                int_cols=["Year"],
                 hide_index=True,
             ),
             use_container_width=True,
@@ -1176,25 +1434,19 @@ def main():
         st.markdown("##### Comprehensive Yearly Performance (MTM view)")
         mtm_cols = [
             "year",
-            "combined_realized",
-            "combined_incl_unreal",
-            "return_on_avg",
-            "return_on_peak",
-            "annualized_return_on_avg",
-            "annualized_return_on_peak",
+            "total_realized_pnl",
+            "total_pnl_incl_unreal",
+            "ann_roac",
+            "ann_ropc",
             "annualized_return_twr",
-            "year_return_raw",
         ]
         mtm_map = {
             "year": "Year",
-            "combined_realized": "Realized P&L",
-            "combined_incl_unreal": "Total P&L (incl unreal)",
-            "return_on_avg": "Return on avg",
-            "return_on_peak": "Return on peak",
-            "annualized_return_on_avg": "Ann. return on avg",
-            "annualized_return_on_peak": "Ann. return on peak",
+            "total_realized_pnl": "Realized P&L",
+            "total_pnl_incl_unreal": "Total P&L (incl unreal)",
+            "ann_roac": "Ann. return on avg",
+            "ann_ropc": "Ann. return on peak",
             "annualized_return_twr": "Ann. TWR",
-            "year_return_raw": "Year return (raw)",
         }
         mtm_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
         mtm_display = mtm_source[[c for c in mtm_cols if c in mtm_source.columns]].rename(columns=mtm_map)
@@ -1202,7 +1454,7 @@ def main():
             _format_df(
                 mtm_display.reset_index(drop=True),
                 currency_cols=["Realized P&L", "Total P&L (incl unreal)"],
-                pct_cols=["Return on avg", "Return on peak", "Ann. return on avg", "Ann. return on peak", "Ann. TWR", "Year return (raw)"],
+                pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR"],
                 int_cols=["Year"],
                 hide_index=True,
             ),
@@ -1211,7 +1463,7 @@ def main():
 
         # Expectancy Analysis
         st.markdown("##### Expectancy Analysis")
-        exp_df = expectancies(state["df_opts"], state["stock_txns"], state["monthly_cycles"])
+        exp_df = expectancies(state.get("realized_option_events", []), state.get("realized_sales", []), state["monthly_cycles"])
         st.dataframe(
             _format_df(
                 exp_df,
@@ -1307,32 +1559,34 @@ def main():
                     y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%")),
                     tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
                 )
-                .properties(height=220, title="Monthly Returns (w/ Div)")
+                .properties(height=220, title="Monthly Returns (RoAC)")
             )
             st.altair_chart(ret_chart, use_container_width=True)
 
     with tab_monthly:
-        st.markdown("##### Monthly option cycles")
+        st.markdown("##### Monthly performance (calendar months)")
         col_map = {
-            "index": "Cycle",
-            "cycle": "Cycle",
-            "options_pnl_m": "Options P&L",
-            "stock_realized_pnl_m": "Stock P&L",
-            "dividends_m": "Dividends",
-            "combined_realized_m_w_div": "Total P&L (w/ div)",
-            "avg_capital_m": "Avg capital",
-            "return_m_w_div": "Return (w/ div)",
+            "index": "Month",
+            "month": "Month",
+            "realized_options_pnl": "Options P&L",
+            "realized_stock_pnl": "Stock P&L",
+            "dividends": "Dividends",
+            "total_realized_pnl": "Total P&L (w/ div)",
+            "avg_capital": "Avg capital",
+            "peak_capital": "Peak capital",
+            "roac": "Return (RoAC)",
+            "ropc": "Return (RoPC)",
         }
-        show_cols = ["Cycle", "Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Return (w/ div)"]
+        show_cols = ["Month", "Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Peak capital", "Return (RoAC)", "Return (RoPC)"]
         monthly_table = monthly_cycles.reset_index().rename(columns=col_map)
-        if "Cycle" in monthly_table.columns:
-            monthly_table["Cycle"] = pd.to_datetime(monthly_table["Cycle"]).dt.strftime("%Y-%m-%d")
+        if "Month" in monthly_table.columns:
+            monthly_table["Month"] = pd.to_datetime(monthly_table["Month"]).dt.strftime("%Y-%m-%d")
         monthly_table = monthly_table[[c for c in show_cols if c in monthly_table.columns]]
         st.dataframe(
             _format_df(
-                monthly_table[show_cols],
-                currency_cols=["Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital"],
-                pct_cols=["Return (w/ div)"],
+                monthly_table,
+                currency_cols=["Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Peak capital"],
+                pct_cols=["Return (RoAC)", "Return (RoPC)"],
                 hide_index=True,
             ),
             use_container_width=True,
@@ -1341,7 +1595,7 @@ def main():
             equity_curve = (1 + state["monthly_returns_w_div"]).cumprod()
             curve_df = pd.DataFrame(
                 {
-                    "Cycle": state["monthly_returns_w_div"].index,
+                    "Month": state["monthly_returns_w_div"].index,
                     "Growth": equity_curve.values,
                 }
             )
@@ -1351,11 +1605,11 @@ def main():
                 alt.Chart(curve_df)
                 .mark_line(point=True)
                 .encode(
-                    x=alt.X("Cycle:T", title="Option cycle"),
+                    x=alt.X("Month:T", title="Month"),
                     y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=[y_min, y_max], nice=True)),
-                    tooltip=["Cycle:T", alt.Tooltip("Growth:Q", format=".3f")],
+                    tooltip=["Month:T", alt.Tooltip("Growth:Q", format=".3f")],
                 )
-                .properties(height=260, title="Cumulative growth by option cycle")
+                .properties(height=260, title="Cumulative growth by month")
             )
             st.altair_chart(curve_chart, use_container_width=True)
 
@@ -1413,14 +1667,16 @@ def main():
                     "shares": "Shares",
                     "cost_per_share": "Cost/share",
                     "current_price": "Current price",
+                    "covered_shares": "Covered shares",
+                    "covered_strike": "Covered strike",
                     "unrealized_pnl": "Unrealized P&L",
                 }
             )
             st.dataframe(
                 _format_df(
                     inv_df,
-                    currency_cols=["Cost/share", "Current price", "Unrealized P&L"],
-                    int_cols=["Shares"],
+                    currency_cols=["Cost/share", "Current price", "Covered strike", "Unrealized P&L"],
+                    int_cols=["Shares", "Covered shares"],
                 ),
                 use_container_width=True,
             )
@@ -1429,7 +1685,7 @@ def main():
             if state["open_options"].empty:
                 st.info("No open short options.")
             else:
-                oo = state["open_options"][["ticker", "type", "strike", "qty", "expiration", "trans_date"]].copy()
+                oo = state["open_options"][["ticker", "type", "strike", "qty", "expiration", "trans_date", "open_price"]].copy()
                 for dcol in ["expiration", "trans_date"]:
                     if dcol in oo.columns:
                         oo[dcol] = pd.to_datetime(oo[dcol]).dt.strftime("%Y-%m-%d")
@@ -1441,12 +1697,13 @@ def main():
                         "qty": "Qty",
                         "expiration": "Expiration",
                         "trans_date": "Opened",
+                        "open_price": "Open price",
                     }
                 )
                 st.dataframe(
                     _format_df(
                         oo,
-                        currency_cols=["Strike"],
+                        currency_cols=["Strike", "Open price"],
                         int_cols=["Qty"],
                     ),
                     use_container_width=True,
@@ -1457,7 +1714,6 @@ def main():
         st.write(f"Build version: {APP_BUILD_VERSION}")
         coverage_problem = price_summary and (
             price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-            or price_summary.get("options_fetched", 0) < price_summary.get("options_requested", 0)
         )
         if issues or price_errors or coverage_problem:
             if issues:
@@ -1472,11 +1728,6 @@ def main():
                                 "asset": "stocks",
                                 "requested": price_summary.get("stocks_requested", 0),
                                 "fetched": price_summary.get("stocks_fetched", 0),
-                            },
-                            {
-                                "asset": "options",
-                                "requested": price_summary.get("options_requested", 0),
-                                "fetched": price_summary.get("options_fetched", 0),
                             },
                         ]
                     ),
