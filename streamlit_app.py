@@ -1328,8 +1328,11 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
-    zero_activity_mask = (monthly_summary.get("avg_capital", 0) == 0) & (monthly_summary.get("total_realized_pnl", 0) == 0)
-    monthly_returns_active = monthly_summary.loc[~zero_activity_mask, "roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
+    # Active months: exclude months with zero options P&L (i.e., no option trades)
+    if "realized_options_pnl" in monthly_summary and "roac" in monthly_summary:
+        monthly_returns_active = monthly_summary.loc[monthly_summary["realized_options_pnl"] != 0, "roac"].dropna()
+    else:
+        monthly_returns_active = pd.Series(dtype=float)
 
     open_options_df = pd.DataFrame(
         [
@@ -1562,7 +1565,7 @@ def main():
             _format_df(
                 realized_display.reset_index(drop=True),
                 currency_cols=["Options P&L", "Stock P&L", "Dividends", "Realized P&L", "Avg capital", "Peak capital"],
-                pct_cols=["RoAC", "RoPC", "Ann. RoAC", "Ann. RoPC", "Ann. TWR"],
+                pct_cols=["RoAC", "RoPC", "Ann. RoAC", "Ann. RoPC", "Ann. TWR", "Ann. TWR (active)"],
                 int_cols=["Year"],
                 hide_index=True,
             ),
