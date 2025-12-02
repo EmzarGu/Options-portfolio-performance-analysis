@@ -747,20 +747,27 @@ def per_ticker_yearly_from_realized(
     realized_sales: List[RealizedSale],
     as_of: pd.Timestamp,
 ) -> pd.DataFrame:
-    rows = []
-    if realized_option_events:
-        for e in realized_option_events:
-            if pd.to_datetime(e.date) <= as_of:
-                rows.append({"year": pd.to_datetime(e.date).year, "ticker": e.ticker, "options_pnl": e.pnl})
-    opt_df = pd.DataFrame(rows)
-    stock_rows = []
-    for r in realized_sales or []:
-        if pd.to_datetime(r.date) <= as_of:
-            stock_rows.append({"year": pd.to_datetime(r.date).year, "ticker": r.ticker, "stock_realized_pnl": r.pnl})
-    stock_df = pd.DataFrame(stock_rows)
-    if opt_df.empty:
+    opt_df = pd.DataFrame(
+        [
+            {"year": pd.to_datetime(e.date).year, "ticker": e.ticker, "options_pnl": e.pnl}
+            for e in realized_option_events
+            if pd.to_datetime(e.date) <= as_of
+        ]
+    )
+    stock_df = pd.DataFrame(
+        [
+            {"year": pd.to_datetime(r.date).year, "ticker": r.ticker, "stock_realized_pnl": r.pnl}
+            for r in realized_sales or []
+            if pd.to_datetime(r.date) <= as_of
+        ]
+    )
+    if not opt_df.empty:
+        opt_df = opt_df.groupby(["year", "ticker"])["options_pnl"].sum().reset_index()
+    else:
         opt_df = pd.DataFrame(columns=["year", "ticker", "options_pnl"])
-    if stock_df.empty:
+    if not stock_df.empty:
+        stock_df = stock_df.groupby(["year", "ticker"])["stock_realized_pnl"].sum().reset_index()
+    else:
         stock_df = pd.DataFrame(columns=["year", "ticker", "stock_realized_pnl"])
     out = opt_df.merge(stock_df, on=["year", "ticker"], how="outer").fillna(0.0)
     out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"]
@@ -1499,15 +1506,15 @@ def main():
         with mc2:
             metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
         with mc3:
-            metric_card("Unrealized P&L", f"${state['total_unreal']:,.0f}")
+            metric_card(
+                "Unrealized P&L",
+                f"${state['total_unreal']:,.0f} (opt ${state.get('option_unreal', 0.0):,.0f} / stk ${state.get('stock_unreal', 0.0):,.0f})",
+            )
         with mc4:
             metric_card(
                 "YTD Annualized TWR",
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
-        st.caption(
-            f"Unrealized breakdown: options ${state.get('option_unreal', 0.0):,.0f} | stock ${state.get('stock_unreal', 0.0):,.0f}"
-        )
 
     tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_logs = st.tabs(["Yearly", "Monthly cycles", "Per ticker", "Positions", "Logs / data issues"])
 
@@ -1746,7 +1753,15 @@ def main():
             "stock_realized_pnl": "Stock P&L",
             "combined_realized": "Total realized P&L",
         }
-        realized_df = state["per_ticker"].rename(columns=realized_map)
+        realized_df = state["per_ticker"].copy()
+        if not realized_df.empty:
+            realized_df = (
+                realized_df.groupby(["year", "ticker"], as_index=False)[["options_pnl", "stock_realized_pnl", "combined_realized"]]
+                .sum()
+                .rename(columns=realized_map)
+            )
+        else:
+            realized_df = realized_df.rename(columns=realized_map)
         st.dataframe(
             _format_df(
                 realized_df,
