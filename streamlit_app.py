@@ -1328,6 +1328,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
+    zero_activity_mask = (monthly_summary.get("avg_capital", 0) == 0) & (monthly_summary.get("total_realized_pnl", 0) == 0)
+    monthly_returns_active = monthly_summary.loc[~zero_activity_mask, "roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
 
     open_options_df = pd.DataFrame(
         [
@@ -1368,6 +1370,9 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
     twr_annualized = twr_annualized_by_year(monthly_returns.dropna())
     if not twr_annualized.empty:
         yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
+    twr_active = twr_annualized_by_year(monthly_returns_active.dropna())
+    if not twr_active.empty:
+        yearly = yearly.merge(twr_active.rename("annualized_return_twr_active"), left_on="year", right_index=True, how="left")
 
     yearly_with_unreal = yearly.copy()
     yearly_with_unreal["total_pnl_incl_unreal"] = yearly_with_unreal.get("total_realized_pnl", pd.Series(dtype=float))
@@ -1426,6 +1431,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bus
         "capital_daily": capital_daily,
         "monthly_cycles": monthly_summary,
         "monthly_returns_w_div": monthly_returns,
+        "monthly_returns_active": monthly_returns_active,
         "open_options": open_options_df,
         "live_prices": live_prices,
         "live_option_prices": {},
@@ -1534,6 +1540,7 @@ def main():
             "ann_roac",
             "ann_ropc",
             "annualized_return_twr",
+            "annualized_return_twr_active",
         ]
         realized_map = {
             "year": "Year",
@@ -1548,6 +1555,7 @@ def main():
             "ann_roac": "Ann. RoAC",
             "ann_ropc": "Ann. RoPC",
             "annualized_return_twr": "Ann. TWR",
+            "annualized_return_twr_active": "Ann. TWR (active)",
         }
         realized_display = yearly[[c for c in realized_cols if c in yearly.columns]].rename(columns=realized_map)
         st.dataframe(
