@@ -1725,16 +1725,48 @@ def main():
             ret_df = pd.DataFrame({"Date": state["monthly_returns_w_div"].index, "Return": state["monthly_returns_w_div"].values})
             ret_df = _filter_range(ret_df, "Date")
             if not ret_df.empty:
-                ret_chart = (
-                    alt.Chart(ret_df)
-                    .mark_line(point=True)
+                y_min = float(ret_df["Return"].min())
+                y_max = float(ret_df["Return"].max())
+                pad = (y_max - y_min) * 0.1 if y_max > y_min else 0.01
+                y_domain = [y_min - pad, y_max + pad]
+                bands = pd.DataFrame(
+                    [
+                        {"band": "negative", "y0": min(y_min, 0.0) - pad, "y1": 0.0},
+                        {"band": "neutral", "y0": 0.0, "y1": 0.015},
+                        {"band": "positive", "y0": 0.015, "y1": max(y_max, 0.02) + pad},
+                    ]
+                )
+                band_colors = alt.Color(
+                    "band:N",
+                    scale=alt.Scale(
+                        domain=["negative", "neutral", "positive"],
+                        range=["#ef444480", "#facc1580", "#22c55e80"],
+                    ),
+                    legend=None,
+                )
+                x_domain = [pd.to_datetime(ret_df["Date"]).min(), pd.to_datetime(ret_df["Date"]).max()]
+                bands_chart = (
+                    alt.Chart(bands)
+                    .mark_rect()
                     .encode(
-                        x=alt.X("Date:T", title="Date"),
-                        y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%")),
+                        x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
+                        x2=alt.X2("Date2:T"),
+                        y="y0:Q",
+                        y2="y1:Q",
+                        color=band_colors,
+                    )
+                )
+                bands_chart = bands_chart.transform_calculate(Date="datetime('1900-01-01')").transform_calculate(Date2="datetime('2100-01-01')")
+                line_chart = (
+                    alt.Chart(ret_df)
+                    .mark_line(point=True, color="#60a5fa")
+                    .encode(
+                        x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
+                        y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%", grid=True), scale=alt.Scale(domain=y_domain)),
                         tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
                     )
-                    .properties(height=220, title="Monthly Returns (RoAC)")
                 )
+                ret_chart = alt.layer(bands_chart, line_chart).properties(height=220, title="Monthly Returns (RoAC)")
                 st.altair_chart(ret_chart, use_container_width=True)
 
     with tab_monthly:
