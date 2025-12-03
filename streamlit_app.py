@@ -1563,7 +1563,8 @@ def main():
                 "YTD Annualized TWR",
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
-    with st.container():
+    status_box = st.container()
+    with status_box:
         render_issue_status()
     st.divider()
 
