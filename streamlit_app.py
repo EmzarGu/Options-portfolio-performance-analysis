@@ -1565,6 +1565,7 @@ def main():
             )
     with st.container():
         render_issue_status()
+    st.divider()
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
