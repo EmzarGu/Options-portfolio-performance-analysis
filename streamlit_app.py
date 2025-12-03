@@ -196,6 +196,7 @@ def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
             df[n] = pd.to_numeric(df[n], errors="coerce")
         df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
         df["action"] = df["action"].astype(str).str.title().str.strip()
+        df["action"] = df["action"].replace({"Bought": "Buy"})
         df["type"] = df["type"].astype(str).str.title().str.strip()
         df["comment"] = df["comment"].astype(str)
         if "assigned_flag" in df.columns:
@@ -1491,8 +1492,8 @@ def main():
         or available_sheets
     )
     st.session_state["selected_sheets"] = default_sheets
-    tabs = ["Config", "Yearly", "Monthly cycles", "Per ticker", "Positions", "Methodology", "Logs / data issues"]
-    tab_config, tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_method, tab_logs = st.tabs(tabs)
+    tabs = ["Yearly", "Monthly cycles", "Per ticker", "Positions", "Config", "Logs / data issues", "Methodology"]
+    tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
     with tab_config:
         st.markdown("##### Data sources")
         selected_sheets = st.multiselect(
@@ -1528,15 +1529,6 @@ def main():
     unrealized_blocked = state.get("unrealized_blocked", False)
     price_summary = state.get("price_summary", {})
 
-    coverage_problem = price_summary and (
-        price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-    )
-    total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
-    if total_issues == 0:
-        st.success("0 issues detected (Logs tab)")
-    else:
-        st.warning(f"{total_issues} issue(s) detected — check Logs tab")
-
     with col_main:
         st.markdown("#### Portfolio Snapshot")
         mc1, mc2, mc3, mc4 = st.columns(4)
@@ -1554,6 +1546,15 @@ def main():
                 "YTD Annualized TWR",
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
+
+    coverage_problem = price_summary and (
+        price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+    )
+    total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
+    if total_issues == 0:
+        st.success("0 issues detected (Logs tab)")
+    else:
+        st.warning(f"{total_issues} issue(s) detected — check Logs tab")
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
@@ -2018,6 +2019,37 @@ def main():
         st.write("Options raw", state["df_opts"].head())
         st.write("Capital daily tail", state["capital_daily"].tail())
         st.write("Dividends", state["div_df"].head())
+
+    with tab_method:
+        st.markdown("##### How we compute the numbers")
+        st.markdown(
+            """
+**Scope & sources**
+- Sheets included: whichever `Options YYYY` tabs you pick in Config. Rows outside those sheets are ignored.
+- Actions processed: `Sell/Buy` (plus `Bought` → `Buy`). Blank rows are skipped.
+
+**Capital & P&L**
+- Capital base: short-put reserve at strike*100*contracts; shares marked to latest close if fetched, else cost. Options are not MTM.
+- Realized P&L: option premia + stock sales + dividends.
+- Unrealized: current stock/option unrealized shown separately; only added to current-year RoAC/RoPC when the checkbox is on.
+
+**Returns**
+- Monthly returns (RoAC/RoPC) = monthly realized P&L ÷ monthly avg/peak capital (calendar months).
+- Annualized TWR (realized) = geometric product of monthly returns; “active” drops months with zero option P&L.
+- Growth charts rebase to 1 at the start of the selected range; MTM TWR is not displayed.
+
+**Assignments & inventory**
+- Put rows marked “assigned” create stock lots; covered-call assignments reduce inventory FIFO. If quantities or flags don’t line up, calls/puts can appear unmatched.
+
+**Benchmarks & prices**
+- Benchmarks from yfinance monthly prices; missing prices fall back to last available or cost. Coverage issues surface in Logs.
+
+**Limitations / edge cases**
+- No option MTM; no external deposit/withdrawal modeling.
+- Date parsing depends on sheet date fields being parseable; bad rows go to Issues.
+- Mixed legs (“Put/Call”, “Call/Put”) infer the short leg via type/comment heuristics.
+            """
+        )
 
 
 if __name__ == "__main__":
