@@ -157,6 +157,17 @@ def _download_excel(sheet_id: str) -> bytes:
 
 
 @st.cache_data(show_spinner=True)
+def list_option_sheets(sheet_id: str) -> List[str]:
+    excel_bytes = _download_excel(sheet_id)
+    try:
+        xls = pd.ExcelFile(io.BytesIO(excel_bytes))
+        names = [n for n in xls.sheet_names if pd.notna(n) and str(n).startswith("Options ")]
+        return sorted(names)
+    except Exception:
+        return []
+
+
+@st.cache_data(show_spinner=True)
 def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
     excel_bytes = _download_excel(sheet_id)
     frames = []
@@ -1274,8 +1285,8 @@ def metric_card(label, value, delta=None):
     )
 
 
-def build_pipeline(as_of: date, include_unrealized_current_year: bool, cache_bust: int = 1):
-    df_opts = load_options(SHEET_ID, SHEETS)
+def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
+    df_opts = load_options(SHEET_ID, selected_sheets)
     today_norm = pd.Timestamp.today().normalize()
     as_of_ts = min(pd.Timestamp(as_of), today_norm)
     issues: List[str] = []
@@ -1473,8 +1484,30 @@ def main():
         as_of_input = st.date_input("As of date", value=date.today())
         include_unrealized = st.checkbox("Include unrealized in current year", value=True)
 
+    available_sheets = list_option_sheets(SHEET_ID)
+    default_sheets = (
+        st.session_state.get("selected_sheets")
+        or [s for s in available_sheets if s in SHEETS]
+        or available_sheets
+    )
+    st.session_state["selected_sheets"] = default_sheets
+    tabs = ["Config", "Yearly", "Monthly cycles", "Per ticker", "Positions", "Methodology", "Logs / data issues"]
+    tab_config, tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_method, tab_logs = st.tabs(tabs)
+    with tab_config:
+        st.markdown("##### Data sources")
+        selected_sheets = st.multiselect(
+            "Sheets to include (Options YYYY):",
+            options=available_sheets,
+            default=st.session_state.get("selected_sheets", default_sheets),
+            key="selected_sheets",
+        )
+        if not selected_sheets:
+            st.warning("Select at least one sheet to run the dashboard.")
+        st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
+    selected_sheets = st.session_state.get("selected_sheets", default_sheets) or default_sheets
+
     # cache_bust is kept for API compatibility; build_pipeline no longer cached
-    state = build_pipeline(as_of_input, include_unrealized, cache_bust=4)
+    state = build_pipeline(as_of_input, include_unrealized, selected_sheets, cache_bust=4)
     yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
     monthly_cycles = state["monthly_cycles"]
 
@@ -1521,8 +1554,6 @@ def main():
                 "YTD Annualized TWR",
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
-
-    tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_logs = st.tabs(["Yearly", "Monthly cycles", "Per ticker", "Positions", "Logs / data issues"])
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
