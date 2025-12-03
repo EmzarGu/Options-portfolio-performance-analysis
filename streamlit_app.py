@@ -151,15 +151,15 @@ def _download_excel(sheet_id: str) -> bytes:
     creds = _load_credentials()
     authed = AuthorizedSession(creds)
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
-    resp = authed.get(url)
+    resp = authed.get(url, timeout=15)
     resp.raise_for_status()
     return resp.content
 
 
 @st.cache_data(show_spinner=True)
 def list_option_sheets(sheet_id: str) -> List[str]:
-    excel_bytes = _download_excel(sheet_id)
     try:
+        excel_bytes = _download_excel(sheet_id)
         xls = pd.ExcelFile(io.BytesIO(excel_bytes))
         names = [n for n in xls.sheet_names if pd.notna(n) and str(n).startswith("Options ")]
         return sorted(names)
@@ -1508,7 +1508,14 @@ def main():
     selected_sheets = st.session_state.get("selected_sheets", default_sheets) or default_sheets
 
     # cache_bust is kept for API compatibility; build_pipeline no longer cached
-    state = build_pipeline(as_of_input, include_unrealized, selected_sheets, cache_bust=4)
+    try:
+        state = build_pipeline(as_of_input, include_unrealized, selected_sheets, cache_bust=4)
+    except Exception as e:
+        st.error(
+            "Could not load data. Set `LOCAL_EXCEL_PATH` to your workbook or ensure Google Sheets credentials are available. "
+            f"Details: {e}"
+        )
+        st.stop()
     yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
     monthly_cycles = state["monthly_cycles"]
 
