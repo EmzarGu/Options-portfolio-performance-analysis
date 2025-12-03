@@ -1554,16 +1554,18 @@ def main():
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
 
-    coverage_problem = price_summary and (
-        price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-    )
-    total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
-    if total_issues == 0:
-        st.success("0 issues detected (Logs tab)")
-    else:
-        st.warning(f"{total_issues} issue(s) detected — check Logs tab")
+    def render_issue_status():
+        coverage_problem = price_summary and (
+            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+        )
+        total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
+        if total_issues == 0:
+            st.success("0 issues detected (Logs tab)")
+        else:
+            st.warning(f"{total_issues} issue(s) detected — check Logs tab")
 
     with tab_yearly:
+        render_issue_status()
         # Comprehensive Yearly Performance (Realized View)
         st.markdown("##### Comprehensive Yearly Performance (Realized View)")
         realized_cols = [
@@ -1810,6 +1812,7 @@ def main():
                 st.altair_chart(ret_chart, use_container_width=True)
 
     with tab_monthly:
+        render_issue_status()
         st.markdown("##### Monthly performance (calendar months)")
         col_map = {
             "index": "Month",
@@ -1860,6 +1863,7 @@ def main():
             st.altair_chart(curve_chart, use_container_width=True)
 
     with tab_ticker:
+        render_issue_status()
         st.markdown("##### Per-ticker P&L (realized)")
         realized_map = {
             "year": "Year",
@@ -1908,6 +1912,7 @@ def main():
             )
 
     with tab_positions:
+        render_issue_status()
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("##### Assigned holdings (inventory)")
@@ -1967,6 +1972,7 @@ def main():
                 )
 
     with tab_logs:
+        render_issue_status()
         st.markdown("##### Data / connectivity issues")
         st.write(f"Build version: {APP_BUILD_VERSION}")
         st.caption(
