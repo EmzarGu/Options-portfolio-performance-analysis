@@ -1744,19 +1744,20 @@ def main():
                     ),
                     legend=None,
                 )
-                x_domain = [pd.to_datetime(ret_df["Date"]).min(), pd.to_datetime(ret_df["Date"]).max()]
+                x_min = pd.to_datetime(ret_df["Date"]).min()
+                x_max = pd.to_datetime(ret_df["Date"]).max()
+                x_domain = [x_min, x_max]
                 bands_chart = (
-                    alt.Chart(bands)
+                    alt.Chart(bands.assign(Date=x_min, Date2=x_max))
                     .mark_rect()
                     .encode(
                         x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
-                        x2=alt.X2("Date2:T"),
+                        x2="Date2:T",
                         y="y0:Q",
                         y2="y1:Q",
                         color=band_colors,
                     )
                 )
-                bands_chart = bands_chart.transform_calculate(Date="datetime('1900-01-01')").transform_calculate(Date2="datetime('2100-01-01')")
                 line_chart = (
                     alt.Chart(ret_df)
                     .mark_line(point=True, color="#60a5fa")
