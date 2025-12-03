@@ -1563,7 +1563,8 @@ def main():
                 "YTD Annualized TWR",
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
-    render_issue_status()
+    with st.container():
+        render_issue_status()
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
