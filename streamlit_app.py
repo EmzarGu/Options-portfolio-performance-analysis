@@ -1682,12 +1682,16 @@ def main():
             if not eq_df.empty:
                 eq_df = eq_df.sort_values(["Series", "Date"])
                 eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
+                g_min = float(eq_df["Growth"].min())
+                g_max = float(eq_df["Growth"].max())
+                pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
+                y_domain = [g_min - pad, g_max + pad]
                 chart = (
                     alt.Chart(eq_df)
                     .mark_line()
                     .encode(
                         x=alt.X("Date:T", title="Date"),
-                        y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(nice=True)),
+                        y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=y_domain, nice=True)),
                         color=alt.Color("Series:N", title="Series"),
                         tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
                     )
