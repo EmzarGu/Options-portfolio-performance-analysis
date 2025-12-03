@@ -1536,6 +1536,16 @@ def main():
     unrealized_blocked = state.get("unrealized_blocked", False)
     price_summary = state.get("price_summary", {})
 
+    def render_issue_status():
+        coverage_problem = price_summary and (
+            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+        )
+        total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
+        if total_issues == 0:
+            st.success("0 issues detected (Logs tab)")
+        else:
+            st.warning(f"{total_issues} issue(s) detected — check Logs tab")
+
     with col_main:
         st.markdown("#### Portfolio Snapshot")
         mc1, mc2, mc3, mc4 = st.columns(4)
@@ -1554,16 +1564,6 @@ def main():
                 f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
             )
     render_issue_status()
-
-    def render_issue_status():
-        coverage_problem = price_summary and (
-            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-        )
-        total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
-        if total_issues == 0:
-            st.success("0 issues detected (Logs tab)")
-        else:
-            st.warning(f"{total_issues} issue(s) detected — check Logs tab")
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
