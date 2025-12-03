@@ -1472,8 +1472,6 @@ def main():
     with col_side:
         as_of_input = st.date_input("As of date", value=date.today())
         include_unrealized = st.checkbox("Include unrealized in current year", value=True)
-        st.markdown("Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`")
-        st.caption("Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally.")
 
     # cache_bust is kept for API compatibility; build_pipeline no longer cached
     state = build_pipeline(as_of_input, include_unrealized, cache_bust=4)
@@ -1497,15 +1495,14 @@ def main():
     unrealized_blocked = state.get("unrealized_blocked", False)
     price_summary = state.get("price_summary", {})
 
-    if issues:
-        st.warning(f"Issues detected: {len(issues)} (see Logs tab)")
-    if price_errors or (
-        price_summary
-        and (
-            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-        )
-    ):
-        st.error("Price fetch issues detected. See Logs tab for details.")
+    coverage_problem = price_summary and (
+        price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+    )
+    total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
+    if total_issues == 0:
+        st.success("0 issues detected (Logs tab)")
+    else:
+        st.warning(f"{total_issues} issue(s) detected — check Logs tab")
 
     with col_main:
         st.markdown("#### Portfolio Snapshot")
@@ -1647,6 +1644,27 @@ def main():
 
         # Charts
         st.markdown("##### Charts")
+        range_options = ["3M", "6M", "YTD", "1Y", "Since inception"]
+        range_choice = st.selectbox("Range", range_options, index=range_options.index("YTD"), key="chart_range")
+
+        def _filter_range(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+            if df is None or df.empty or date_col not in df.columns:
+                return df
+            end = state["as_of"]
+            start = None
+            if range_choice == "3M":
+                start = end - pd.DateOffset(months=3)
+            elif range_choice == "6M":
+                start = end - pd.DateOffset(months=6)
+            elif range_choice == "YTD":
+                start = pd.Timestamp(end.year, 1, 1)
+            elif range_choice == "1Y":
+                start = end - pd.DateOffset(years=1)
+            # since inception -> no filter
+            if start is not None:
+                return df[(pd.to_datetime(df[date_col]) >= start) & (pd.to_datetime(df[date_col]) <= end)]
+            return df
+
         aligned_bench = state.get("aligned_bench_returns", {})
         strat_curve = (1 + state["monthly_returns_w_div"]).cumprod() if not state["monthly_returns_w_div"].empty else pd.Series(dtype=float)
         if not strat_curve.empty:
@@ -1659,51 +1677,58 @@ def main():
                 curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
         if curves:
             eq_df = pd.concat(curves, ignore_index=True)
-            chart = (
-                alt.Chart(eq_df)
-                .mark_line()
-                .encode(
-                    x=alt.X("Date:T", title="Date"),
-                    y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(nice=True)),
-                    color=alt.Color("Series:N", title="Series"),
-                    tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
+            eq_df = _filter_range(eq_df, "Date")
+            if not eq_df.empty:
+                chart = (
+                    alt.Chart(eq_df)
+                    .mark_line()
+                    .encode(
+                        x=alt.X("Date:T", title="Date"),
+                        y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(nice=True)),
+                        color=alt.Color("Series:N", title="Series"),
+                        tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
+                    )
+                    .properties(height=260, title="Cumulative Growth vs Benchmarks")
                 )
-                .properties(height=260, title="Cumulative Growth vs Benchmarks")
-            )
-            st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(chart, use_container_width=True)
 
         # P&L by options cycle
         if "combined_realized_m_w_div" in state["monthly_cycles"]:
             pnl_df = state["monthly_cycles"][["combined_realized_m_w_div"]].reset_index().rename(columns={"index": "cycle"})
             pnl_df = pnl_df.rename(columns={"combined_realized_m_w_div": "pnl"})
             pnl_df["color"] = np.where(pnl_df["pnl"] >= 0, "Positive", "Negative")
-            bar = (
-                alt.Chart(pnl_df)
-                .mark_bar()
-                .encode(
-                    x=alt.X("cycle:T", title="Option cycle"),
-                    y=alt.Y("pnl:Q", title="P&L ($)"),
-                    color=alt.Color("color:N", scale=alt.Scale(domain=["Positive", "Negative"], range=["#22c55e", "#ef4444"]), legend=None),
-                    tooltip=["cycle:T", alt.Tooltip("pnl:Q", format=",.0f")],
+            pnl_df = pnl_df.rename(columns={"cycle": "Date"})
+            pnl_df = _filter_range(pnl_df, "Date")
+            if not pnl_df.empty:
+                bar = (
+                    alt.Chart(pnl_df)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Date:T", title="Option cycle"),
+                        y=alt.Y("pnl:Q", title="P&L ($)"),
+                        color=alt.Color("color:N", scale=alt.Scale(domain=["Positive", "Negative"], range=["#22c55e", "#ef4444"]), legend=None),
+                        tooltip=["Date:T", alt.Tooltip("pnl:Q", format=",.0f")],
+                    )
+                    .properties(height=260, title="P&L by Options Cycle")
                 )
-                .properties(height=260, title="P&L by Options Cycle")
-            )
-            st.altair_chart(bar, use_container_width=True)
+                st.altair_chart(bar, use_container_width=True)
 
         # Monthly return line (strategy only)
         if not state["monthly_returns_w_div"].empty:
             ret_df = pd.DataFrame({"Date": state["monthly_returns_w_div"].index, "Return": state["monthly_returns_w_div"].values})
-            ret_chart = (
-                alt.Chart(ret_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("Date:T", title="Date"),
-                    y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%")),
-                    tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
+            ret_df = _filter_range(ret_df, "Date")
+            if not ret_df.empty:
+                ret_chart = (
+                    alt.Chart(ret_df)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("Date:T", title="Date"),
+                        y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%")),
+                        tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
+                    )
+                    .properties(height=220, title="Monthly Returns (RoAC)")
                 )
-                .properties(height=220, title="Monthly Returns (RoAC)")
-            )
-            st.altair_chart(ret_chart, use_container_width=True)
+                st.altair_chart(ret_chart, use_container_width=True)
 
     with tab_monthly:
         st.markdown("##### Monthly performance (calendar months)")
@@ -1865,6 +1890,9 @@ def main():
     with tab_logs:
         st.markdown("##### Data / connectivity issues")
         st.write(f"Build version: {APP_BUILD_VERSION}")
+        st.caption(
+            "Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`. Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
+        )
         coverage_problem = price_summary and (
             price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
         )
