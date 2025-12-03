@@ -1645,12 +1645,12 @@ def main():
         # Charts
         st.markdown("##### Charts")
         range_options = ["3M", "6M", "YTD", "1Y", "Since inception"]
-        range_choice = st.selectbox("Range", range_options, index=range_options.index("YTD"), key="chart_range")
+        range_choice = st.radio("Range", range_options, index=range_options.index("YTD"), key="chart_range", horizontal=True)
 
         def _filter_range(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
             if df is None or df.empty or date_col not in df.columns:
                 return df
-            end = state["as_of"]
+            end = pd.to_datetime(state["as_of"])
             start = None
             if range_choice == "3M":
                 start = end - pd.DateOffset(months=3)
@@ -1660,9 +1660,10 @@ def main():
                 start = pd.Timestamp(end.year, 1, 1)
             elif range_choice == "1Y":
                 start = end - pd.DateOffset(years=1)
-            # since inception -> no filter
             if start is not None:
-                return df[(pd.to_datetime(df[date_col]) >= start) & (pd.to_datetime(df[date_col]) <= end)]
+                dates = pd.to_datetime(df[date_col])
+                mask = (dates >= start) & (dates <= end)
+                return df.loc[mask]
             return df
 
         aligned_bench = state.get("aligned_bench_returns", {})
