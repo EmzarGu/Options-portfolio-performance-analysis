@@ -1541,14 +1541,23 @@ def main():
     price_summary = state.get("price_summary", {})
 
     def render_issue_status():
+        severity = "success"
         coverage_problem = price_summary and (
             price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
         )
+        if issues or price_errors:
+            severity = "error"
+        elif coverage_problem:
+            severity = "warning"
+
         total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
         if total_issues == 0:
-            st.success("0 issues detected (Logs tab)")
+            msg = "0 issues detected (Logs tab)"
         else:
-            st.warning(f"{total_issues} issue(s) detected — check Logs tab")
+            msg = f"{total_issues} issue(s) detected — check Logs tab"
+
+        color = {"success": "#22c55e", "warning": "#f59e0b", "error": "#ef4444"}[severity]
+        st.markdown(f"<div style='font-weight:600; color:{color}; margin: 4px 0;'>{msg}</div>", unsafe_allow_html=True)
 
     with snapshot_area:
         with col_main:
