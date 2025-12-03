@@ -1680,6 +1680,8 @@ def main():
             eq_df = pd.concat(curves, ignore_index=True)
             eq_df = _filter_range(eq_df, "Date")
             if not eq_df.empty:
+                eq_df = eq_df.sort_values(["Series", "Date"])
+                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
                 chart = (
                     alt.Chart(eq_df)
                     .mark_line()
