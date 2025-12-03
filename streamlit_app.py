@@ -1485,6 +1485,9 @@ def main():
         as_of_input = st.date_input("As of date", value=date.today())
         include_unrealized = st.checkbox("Include unrealized in current year", value=True)
 
+    snapshot_area = st.container()
+    tabs_area = st.container()
+
     available_sheets = list_option_sheets(SHEET_ID)
     default_sheets = (
         st.session_state.get("selected_sheets")
@@ -1492,19 +1495,20 @@ def main():
         or available_sheets
     )
     st.session_state["selected_sheets"] = default_sheets
-    tabs = ["Yearly", "Monthly cycles", "Per ticker", "Positions", "Config", "Logs / data issues", "Methodology"]
-    tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
-    with tab_config:
-        st.markdown("##### Data sources")
-        selected_sheets = st.multiselect(
-            "Sheets to include (Options YYYY):",
-            options=available_sheets,
-            default=st.session_state.get("selected_sheets", default_sheets),
-            key="selected_sheets",
-        )
-        if not selected_sheets:
-            st.warning("Select at least one sheet to run the dashboard.")
-        st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
+    with tabs_area:
+        tabs = ["Yearly", "Monthly cycles", "Per ticker", "Positions", "Config", "Logs / data issues", "Methodology"]
+        tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
+        with tab_config:
+            st.markdown("##### Data sources")
+            selected_sheets = st.multiselect(
+                "Sheets to include (Options YYYY):",
+                options=available_sheets,
+                default=st.session_state.get("selected_sheets", default_sheets),
+                key="selected_sheets",
+            )
+            if not selected_sheets:
+                st.warning("Select at least one sheet to run the dashboard.")
+            st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
     selected_sheets = st.session_state.get("selected_sheets", default_sheets) or default_sheets
 
     # cache_bust is kept for API compatibility; build_pipeline no longer cached
@@ -1546,27 +1550,26 @@ def main():
         else:
             st.warning(f"{total_issues} issue(s) detected — check Logs tab")
 
-    with col_main:
-        st.markdown("#### Portfolio Snapshot")
-        mc1, mc2, mc3, mc4 = st.columns(4)
-        with mc1:
-            metric_card("YTD Total P&L", f"${ytd_total:,.0f}", delta=None)
-        with mc2:
-            metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
-        with mc3:
-            metric_card(
-                "Unrealized P&L",
-                f"${state['total_unreal']:,.0f} (opt ${state.get('option_unreal', 0.0):,.0f} / stk ${state.get('stock_unreal', 0.0):,.0f})",
-            )
-        with mc4:
-            metric_card(
-                "YTD Annualized TWR",
-                f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
-            )
-    status_box = st.container()
-    with status_box:
+    with snapshot_area:
+        with col_main:
+            st.markdown("#### Portfolio Snapshot")
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            with mc1:
+                metric_card("YTD Total P&L", f"${ytd_total:,.0f}", delta=None)
+            with mc2:
+                metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
+            with mc3:
+                metric_card(
+                    "Unrealized P&L",
+                    f"${state['total_unreal']:,.0f} (opt ${state.get('option_unreal', 0.0):,.0f} / stk ${state.get('stock_unreal', 0.0):,.0f})",
+                )
+            with mc4:
+                metric_card(
+                    "YTD Annualized TWR",
+                    f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
+                )
         render_issue_status()
-    st.divider()
+        st.divider()
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
