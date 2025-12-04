@@ -1407,20 +1407,16 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     inv_df, per_ticker_unreal, total_unreal = calculate_unrealized_positions(open_option_lots, ending_inventory, live_prices)
     stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
     option_unreal = total_unreal - stock_unreal
-    # Build an MTM return series by allocating current-year unrealized into the latest month of the current year.
-    if include_unrealized_current_year and total_unreal != 0 and not monthly_summary.empty:
-        ms_curr = monthly_summary.copy()
-        ms_curr.index = pd.to_datetime(ms_curr.index, errors="coerce")
-        ms_curr = ms_curr[ms_curr.index.notna()]
-        # Use the latest month available in the current year for the MTM bump
-        curr_year_mask = getattr(ms_curr.index, "year", None) == as_of_ts.year if hasattr(ms_curr.index, "year") else None
-        if curr_year_mask is not None and curr_year_mask.any():
-            last_month = ms_curr.index[curr_year_mask].max()
-            cap_basis = ms_curr.loc[last_month, "avg_capital"] if "avg_capital" in ms_curr.columns else np.nan
-            if pd.notna(cap_basis) and cap_basis > 0:
-                mtm_return_component = total_unreal / cap_basis
-                base_ret = monthly_returns_mtm.loc[last_month] if last_month in monthly_returns_mtm.index else 0.0
-                monthly_returns_mtm.loc[last_month] = base_ret + mtm_return_component
+    # Build an MTM return series by allocating current-year unrealized into the current month using avg capital as base.
+    if include_unrealized_current_year and total_unreal != 0:
+        cap_year_stats = capital_stats_by_year(capital_daily)
+        cap_curr_year = cap_year_stats.loc[cap_year_stats["year"] == as_of_ts.year, "avg_capital"]
+        cap_basis = float(cap_curr_year.iloc[0]) if not cap_curr_year.empty else np.nan
+        if pd.notna(cap_basis) and cap_basis > 0:
+            mtm_return_component = total_unreal / cap_basis
+            month_end = pd.to_datetime(as_of_ts).to_period("M").to_timestamp("M")
+            base_ret = monthly_returns_mtm.loc[month_end] if month_end in monthly_returns_mtm.index else 0.0
+            monthly_returns_mtm.loc[month_end] = base_ret + mtm_return_component
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
@@ -1446,8 +1442,6 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     if include_unrealized_current_year and total_unreal != 0 and not yearly_with_unreal.empty:
         mask_curr = yearly_with_unreal["year"].eq(as_of_ts.year)
         yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "total_realized_pnl"] + total_unreal
-        if not twr_annualized_mtm.empty:
-            yearly_with_unreal = yearly_with_unreal.merge(twr_annualized_mtm.rename("annualized_return_twr_mtm"), left_on="year", right_index=True, how="left")
 
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
     per_ticker_totals = (
