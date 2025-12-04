@@ -1408,26 +1408,19 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
     option_unreal = total_unreal - stock_unreal
     # Build an MTM return series by allocating current-year unrealized into the latest month of the current year.
-    if include_unrealized_current_year and total_unreal != 0:
-        # Pick a capital basis: current-year average capital if available, else latest nonzero monthly avg in current year.
-        cap_year_stats = capital_stats_by_year(capital_daily)
-        cap_curr_year = cap_year_stats.loc[cap_year_stats["year"] == as_of_ts.year, "avg_capital"]
-        cap_basis = float(cap_curr_year.iloc[0]) if not cap_curr_year.empty else np.nan
+    if include_unrealized_current_year and total_unreal != 0 and not monthly_summary.empty:
         ms_curr = monthly_summary.copy()
         ms_curr.index = pd.to_datetime(ms_curr.index, errors="coerce")
-        mask_curr = ms_curr.index.notna() & (getattr(ms_curr.index, "year", None) == as_of_ts.year)
-        if (np.isnan(cap_basis) or cap_basis <= 0) and mask_curr.any() and "avg_capital" in ms_curr.columns:
-            nonzero_caps = ms_curr.loc[mask_curr & (ms_curr["avg_capital"] > 0), "avg_capital"]
-            if not nonzero_caps.empty:
-                cap_basis = float(nonzero_caps.iloc[-1])
-        if cap_basis and cap_basis > 0:
-            mtm_return_component = total_unreal / cap_basis
-            month_end = pd.to_datetime(as_of_ts).to_period("M").to_timestamp("M")
-            if month_end in monthly_returns_mtm.index:
-                base_ret = monthly_returns_mtm.loc[month_end]
-                monthly_returns_mtm.loc[month_end] = base_ret + mtm_return_component
-            else:
-                monthly_returns_mtm.loc[month_end] = mtm_return_component
+        ms_curr = ms_curr[ms_curr.index.notna()]
+        # Use the latest month available in the current year for the MTM bump
+        curr_year_mask = getattr(ms_curr.index, "year", None) == as_of_ts.year if hasattr(ms_curr.index, "year") else None
+        if curr_year_mask is not None and curr_year_mask.any():
+            last_month = ms_curr.index[curr_year_mask].max()
+            cap_basis = ms_curr.loc[last_month, "avg_capital"] if "avg_capital" in ms_curr.columns else np.nan
+            if pd.notna(cap_basis) and cap_basis > 0:
+                mtm_return_component = total_unreal / cap_basis
+                base_ret = monthly_returns_mtm.loc[last_month] if last_month in monthly_returns_mtm.index else 0.0
+                monthly_returns_mtm.loc[last_month] = base_ret + mtm_return_component
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
