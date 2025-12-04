@@ -1317,6 +1317,7 @@ def metric_card(label, value, delta=None):
 
 def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, selected_sheets)
+    sheet_counts = df_opts.groupby("source_sheet").size().rename("rows").reset_index()
     today_norm = pd.Timestamp.today().normalize()
     as_of_ts = min(pd.Timestamp(as_of), today_norm)
     issues: List[str] = []
@@ -1502,6 +1503,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "cumulative_realized": cumulative_realized,
         "realized_option_events": realized_option_events,
         "chain_outcomes": chain_outcomes,
+        "sheet_counts": sheet_counts,
     }
 
 
@@ -1724,6 +1726,7 @@ def main():
                 _format_df(
                     bench_display,
                     pct_cols=["CAGR", "Volatility", "Max drawdown", "Return 3M", "Return 6M", "Return YTD", "Return 1Y", "Return SI"],
+                    float_cols=["Sharpe", "Sortino"],
                     hide_index=True,
                 ),
                 use_container_width=True,
@@ -2071,6 +2074,9 @@ def main():
             adv_df = state["advanced_unreal"].reset_index()
             adv_df.columns = ["ticker", "unrealized_pnl"]
             st.dataframe(_format_df(adv_df, currency_cols=["unrealized_pnl"]), use_container_width=True)
+        if state.get("sheet_counts") is not None:
+            st.markdown("##### Loaded rows by sheet")
+            st.dataframe(state["sheet_counts"], use_container_width=True)
         st.markdown("---")
         st.markdown("##### Debug / raw data")
         st.write("Options raw", state["df_opts"].head())
