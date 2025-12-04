@@ -1279,7 +1279,7 @@ def calculate_advanced_unrealized_pnl(ending_inventory, open_options, live_stock
     return pd.DataFrame(unrealized_rows).groupby("ticker")["unrealized_pnl"].sum()
 
 
-def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, hide_index=False):
+def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False):
     df = df.copy()
     formatter = {}
     if currency_cols:
@@ -1288,6 +1288,8 @@ def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=Non
         formatter.update({c: "{:.1%}".format for c in pct_cols if c in df.columns})
     if int_cols:
         formatter.update({c: "{:.0f}".format for c in int_cols if c in df.columns})
+    if float_cols:
+        formatter.update({c: "{:.2f}".format for c in float_cols if c in df.columns})
     styler = df.style.format(formatter).set_properties(**{"text-align": "right"})
     if hide_index:
         try:
