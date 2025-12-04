@@ -1500,6 +1500,10 @@ def main():
         tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
         with tab_config:
             st.markdown("##### Data sources")
+            if st.button("Refresh sheet list", key="refresh_sheet_list"):
+                _download_excel.clear()
+                list_option_sheets.clear()
+                st.experimental_rerun()
             selected_sheets = st.multiselect(
                 "Sheets to include (Options YYYY):",
                 options=available_sheets,
