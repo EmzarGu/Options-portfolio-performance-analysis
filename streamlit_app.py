@@ -1372,6 +1372,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
+    monthly_returns_mtm = monthly_returns.copy()
     # Active months: exclude months with zero options P&L (i.e., no option trades)
     if "realized_options_pnl" in monthly_summary and "roac" in monthly_summary:
         monthly_returns_active = monthly_summary.loc[monthly_summary["realized_options_pnl"] != 0, "roac"].dropna()
@@ -1404,6 +1405,22 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     inv_df, per_ticker_unreal, total_unreal = calculate_unrealized_positions(open_option_lots, ending_inventory, live_prices)
     stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
     option_unreal = total_unreal - stock_unreal
+    # Build an MTM return series by allocating current-year unrealized into the latest month of the current year.
+    if include_unrealized_current_year and total_unreal != 0 and not monthly_summary.empty:
+        ms_mtm = monthly_summary.copy()
+        ms_mtm.index = pd.to_datetime(ms_mtm.index, errors="coerce")
+        mask_curr = ms_mtm.index.notna() & ms_mtm.index.year.eq(as_of_ts.year)
+        if mask_curr.any():
+            last_month = ms_mtm.index[mask_curr].max()
+            if "total_realized_pnl" in ms_mtm.columns:
+                ms_mtm.loc[last_month, "total_realized_pnl"] = ms_mtm.loc[last_month, "total_realized_pnl"] + total_unreal
+            if {"total_realized_pnl", "avg_capital"}.issubset(ms_mtm.columns):
+                ms_mtm.loc[last_month, "roac"] = np.where(
+                    ms_mtm.loc[last_month, "avg_capital"] > 0,
+                    ms_mtm.loc[last_month, "total_realized_pnl"] / ms_mtm.loc[last_month, "avg_capital"],
+                    np.nan,
+                )
+            monthly_returns_mtm = ms_mtm["roac"].dropna() if "roac" in ms_mtm else monthly_returns_mtm
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
@@ -1417,6 +1434,9 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     twr_annualized = twr_annualized_by_year(monthly_returns.dropna())
     if not twr_annualized.empty:
         yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
+    twr_annualized_mtm = twr_annualized_by_year(monthly_returns_mtm.dropna())
+    if not twr_annualized_mtm.empty:
+        yearly = yearly.merge(twr_annualized_mtm.rename("annualized_return_twr_mtm"), left_on="year", right_index=True, how="left")
     twr_active = twr_annualized_by_year(monthly_returns_active.dropna())
     if not twr_active.empty:
         yearly = yearly.merge(twr_active.rename("annualized_return_twr_active"), left_on="year", right_index=True, how="left")
@@ -1426,6 +1446,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     if include_unrealized_current_year and total_unreal != 0 and not yearly_with_unreal.empty:
         mask_curr = yearly_with_unreal["year"].eq(as_of_ts.year)
         yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "total_realized_pnl"] + total_unreal
+        if not twr_annualized_mtm.empty:
+            yearly_with_unreal = yearly_with_unreal.merge(twr_annualized_mtm.rename("annualized_return_twr_mtm"), left_on="year", right_index=True, how="left")
 
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
     per_ticker_totals = (
@@ -1478,6 +1500,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "capital_daily": capital_daily,
         "monthly_cycles": monthly_summary,
         "monthly_returns_w_div": monthly_returns,
+        "monthly_returns_mtm": monthly_returns_mtm,
         "monthly_returns_active": monthly_returns_active,
         "open_options": open_options_df,
         "live_prices": live_prices,
@@ -1516,7 +1539,7 @@ def main():
     col_side, col_main = st.columns([1, 4])
     with col_side:
         as_of_input = st.date_input("As of date", value=date.today())
-        include_unrealized = st.checkbox("Include unrealized in current year", value=True)
+        include_unrealized = st.checkbox("Add unrealized to current-year totals and TWR (MTM)", value=False)
 
     snapshot_area = st.container()
     tabs_area = st.container()
@@ -1571,7 +1594,8 @@ def main():
     )
     realized_total = float(ytd_row.get("total_realized_pnl", 0.0) or 0.0)
     ytd_total = realized_total + (state["total_unreal"] if include_unrealized else 0.0)
-    ytd_twr = ytd_row.get("annualized_return_twr", pd.NA)
+    twr_field = "annualized_return_twr_mtm" if include_unrealized else "annualized_return_twr"
+    ytd_twr = ytd_row.get(twr_field, pd.NA)
     issues = state.get("issues", [])
     price_errors = state.get("price_errors", [])
     unrealized_blocked = state.get("unrealized_blocked", False)
@@ -1611,7 +1635,7 @@ def main():
                 )
             with mc4:
                 metric_card(
-                    "YTD Annualized TWR",
+                    "YTD Annualized TWR (MTM)" if include_unrealized else "YTD Annualized TWR",
                     f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
                 )
         render_issue_status()
@@ -1671,6 +1695,7 @@ def main():
             "ann_roac",
             "ann_ropc",
             "annualized_return_twr",
+            "annualized_return_twr_mtm",
         ]
         mtm_map = {
             "year": "Year",
@@ -1679,6 +1704,7 @@ def main():
             "ann_roac": "Ann. return on avg",
             "ann_ropc": "Ann. return on peak",
             "annualized_return_twr": "Ann. TWR",
+            "annualized_return_twr_mtm": "Ann. TWR (MTM)",
         }
         mtm_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
         mtm_display = mtm_source[[c for c in mtm_cols if c in mtm_source.columns]].rename(columns=mtm_map)
@@ -1686,7 +1712,7 @@ def main():
             _format_df(
                 mtm_display.reset_index(drop=True),
                 currency_cols=["Realized P&L", "Total P&L (incl unreal)"],
-                pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR"],
+                pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR", "Ann. TWR (MTM)"],
                 int_cols=["Year"],
                 hide_index=True,
             ),
