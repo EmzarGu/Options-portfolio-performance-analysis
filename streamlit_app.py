@@ -1409,7 +1409,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     if include_unrealized_current_year and total_unreal != 0 and not monthly_summary.empty:
         ms_mtm = monthly_summary.copy()
         ms_mtm.index = pd.to_datetime(ms_mtm.index, errors="coerce")
-        mask_curr = ms_mtm.index.notna() & ms_mtm.index.year.eq(as_of_ts.year)
+        idx_year = getattr(ms_mtm.index, "year", None)
+        mask_curr = (ms_mtm.index.notna() & (idx_year == as_of_ts.year)) if idx_year is not None else pd.Series(False, index=ms_mtm.index)
         if mask_curr.any():
             last_month = ms_mtm.index[mask_curr].max()
             if "total_realized_pnl" in ms_mtm.columns:
@@ -1434,7 +1435,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     twr_annualized = twr_annualized_by_year(monthly_returns.dropna())
     if not twr_annualized.empty:
         yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
-    twr_annualized_mtm = twr_annualized_by_year(monthly_returns_mtm.dropna())
+    twr_annualized_mtm = twr_annualized_by_year(monthly_returns_mtm.dropna()) if hasattr(monthly_returns_mtm.index, "year") else pd.Series(dtype=float)
     if not twr_annualized_mtm.empty:
         yearly = yearly.merge(twr_annualized_mtm.rename("annualized_return_twr_mtm"), left_on="year", right_index=True, how="left")
     twr_active = twr_annualized_by_year(monthly_returns_active.dropna())
