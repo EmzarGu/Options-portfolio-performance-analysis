@@ -51,6 +51,7 @@ st.markdown(
 SHEET_ID = "19LhrZai3cbJ1GbPE1iTquYHUeXfpIxXFX1amF5eWi_g"
 SHEETS = ["Options 2024", "Options 2025"]
 CONTRACT_MULTIPLIER = 100
+PREFS_PATH = Path(".streamlit_user_prefs.json")
 
 
 # ------------------------------------------------------------
@@ -137,6 +138,23 @@ def _load_credentials():
         "https://www.googleapis.com/auth/spreadsheets.readonly",
     ]
     return service_account.Credentials.from_service_account_info(info, scopes=scopes)
+
+
+def load_prefs():
+    try:
+        data = json.loads(PREFS_PATH.read_text())
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception:
+        return {}
+
+
+def save_prefs(prefs: Dict):
+    try:
+        PREFS_PATH.write_text(json.dumps(prefs, indent=2))
+    except Exception:
+        pass
 
 
 @st.cache_data(show_spinner=False)
@@ -1531,20 +1549,23 @@ def main():
     st.caption("Live from Google Sheets with Streamlit")
 
     col_side, col_main = st.columns([1, 4])
+    prefs = load_prefs()
     with col_side:
         as_of_input = st.date_input("As of date", value=date.today())
-        include_unrealized = st.checkbox("Add unrealized to current-year totals and TWR (MTM)", value=False)
+        include_unrealized = st.checkbox(
+            "Add unrealized to current-year totals and TWR (MTM)",
+            value=bool(prefs.get("include_unrealized", False)),
+            key="include_unrealized",
+        )
 
     snapshot_area = st.container()
     tabs_area = st.container()
 
     available_sheets = list_option_sheets(SHEET_ID)
-    default_sheets = (
-        st.session_state.get("selected_sheets")
-        or [s for s in available_sheets if s in SHEETS]
-        or available_sheets
-    )
-    st.session_state["selected_sheets"] = default_sheets
+    saved_sheets = prefs.get("selected_sheets") or []
+    saved_sheets = [s for s in saved_sheets if s in available_sheets]
+    default_sheets = saved_sheets or [s for s in available_sheets if s in SHEETS] or available_sheets
+    st.session_state["selected_sheets"] = st.session_state.get("selected_sheets", default_sheets)
     with tabs_area:
         tabs = ["Yearly", "Monthly cycles", "Per ticker", "Positions", "Config", "Logs / data issues", "Methodology"]
         tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
@@ -1564,6 +1585,14 @@ def main():
                 st.warning("Select at least one sheet to run the dashboard.")
             st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
     selected_sheets = st.session_state.get("selected_sheets", default_sheets) or default_sheets
+
+    # Persist prefs if changed
+    new_prefs = {
+        "include_unrealized": bool(st.session_state.get("include_unrealized", False)),
+        "selected_sheets": selected_sheets,
+    }
+    if new_prefs != prefs:
+        save_prefs(new_prefs)
 
     # cache_bust is kept for API compatibility; build_pipeline no longer cached
     try:
