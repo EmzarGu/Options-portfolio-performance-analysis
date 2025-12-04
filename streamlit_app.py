@@ -700,6 +700,25 @@ def yearly_summary_from_monthly(monthly_df: pd.DataFrame, capital_daily: pd.Data
             ]
         )
     m = monthly_df.copy()
+    # Guard against object indexes (e.g., strings) that break .index.year
+    m.index = pd.to_datetime(m.index, errors="coerce")
+    m = m[m.index.notna()]
+    if m.empty:
+        return pd.DataFrame(
+            columns=[
+                "year",
+                "realized_options_pnl",
+                "realized_stock_pnl",
+                "dividends",
+                "total_realized_pnl",
+                "avg_capital",
+                "peak_capital",
+                "roac_year",
+                "ropc_year",
+                "ann_roac",
+                "ann_ropc",
+            ]
+        )
     m["year"] = m.index.year
     agg = (
         m.groupby("year")
@@ -788,6 +807,11 @@ def per_ticker_yearly_from_realized(
 
 def twr_annualized_by_year(ret_series):
     if ret_series.empty or not hasattr(ret_series.index, "year"):
+        return pd.Series(dtype=float)
+    rs = ret_series.copy()
+    rs.index = pd.to_datetime(rs.index, errors="coerce")
+    rs = rs[rs.index.notna()]
+    if rs.empty:
         return pd.Series(dtype=float)
     grouped = ret_series.groupby(ret_series.index.year)
     return grouped.apply(lambda r: (1 + r).prod() ** (12 / len(r)) - 1)
@@ -880,7 +904,11 @@ def period_returns(ret_series: pd.Series):
     out = {}
     if ret_series.empty or not hasattr(ret_series.index, "year"):
         return out
-    srt = ret_series.sort_index()
+    srt = ret_series.copy()
+    srt.index = pd.to_datetime(srt.index, errors="coerce")
+    srt = srt[srt.index.notna()].sort_index()
+    if srt.empty:
+        return out
     def trailing_n(n):
         sub = srt.tail(n)
         return (1 + sub).prod() - 1 if len(sub) else np.nan
