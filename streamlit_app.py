@@ -191,7 +191,8 @@ def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
             }
         )
         for d in ["trans_date", "expiration"]:
-            df[d] = pd.to_datetime(df[d], errors="coerce").dt.tz_localize(None)
+            # Accept European-style dd/mm/yyyy as well as ISO; dayfirst=True prevents dropping rows like 25/08/2025.
+            df[d] = pd.to_datetime(df[d], errors="coerce", dayfirst=True).dt.tz_localize(None)
         for n in ["strike", "qty", "amount", "commission", "total_pnl"]:
             df[n] = pd.to_numeric(df[n], errors="coerce")
         df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
