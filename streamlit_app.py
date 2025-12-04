@@ -1372,6 +1372,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
+    monthly_returns.index = pd.to_datetime(monthly_returns.index, errors="coerce")
+    monthly_returns = monthly_returns[monthly_returns.index.notna()]
     monthly_returns_mtm = monthly_returns.copy()
     # Active months: exclude months with zero options P&L (i.e., no option trades)
     if "realized_options_pnl" in monthly_summary and "roac" in monthly_summary:
@@ -1422,6 +1424,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
                     np.nan,
                 )
             monthly_returns_mtm = ms_mtm["roac"].dropna() if "roac" in ms_mtm else monthly_returns_mtm
+            monthly_returns_mtm.index = pd.to_datetime(monthly_returns_mtm.index, errors="coerce")
+            monthly_returns_mtm = monthly_returns_mtm[monthly_returns_mtm.index.notna()]
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
