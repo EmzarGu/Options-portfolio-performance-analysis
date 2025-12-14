@@ -51,7 +51,8 @@ st.markdown(
 SHEET_ID = "19LhrZai3cbJ1GbPE1iTquYHUeXfpIxXFX1amF5eWi_g"
 SHEETS = ["Options 2024", "Options 2025"]
 CONTRACT_MULTIPLIER = 100
-PREFS_PATH = Path(".streamlit_user_prefs.json")
+# Persist preferences outside the repo so they survive rebuilds; override via APP_PREFS_PATH.
+PREFS_PATH = Path(os.getenv("APP_PREFS_PATH", str(Path.home() / ".options_roi_prefs.json")))
 
 
 # ------------------------------------------------------------
@@ -140,21 +141,73 @@ def _load_credentials():
     return service_account.Credentials.from_service_account_info(info, scopes=scopes)
 
 
-def load_prefs():
+def _coerce_bool(val) -> bool:
+    """Convert query-string-ish values into a boolean."""
+    if isinstance(val, list) and val:
+        val = val[-1]
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _load_query_prefs() -> Dict:
+    """Restore prefs from the browser URL so they survive app sleep/restarts."""
+    try:
+        params = st.experimental_get_query_params()
+    except Exception:
+        return {}
+    prefs: Dict[str, object] = {}
+    if "include_unrealized" in params:
+        prefs["include_unrealized"] = _coerce_bool(params["include_unrealized"])
+    if "selected_sheets" in params:
+        prefs["selected_sheets"] = params.get("selected_sheets", [])
+    return prefs
+
+
+def _load_file_prefs() -> Dict:
     try:
         data = json.loads(PREFS_PATH.read_text())
-        if not isinstance(data, dict):
-            return {}
-        return data
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
+def load_prefs():
+    # Priority: query params (user/browser) override file storage
+    prefs = _load_file_prefs()
+    prefs.update(_load_query_prefs())
+    return prefs
+
+
+def _persist_query_params(prefs: Dict) -> None:
+    """Encode prefs into the URL so they survive Streamlit sleep/restarts."""
+    try:
+        current = st.experimental_get_query_params()
+    except Exception:
+        return
+
+    desired = dict(current)
+    desired["include_unrealized"] = ["1"] if prefs.get("include_unrealized") else ["0"]
+    sheets = [str(s) for s in prefs.get("selected_sheets") or [] if s]
+    if sheets:
+        desired["selected_sheets"] = sheets
+    elif "selected_sheets" in desired:
+        desired.pop("selected_sheets")
+
+    if desired != current:
+        try:
+            st.experimental_set_query_params(**desired)
+        except Exception:
+            pass
+
+
 def save_prefs(prefs: Dict):
     try:
+        PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
         PREFS_PATH.write_text(json.dumps(prefs, indent=2))
     except Exception:
         pass
+    _persist_query_params(prefs)
 
 
 @st.cache_data(show_spinner=False)
