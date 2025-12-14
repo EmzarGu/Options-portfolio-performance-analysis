@@ -216,6 +216,14 @@ def save_prefs(prefs: Dict):
     _persist_query_params(prefs)
 
 
+def _rerun_app():
+    """Streamlit rerun helper compatible with new and old versions."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:  # pragma: no cover - older Streamlit fallback
+        st.experimental_rerun()
+
+
 @st.cache_data(show_spinner=False)
 def _download_excel(sheet_id: str) -> bytes:
     override = os.getenv("LOCAL_EXCEL_PATH")
@@ -1633,7 +1641,7 @@ def main():
             if st.button("Refresh sheet list", key="refresh_sheet_list"):
                 _download_excel.clear()
                 list_option_sheets.clear()
-                st.experimental_rerun()
+                _rerun_app()
             selected_sheets = st.multiselect(
                 "Sheets to include (Options YYYY):",
                 options=available_sheets,
