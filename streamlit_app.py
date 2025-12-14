@@ -51,8 +51,8 @@ st.markdown(
 SHEET_ID = "19LhrZai3cbJ1GbPE1iTquYHUeXfpIxXFX1amF5eWi_g"
 SHEETS = ["Options 2024", "Options 2025"]
 CONTRACT_MULTIPLIER = 100
-# Persist preferences outside the repo so they survive rebuilds; override via APP_PREFS_PATH.
-PREFS_PATH = Path(os.getenv("APP_PREFS_PATH", str(Path.home() / ".options_roi_prefs.json")))
+# Keep the original on-disk prefs path for local runs; URL params handle hosted sleep/restarts.
+PREFS_PATH = Path(".streamlit_user_prefs.json")
 
 
 # ------------------------------------------------------------
