@@ -51,8 +51,9 @@ st.markdown(
 SHEET_ID = "19LhrZai3cbJ1GbPE1iTquYHUeXfpIxXFX1amF5eWi_g"
 SHEETS = ["Options 2024", "Options 2025"]
 CONTRACT_MULTIPLIER = 100
-# Keep the original on-disk prefs path for local runs; URL params handle hosted sleep/restarts.
+# Keep the original on-disk prefs path for local runs; add a home-dir fallback for rebuilds.
 PREFS_PATH = Path(".streamlit_user_prefs.json")
+PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
 
 
 # ------------------------------------------------------------
@@ -164,17 +165,20 @@ def _load_query_prefs() -> Dict:
     return prefs
 
 
-def _load_file_prefs() -> Dict:
+def _read_prefs_file(path: Path) -> Dict:
     try:
-        data = json.loads(PREFS_PATH.read_text())
-        return data if isinstance(data, dict) else {}
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
     except Exception:
-        return {}
+        pass
+    return {}
 
 
 def load_prefs():
-    # Priority: query params (user/browser) override file storage
-    prefs = _load_file_prefs()
+    # Priority: repo-local file -> home file -> query params (most recent user choices)
+    prefs = _read_prefs_file(PREFS_PATH)
+    prefs.update(_read_prefs_file(PREFS_HOME_PATH))
     prefs.update(_load_query_prefs())
     return prefs
 
@@ -202,11 +206,13 @@ def _persist_query_params(prefs: Dict) -> None:
 
 
 def save_prefs(prefs: Dict):
-    try:
-        PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PREFS_PATH.write_text(json.dumps(prefs, indent=2))
-    except Exception:
-        pass
+    # Best-effort write to both locations so preferences survive rebuilds/sleep.
+    for path in (PREFS_PATH, PREFS_HOME_PATH):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(prefs, indent=2))
+        except Exception:
+            pass
     _persist_query_params(prefs)
 
 
