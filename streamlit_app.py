@@ -2108,7 +2108,8 @@ def main():
             st.dataframe(
                 _format_df(
                     inv_df,
-                    currency_cols=["Cost/share", "Current price", "Covered strike", "Unrealized P&L"],
+                    currency_cols=["Unrealized P&L"],
+                    float_cols=["Cost/share", "Current price", "Covered strike"],
                     int_cols=["Shares", "Covered shares"],
                 ),
                 use_container_width=True,
