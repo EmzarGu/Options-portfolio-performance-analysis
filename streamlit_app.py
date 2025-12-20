@@ -1366,6 +1366,10 @@ def calculate_advanced_unrealized_pnl(ending_inventory, open_options, live_stock
 
 def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False):
     df = df.copy()
+    numeric_cols = set(currency_cols or []).union(pct_cols or [], int_cols or [], float_cols or [])
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     formatter = {}
     if currency_cols:
         formatter.update({c: "{:,.0f}".format for c in currency_cols if c in df.columns})
