@@ -764,7 +764,8 @@ def build_monthly_summary(
     combined["roac"] = np.where(combined["avg_capital"] > 0, combined["total_realized_pnl"] / combined["avg_capital"], np.nan)
     combined["ropc"] = np.where(combined["peak_capital"] > 0, combined["total_realized_pnl"] / combined["peak_capital"], np.nan)
     combined.index.name = "month"
-    combined = combined[combined.index <= as_of.normalize()].sort_index()
+    as_of_month_end = pd.to_datetime(as_of).to_period("M").to_timestamp("M")
+    combined = combined[combined.index <= as_of_month_end].sort_index()
     return combined
 
 
