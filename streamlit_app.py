@@ -4,7 +4,7 @@ import math
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 try:
@@ -224,27 +224,95 @@ def _rerun_app():
         st.experimental_rerun()
 
 
+@dataclass(frozen=True)
+class SheetDownload:
+    content: bytes
+    downloaded_at: str
+    source: str
+    file_name: Optional[str] = None
+    file_modified_at: Optional[str] = None
+    file_version: Optional[str] = None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _format_ts(ts: Optional[str]) -> str:
+    dt = _parse_iso(ts)
+    if not dt:
+        return "n/a"
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _fetch_drive_file_metadata(sheet_id: str) -> Dict[str, str]:
+    creds = _load_credentials()
+    authed = AuthorizedSession(creds)
+    url = f"https://www.googleapis.com/drive/v3/files/{sheet_id}"
+    resp = authed.get(url, params={"fields": "id,name,modifiedTime,version"}, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def get_drive_file_metadata(sheet_id: str) -> Dict[str, str]:
+    return _fetch_drive_file_metadata(sheet_id)
+
+
 @st.cache_data(show_spinner=False)
-def _download_excel(sheet_id: str) -> bytes:
+def _download_excel(sheet_id: str) -> SheetDownload:
+    downloaded_at = _now_iso()
     override = os.getenv("LOCAL_EXCEL_PATH")
     if override:
         p = Path(override).expanduser()
         if not p.exists():
             raise RuntimeError(f"LOCAL_EXCEL_PATH is set but file not found: {p}")
-        return p.read_bytes()
+        modified_at = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat()
+        return SheetDownload(
+            content=p.read_bytes(),
+            downloaded_at=downloaded_at,
+            source="local",
+            file_name=p.name,
+            file_modified_at=modified_at,
+        )
 
+    meta = {}
+    try:
+        meta = _fetch_drive_file_metadata(sheet_id)
+    except Exception:
+        meta = {}
     creds = _load_credentials()
     authed = AuthorizedSession(creds)
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
     resp = authed.get(url, timeout=15)
     resp.raise_for_status()
-    return resp.content
+    return SheetDownload(
+        content=resp.content,
+        downloaded_at=downloaded_at,
+        source="drive",
+        file_name=meta.get("name"),
+        file_modified_at=meta.get("modifiedTime"),
+        file_version=meta.get("version"),
+    )
 
 
 @st.cache_data(show_spinner=True)
 def list_option_sheets(sheet_id: str) -> List[str]:
     try:
-        excel_bytes = _download_excel(sheet_id)
+        download = _download_excel(sheet_id)
+        excel_bytes = download.content
         xls = pd.ExcelFile(io.BytesIO(excel_bytes))
         names = [n for n in xls.sheet_names if pd.notna(n) and str(n).startswith("Options ")]
         return sorted(names)
@@ -254,7 +322,8 @@ def list_option_sheets(sheet_id: str) -> List[str]:
 
 @st.cache_data(show_spinner=True)
 def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
-    excel_bytes = _download_excel(sheet_id)
+    download = _download_excel(sheet_id)
+    excel_bytes = download.content
     frames = []
     for sh in sheets:
         bio = io.BytesIO(excel_bytes)
@@ -292,6 +361,13 @@ def load_options(sheet_id: str, sheets: List[str]) -> pd.DataFrame:
     df_all = pd.concat(frames, ignore_index=True)
     df_all = df_all[df_all["action"].isin(["Sell", "Buy"])]
     return df_all
+
+
+def _clear_data_caches() -> None:
+    _download_excel.clear()
+    list_option_sheets.clear()
+    load_options.clear()
+    get_drive_file_metadata.clear()
 
 
 # ------------------------------------------------------------
@@ -1407,6 +1483,58 @@ def metric_card(label, value, delta=None):
     )
 
 
+def _render_data_status(sheet_id: str) -> None:
+    try:
+        download_info = _download_excel(sheet_id)
+    except Exception:
+        download_info = None
+
+    if download_info and download_info.source == "local":
+        override = os.getenv("LOCAL_EXCEL_PATH")
+        label = "Local file"
+        if override:
+            label = f"Local file: {Path(override).expanduser().name}"
+        st.caption(f"Source: {label}")
+        st.caption(f"File modified: {_format_ts(download_info.file_modified_at)}")
+        st.caption(f"Data loaded: {_format_ts(download_info.downloaded_at)}")
+        return
+
+    try:
+        current_meta = get_drive_file_metadata(sheet_id)
+    except Exception:
+        current_meta = None
+
+    if download_info is None and current_meta is None:
+        st.caption("Data status unavailable.")
+        return
+
+    drive_name = None
+    if download_info and download_info.file_name:
+        drive_name = download_info.file_name
+    elif current_meta:
+        drive_name = current_meta.get("name")
+
+    if drive_name:
+        st.caption(f"Drive file: {drive_name}")
+    else:
+        st.caption(f"Drive file id: {sheet_id}")
+
+    used_modified = download_info.file_modified_at if download_info else None
+    st.caption(f"File modified (used): {_format_ts(used_modified)}")
+    if download_info and download_info.file_version:
+        st.caption(f"Drive version (used): {download_info.file_version}")
+    st.caption(f"Data downloaded: {_format_ts(download_info.downloaded_at if download_info else None)}")
+
+    current_modified = current_meta.get("modifiedTime") if current_meta else None
+    if current_modified:
+        st.caption(f"File modified (current): {_format_ts(current_modified)}")
+
+    used_dt = _parse_iso(used_modified) if used_modified else None
+    current_dt = _parse_iso(current_modified) if current_modified else None
+    if used_dt and current_dt and current_dt > used_dt:
+        st.warning("Drive file is newer than cached data. Click Reload to fetch the latest file.")
+
+
 def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, selected_sheets)
     sheet_counts = df_opts.groupby("source_sheet").size().rename("rows").reset_index()
@@ -1643,10 +1771,14 @@ def main():
         tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
         with tab_config:
             st.markdown("##### Data sources")
-            if st.button("Refresh sheet list", key="refresh_sheet_list"):
-                _download_excel.clear()
-                list_option_sheets.clear()
-                _rerun_app()
+            col_refresh, col_status = st.columns([1, 2])
+            with col_refresh:
+                if st.button("Reload data from Google Drive", key="reload_drive_data"):
+                    _clear_data_caches()
+                    _rerun_app()
+                st.caption("Clears cached sheet data and forces a fresh download.")
+            with col_status:
+                _render_data_status(SHEET_ID)
             selected_sheets = st.multiselect(
                 "Sheets to include (Options YYYY):",
                 options=available_sheets,
