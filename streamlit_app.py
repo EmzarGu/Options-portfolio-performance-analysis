@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # py3.9/3.10
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 import altair as alt
 from google.auth.transport.requests import AuthorizedSession
@@ -293,18 +294,51 @@ def _download_excel(sheet_id: str) -> SheetDownload:
         meta = _fetch_drive_file_metadata(sheet_id)
     except Exception:
         meta = {}
-    creds = _load_credentials()
-    authed = AuthorizedSession(creds)
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
-    resp = authed.get(url, timeout=15)
-    resp.raise_for_status()
+
+    creds = None
+    creds_err = None
+    try:
+        creds = _load_credentials()
+    except Exception as exc:
+        creds_err = exc
+
+    if creds:
+        authed = AuthorizedSession(creds)
+        resp = authed.get(url, timeout=15)
+        resp.raise_for_status()
+        if not resp.content.startswith(b"PK"):
+            raise RuntimeError("Google Sheets export returned non-XLSX content; check sharing settings.")
+        return SheetDownload(
+            content=resp.content,
+            downloaded_at=downloaded_at,
+            source="drive",
+            file_name=meta.get("name"),
+            file_modified_at=meta.get("modifiedTime"),
+            file_version=meta.get("version"),
+        )
+
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        content = resp.content
+        if not content.startswith(b"PK"):
+            raise RuntimeError("Public sheet export returned non-XLSX content; check sharing settings.")
+    except Exception as public_exc:
+        msg = (
+            "Public sheet download failed and no service account credentials were found. "
+            "Share the sheet publicly or set GOOGLE_SERVICE_ACCOUNT_JSON / LOCAL_SECRETS_PATH / LOCAL_EXCEL_PATH."
+        )
+        if creds_err:
+            msg = f"{creds_err} {msg}"
+        raise RuntimeError(msg) from public_exc
+
     return SheetDownload(
-        content=resp.content,
+        content=content,
         downloaded_at=downloaded_at,
-        source="drive",
+        source="public",
         file_name=meta.get("name"),
         file_modified_at=meta.get("modifiedTime"),
-        file_version=meta.get("version"),
     )
 
 
@@ -1498,6 +1532,12 @@ def _render_data_status(sheet_id: str) -> None:
         st.caption(f"File modified: {_format_ts(download_info.file_modified_at)}")
         st.caption(f"Data loaded: {_format_ts(download_info.downloaded_at)}")
         return
+    if download_info and download_info.source == "public":
+        st.caption("Source: Public Google Sheet (no auth)")
+        if download_info.file_modified_at:
+            st.caption(f"File modified: {_format_ts(download_info.file_modified_at)}")
+        st.caption(f"Data loaded: {_format_ts(download_info.downloaded_at)}")
+        return
 
     try:
         current_meta = get_drive_file_metadata(sheet_id)
@@ -1803,7 +1843,8 @@ def main():
         state = build_pipeline(as_of_input, include_unrealized, selected_sheets, cache_bust=4)
     except Exception as e:
         st.error(
-            "Could not load data. Set `LOCAL_EXCEL_PATH` to your workbook or ensure Google Sheets credentials are available. "
+            "Could not load data. If the sheet is private, set `GOOGLE_SERVICE_ACCOUNT_JSON` (or `LOCAL_SECRETS_PATH`); "
+            "if it's public, ensure sharing is enabled. You can also set `LOCAL_EXCEL_PATH` to a local workbook. "
             f"Details: {e}"
         )
         st.stop()
@@ -2279,7 +2320,9 @@ def main():
         st.markdown("##### Data / connectivity issues")
         st.write(f"Build version: {APP_BUILD_VERSION}")
         st.caption(
-            "Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`. Offline fallback: set env `LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
+            "Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
+            "private sheets need a service account. Offline fallback: set env "
+            "`LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
         )
         coverage_problem = price_summary and (
             price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
