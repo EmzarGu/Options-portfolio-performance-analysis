@@ -1654,10 +1654,6 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         ]
     )
 
-    option_prices, option_price_errors, _ = fetch_current_option_prices_yf(open_options_df)
-    if option_price_errors:
-        price_errors.extend(option_price_errors)
-
     tickers_to_price = sorted({lot.ticker for lot in ending_inventory}.union({lot.ticker for lot in open_option_lots}))
     live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(tickers_to_price)
     price_errors.extend(stock_price_errors)
@@ -1760,7 +1756,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "monthly_returns_active": monthly_returns_active,
         "open_options": open_options_df,
         "live_prices": live_prices,
-        "live_option_prices": option_prices,
+        "live_option_prices": {},
         "inv_df": inv_df,
         "total_unreal": total_unreal,
         "option_unreal": option_unreal,
@@ -1776,7 +1772,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "unrealized_blocked": False,
         "price_summary": price_summary,
         "stock_prices": live_prices,
-        "option_prices": option_prices,
+        "option_prices": {},
         "benchmark_metrics": benchmark_metrics_df,
         "aligned_bench_returns": aligned_bench_returns,
         "per_ticker_totals": per_ticker_totals,
@@ -2297,26 +2293,8 @@ def main():
                 st.info("No open short options.")
             else:
                 oo = state["open_options"].copy()
-                option_prices = state.get("option_prices") or {}
-                if option_prices and not oo.empty:
-                    symbols = []
-                    for r in oo.itertuples(index=False):
-                        if pd.isna(r.strike) or pd.isna(r.expiration):
-                            symbols.append(None)
-                            continue
-                        opt_type = str(r.type)[0].upper() if pd.notna(r.type) else ""
-                        if not opt_type:
-                            symbols.append(None)
-                            continue
-                        exp_dt = pd.to_datetime(r.expiration, errors="coerce")
-                        if pd.isna(exp_dt):
-                            symbols.append(None)
-                            continue
-                        strike_str = f"{int(float(r.strike) * 1000):08d}"
-                        symbols.append(f"{r.ticker}{exp_dt.strftime('%y%m%d')}{opt_type}{strike_str}")
-                    oo["current_price"] = [option_prices.get(sym) if sym else np.nan for sym in symbols]
-                else:
-                    oo["current_price"] = np.nan
+                stock_prices = state.get("stock_prices") or {}
+                oo["current_price"] = oo["ticker"].map(stock_prices)
                 oo = oo[["ticker", "type", "strike", "current_price", "qty", "expiration", "trans_date", "open_price"]].copy()
                 for dcol in ["expiration", "trans_date"]:
                     if dcol in oo.columns:
@@ -2333,13 +2311,30 @@ def main():
                         "open_price": "Open price",
                     }
                 )
+                def _highlight_short_option_price(row: pd.Series):
+                    """Highlight current price relative to strike for short puts/calls."""
+                    styles = [""] * len(row)
+                    try:
+                        option_type = row.get("Type")
+                        current = pd.to_numeric(row.get("Current price"), errors="coerce")
+                        strike = pd.to_numeric(row.get("Strike"), errors="coerce")
+                        highlight = (
+                            option_type == "Put" and current < strike
+                            or option_type == "Call" and current > strike
+                        )
+                        if highlight:
+                            idx = row.index.get_loc("Current price")
+                            styles[idx] = "color: #dc2626;"
+                    except Exception:
+                        pass
+                    return styles
                 st.dataframe(
                     _format_df(
                         oo,
                         currency_cols=["Strike"],
                         float_cols=["Open price", "Current price"],
                         int_cols=["Qty"],
-                    ),
+                    ).apply(_highlight_short_option_price, axis=1),
                     use_container_width=True,
                 )
 
