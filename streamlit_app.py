@@ -2324,7 +2324,7 @@ def main():
                         )
                         if highlight:
                             idx = row.index.get_loc("Current price")
-                            styles[idx] = "color: #dc2626;"
+                            styles[idx] = "background-color: rgba(220, 38, 38, 0.5); color: #ffffff;"
                     except Exception:
                         pass
                     return styles
