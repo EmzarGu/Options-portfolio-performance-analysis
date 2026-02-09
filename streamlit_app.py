@@ -2331,8 +2331,7 @@ def main():
                 st.dataframe(
                     _format_df(
                         oo,
-                        currency_cols=["Strike"],
-                        float_cols=["Open price", "Current price"],
+                        float_cols=["Strike", "Open price", "Current price"],
                         int_cols=["Qty"],
                     ).apply(_highlight_short_option_price, axis=1),
                     use_container_width=True,
