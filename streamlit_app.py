@@ -2295,7 +2295,15 @@ def main():
                 oo = state["open_options"].copy()
                 stock_prices = state.get("stock_prices") or {}
                 oo["current_price"] = oo["ticker"].map(stock_prices)
-                oo = oo[["ticker", "type", "strike", "current_price", "qty", "expiration", "trans_date", "open_price"]].copy()
+                strike_num = pd.to_numeric(oo["strike"], errors="coerce")
+                current_num = pd.to_numeric(oo["current_price"], errors="coerce")
+                valid_moneyness = strike_num.notna() & current_num.notna() & (strike_num != 0)
+                oo["moneyness_pct"] = np.nan
+                put_mask = (oo["type"] == "Put") & valid_moneyness
+                call_mask = (oo["type"] == "Call") & valid_moneyness
+                oo.loc[put_mask, "moneyness_pct"] = (strike_num[put_mask] - current_num[put_mask]) / strike_num[put_mask]
+                oo.loc[call_mask, "moneyness_pct"] = (current_num[call_mask] - strike_num[call_mask]) / strike_num[call_mask]
+                oo = oo[["ticker", "type", "strike", "current_price", "moneyness_pct", "qty", "expiration", "trans_date", "open_price"]].copy()
                 for dcol in ["expiration", "trans_date"]:
                     if dcol in oo.columns:
                         oo[dcol] = pd.to_datetime(oo[dcol]).dt.strftime("%Y-%m-%d")
@@ -2305,32 +2313,41 @@ def main():
                         "type": "Type",
                         "strike": "Strike",
                         "current_price": "Current price",
+                        "moneyness_pct": "Moneyness %",
                         "qty": "Qty",
                         "expiration": "Expiration",
                         "trans_date": "Opened",
                         "open_price": "Open price",
                     }
                 )
+                st.caption("Color key (short-option moneyness): red > 0%; orange -1% to 0%; yellow -5% to -1%; none -10% to -5%; blue < -10%.")
+
                 def _highlight_short_option_price(row: pd.Series):
-                    """Highlight current price relative to strike for short puts/calls."""
+                    """Color-code short options by moneyness bands."""
                     styles = [""] * len(row)
                     try:
-                        option_type = row.get("Type")
-                        current = pd.to_numeric(row.get("Current price"), errors="coerce")
-                        strike = pd.to_numeric(row.get("Strike"), errors="coerce")
-                        highlight = (
-                            option_type == "Put" and current < strike
-                            or option_type == "Call" and current > strike
-                        )
-                        if highlight:
-                            idx = row.index.get_loc("Current price")
-                            styles[idx] = "background-color: rgba(220, 38, 38, 0.5); color: #ffffff;"
+                        moneyness = pd.to_numeric(row.get("Moneyness %"), errors="coerce")
+                        style = ""
+                        if pd.notna(moneyness):
+                            if moneyness > 0:
+                                style = "background-color: rgba(220, 38, 38, 0.50); color: #ffffff;"
+                            elif -0.01 <= moneyness <= 0:
+                                style = "background-color: rgba(249, 115, 22, 0.45); color: #111827;"
+                            elif -0.05 <= moneyness < -0.01:
+                                style = "background-color: rgba(250, 204, 21, 0.45); color: #111827;"
+                            elif moneyness < -0.10:
+                                style = "background-color: rgba(37, 99, 235, 0.40); color: #ffffff;"
+                        if style:
+                            for col in ("Current price", "Moneyness %"):
+                                if col in row.index:
+                                    styles[row.index.get_loc(col)] = style
                     except Exception:
                         pass
                     return styles
                 st.dataframe(
                     _format_df(
                         oo,
+                        pct_cols=["Moneyness %"],
                         float_cols=["Strike", "Open price", "Current price"],
                         int_cols=["Qty"],
                     ).apply(_highlight_short_option_price, axis=1),
