@@ -50,7 +50,7 @@ st.markdown(
 # Config
 # ------------------------------------------------------------
 SHEET_ID = "19LhrZai3cbJ1GbPE1iTquYHUeXfpIxXFX1amF5eWi_g"
-SHEETS = ["Options 2024", "Options 2025"]
+SHEETS = ["Options 2024", "Options 2025", "Options 2026"]
 CONTRACT_MULTIPLIER = 100
 # Keep the original on-disk prefs path for local runs; add a home-dir fallback for rebuilds.
 PREFS_PATH = Path(".streamlit_user_prefs.json")
