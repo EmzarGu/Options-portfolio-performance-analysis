@@ -152,11 +152,33 @@ def _coerce_bool(val) -> bool:
     return str(val).strip().lower() not in ("0", "false", "no", "off")
 
 
+def _get_query_params() -> Dict[str, List[str]]:
+    """Return query params in the legacy dict[str, list[str]] shape."""
+    try:
+        query_params = getattr(st, "query_params", None)
+        if query_params is not None:
+            return {key: query_params.get_all(key) for key in query_params}
+        return st.experimental_get_query_params()
+    except Exception:
+        return {}
+
+
+def _set_query_params(params: Dict[str, List[str]]) -> None:
+    """Persist query params while preserving repeated-key semantics."""
+    try:
+        query_params = getattr(st, "query_params", None)
+        if query_params is not None:
+            query_params.from_dict(params)
+        else:
+            st.experimental_set_query_params(**params)
+    except Exception:
+        pass
+
+
 def _load_query_prefs() -> Dict:
     """Restore prefs from the browser URL so they survive app sleep/restarts."""
-    try:
-        params = st.experimental_get_query_params()
-    except Exception:
+    params = _get_query_params()
+    if not params:
         return {}
     prefs: Dict[str, object] = {}
     if "include_unrealized" in params:
@@ -186,9 +208,10 @@ def load_prefs():
 
 def _persist_query_params(prefs: Dict) -> None:
     """Encode prefs into the URL so they survive Streamlit sleep/restarts."""
-    try:
-        current = st.experimental_get_query_params()
-    except Exception:
+    current = _get_query_params()
+    has_query_params = hasattr(st, "query_params")
+    has_experimental = hasattr(st, "experimental_get_query_params") and hasattr(st, "experimental_set_query_params")
+    if not current and not has_query_params and not has_experimental:
         return
 
     desired = dict(current)
@@ -200,10 +223,7 @@ def _persist_query_params(prefs: Dict) -> None:
         desired.pop("selected_sheets")
 
     if desired != current:
-        try:
-            st.experimental_set_query_params(**desired)
-        except Exception:
-            pass
+        _set_query_params(desired)
 
 
 def save_prefs(prefs: Dict):
@@ -1088,7 +1108,7 @@ def align_benchmarks_monthly(tickers: Dict[str, str], idx: pd.DatetimeIndex):
             if px.empty:
                 continue
             # resample to month-end to match strategy returns
-            monthly_px = px.resample("M").last()
+            monthly_px = px.resample("ME").last()
             monthly_ret = monthly_px.pct_change().dropna()
             monthly_ret = monthly_ret.reindex(idx, method="ffill")
             aligned[name] = monthly_ret
