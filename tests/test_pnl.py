@@ -1,4 +1,7 @@
+import subprocess
+
 import pandas as pd
+import streamlit_app as app
 
 from streamlit_app import (
     CONTRACT_MULTIPLIER,
@@ -10,6 +13,7 @@ from streamlit_app import (
     build_per_ticker_totals,
     calculate_unrealized_positions,
     process_option_positions,
+    resolve_build_version,
 )
 
 
@@ -242,3 +246,31 @@ def test_build_options_cycle_chart_data_uses_total_realized_pnl():
     assert list(chart_df.columns) == ["Date", "pnl", "color"]
     assert chart_df["pnl"].tolist() == [120.0, -40.0]
     assert chart_df["color"].tolist() == ["Positive", "Negative"]
+
+
+def test_resolve_build_version_prefers_env(monkeypatch):
+    monkeypatch.setenv("APP_BUILD_VERSION", "deploy-123")
+    monkeypatch.setenv("BUILD_VERSION", "ignored")
+
+    assert resolve_build_version() == "deploy-123"
+
+
+def test_resolve_build_version_uses_git_metadata(monkeypatch):
+    monkeypatch.delenv("APP_BUILD_VERSION", raising=False)
+    monkeypatch.delenv("BUILD_VERSION", raising=False)
+
+    calls = []
+
+    def fake_run(cmd, cwd, check, capture_output, text):
+        calls.append(tuple(cmd))
+        if cmd[:3] == ["git", "rev-parse", "--short=12"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="abcdef123456\n")
+        if cmd[:4] == ["git", "show", "-s", "--format=%cI"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="2026-03-20T23:16:47+01:00\n")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    assert resolve_build_version() == "git:abcdef123456 (2026-03-20T23:16:47+01:00)"
+    assert ("git", "rev-parse", "--short=12", "HEAD") in calls
+    assert ("git", "show", "-s", "--format=%cI", "HEAD") in calls

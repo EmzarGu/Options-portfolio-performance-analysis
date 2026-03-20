@@ -2,6 +2,7 @@ import io
 import json
 import math
 import os
+import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -1210,7 +1211,38 @@ def capital_stats_by_year(capital_daily: pd.DataFrame) -> pd.DataFrame:
     return df.groupby("year").agg(avg_capital=("total", "mean"), peak_capital=("total", "max")).reset_index()
 
 
-APP_BUILD_VERSION = "2025-11-30T22:42:00Z"
+def resolve_build_version() -> str:
+    for env_key in ("APP_BUILD_VERSION", "BUILD_VERSION"):
+        env_val = os.getenv(env_key)
+        if env_val:
+            return env_val.strip()
+
+    repo_root = Path(__file__).resolve().parent
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        committed_at = subprocess.run(
+            ["git", "show", "-s", "--format=%cI", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if sha and committed_at:
+            return f"git:{sha} ({committed_at})"
+        if sha:
+            return f"git:{sha}"
+    except Exception:
+        pass
+    return "unknown"
+
+
+APP_BUILD_VERSION = resolve_build_version()
 
 
 def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
