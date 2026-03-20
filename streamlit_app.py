@@ -638,6 +638,29 @@ def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
     stock_txns: List[StockTxn] = []
     issues: List[str] = []
     all_lots: List[OptionLot] = []
+
+    def snapshot_lot(
+        lot: OptionLot,
+        qty: Optional[int] = None,
+        close_date: Optional[pd.Timestamp] = None,
+        close_price: Optional[float] = None,
+        close_reason: Optional[str] = None,
+    ) -> OptionLot:
+        return OptionLot(
+            ticker=lot.ticker,
+            otype=lot.otype,
+            strike=lot.strike,
+            qty=lot.qty if qty is None else qty,
+            open_date=lot.open_date,
+            expiration=lot.expiration,
+            open_price=lot.open_price,
+            comment=lot.comment,
+            assigned=lot.assigned,
+            close_date=close_date,
+            close_price=close_price,
+            close_reason=close_reason,
+        )
+
     for t in sorted(trades, key=lambda x: (x.date, x.ticker)):
         key = (t.ticker, t.otype, t.strike, pd.to_datetime(t.expiration).normalize())
         if t.action == "Sell":
@@ -653,7 +676,6 @@ def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
                 assigned=t.assigned,
             )
             open_map[key].append(lot)
-            all_lots.append(lot)
         else:
             qty_to_close = t.qty
             buckets = open_map.get(key, [])
@@ -676,10 +698,16 @@ def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
                         reason="close",
                     )
                 )
+                all_lots.append(
+                    snapshot_lot(
+                        lot,
+                        qty=take,
+                        close_date=pd.to_datetime(t.date),
+                        close_price=t.price,
+                        close_reason="close",
+                    )
+                )
                 lot.qty -= take
-                lot.close_date = pd.to_datetime(t.date)
-                lot.close_price = t.price
-                lot.close_reason = "close"
                 qty_to_close -= take
                 if lot.qty == 0:
                     buckets.pop(0)
@@ -709,9 +737,14 @@ def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
                         reason=reason,
                     )
                 )
-                lot.close_date = close_date
-                lot.close_price = 0.0
-                lot.close_reason = reason
+                all_lots.append(
+                    snapshot_lot(
+                        lot,
+                        close_date=close_date,
+                        close_price=0.0,
+                        close_reason=reason,
+                    )
+                )
                 shares = int(round(lot.qty * CONTRACT_MULTIPLIER))
                 if lot.assigned and shares > 0:
                     if lot.otype == "Put":
@@ -723,7 +756,9 @@ def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
                             StockTxn(close_date, lot.ticker, "SELL", shares, lot.strike, "Assigned Call")
                         )
             else:
-                open_lots.append(lot)
+                open_snapshot = snapshot_lot(lot)
+                open_lots.append(open_snapshot)
+                all_lots.append(open_snapshot)
     return realized_events, open_lots, stock_txns, issues, all_lots
 
 
@@ -1020,6 +1055,36 @@ def per_ticker_yearly_from_realized(
     out = opt_df.merge(stock_df, on=["year", "ticker"], how="outer").fillna(0.0)
     out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"]
     return out.sort_values(["year", "combined_realized"], ascending=[True, False])
+
+
+def build_per_ticker_totals(per_ticker_realized: pd.DataFrame, per_ticker_unreal: pd.Series) -> pd.DataFrame:
+    realized_cols = ["options_pnl", "stock_realized_pnl", "combined_realized"]
+    if per_ticker_realized is not None and not per_ticker_realized.empty:
+        realized_totals = (
+            per_ticker_realized.groupby("ticker")[realized_cols]
+            .sum()
+            .reset_index()
+        )
+    else:
+        realized_totals = pd.DataFrame(columns=["ticker", *realized_cols])
+
+    if per_ticker_unreal is not None and not per_ticker_unreal.empty:
+        unreal_totals = per_ticker_unreal.rename_axis("ticker").reset_index(name="unrealized_pnl")
+    else:
+        unreal_totals = pd.DataFrame(columns=["ticker", "unrealized_pnl"])
+
+    all_tickers = sorted(set(realized_totals.get("ticker", pd.Series(dtype=str))).union(unreal_totals.get("ticker", pd.Series(dtype=str))))
+    if not all_tickers:
+        return pd.DataFrame(columns=["ticker", *realized_cols, "unrealized_pnl", "total_pnl"])
+
+    out = pd.DataFrame({"ticker": all_tickers})
+    out = out.merge(realized_totals, on="ticker", how="left").merge(unreal_totals, on="ticker", how="left")
+    for col in [*realized_cols, "unrealized_pnl"]:
+        if col not in out.columns:
+            out[col] = 0.0
+    out[realized_cols + ["unrealized_pnl"]] = out[realized_cols + ["unrealized_pnl"]].fillna(0.0)
+    out["total_pnl"] = out["combined_realized"] + out["unrealized_pnl"]
+    return out
 
 
 def twr_annualized_by_year(ret_series):
@@ -1495,6 +1560,16 @@ def calculate_advanced_unrealized_pnl(ending_inventory, open_options, live_stock
     return pd.DataFrame(unrealized_rows).groupby("ticker")["unrealized_pnl"].sum()
 
 
+def build_options_cycle_chart_data(monthly_summary: pd.DataFrame) -> pd.DataFrame:
+    if monthly_summary is None or monthly_summary.empty or "total_realized_pnl" not in monthly_summary.columns:
+        return pd.DataFrame(columns=["Date", "pnl", "color"])
+    pnl_df = monthly_summary[["total_realized_pnl"]].reset_index()
+    first_col = pnl_df.columns[0]
+    pnl_df = pnl_df.rename(columns={first_col: "Date", "total_realized_pnl": "pnl"})
+    pnl_df["color"] = np.where(pnl_df["pnl"] >= 0, "Positive", "Negative")
+    return pnl_df
+
+
 def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False):
     df = df.copy()
     numeric_cols = set(currency_cols or []).union(pct_cols or [], int_cols or [], float_cols or [])
@@ -1722,14 +1797,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "total_realized_pnl"] + total_unreal
 
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
-    per_ticker_totals = (
-        per_ticker.groupby("ticker")[["options_pnl", "stock_realized_pnl", "combined_realized"]]
-        .sum()
-        .reset_index()
-    )
-    unreal_series = per_ticker_unreal.reindex(per_ticker_totals["ticker"]).fillna(0.0) if not per_ticker_unreal.empty else 0.0
-    per_ticker_totals["unrealized_pnl"] = unreal_series.values if hasattr(unreal_series, "values") else unreal_series
-    per_ticker_totals["total_pnl"] = per_ticker_totals["combined_realized"] + per_ticker_totals["unrealized_pnl"]
+    per_ticker_totals = build_per_ticker_totals(per_ticker, per_ticker_unreal)
 
     cumulative_realized = float(monthly_summary["total_realized_pnl"].sum()) if not monthly_summary.empty else 0.0
     grand_total = cumulative_realized + total_unreal
@@ -2108,11 +2176,8 @@ def main():
                 st.altair_chart(chart, use_container_width=True)
 
         # P&L by options cycle
-        if "combined_realized_m_w_div" in state["monthly_cycles"]:
-            pnl_df = state["monthly_cycles"][["combined_realized_m_w_div"]].reset_index().rename(columns={"index": "cycle"})
-            pnl_df = pnl_df.rename(columns={"combined_realized_m_w_div": "pnl"})
-            pnl_df["color"] = np.where(pnl_df["pnl"] >= 0, "Positive", "Negative")
-            pnl_df = pnl_df.rename(columns={"cycle": "Date"})
+        pnl_df = build_options_cycle_chart_data(state["monthly_cycles"])
+        if not pnl_df.empty:
             pnl_df = _filter_range(pnl_df, "Date")
             if not pnl_df.empty:
                 bar = (

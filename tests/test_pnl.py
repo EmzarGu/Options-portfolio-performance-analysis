@@ -4,8 +4,10 @@ from streamlit_app import (
     CONTRACT_MULTIPLIER,
     OptionLot,
     OpenLot,
+    build_options_cycle_chart_data,
     build_capital_timeline,
     build_option_trades,
+    build_per_ticker_totals,
     calculate_unrealized_positions,
     process_option_positions,
 )
@@ -152,3 +154,91 @@ def test_capital_timeline_uses_put_reserve_days():
     assert pd.Timestamp("2024-01-02") in dates
     assert cap.loc[pd.Timestamp("2024-01-01"), "puts_reserve"] == reserve
     assert cap.loc[pd.Timestamp("2024-01-02"), "puts_reserve"] == reserve
+
+
+def test_partial_close_preserves_remaining_open_lot_and_reserve_window():
+    df = _make_df(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-01-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-02-01"),
+                "strike": 10,
+                "qty": 2,
+                "amount": 200,
+                "commission": 0.0,
+                "total_pnl": 200,
+                "comment": "",
+            },
+            {
+                "trans_date": pd.Timestamp("2024-01-10"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Buy",
+                "expiration": pd.Timestamp("2024-02-01"),
+                "strike": 10,
+                "qty": 1,
+                "amount": -50,
+                "commission": 0.0,
+                "total_pnl": -50,
+                "comment": "",
+            },
+        ]
+    )
+    trades = build_option_trades(df)
+    events, open_lots, stock_txns, issues, all_lots = process_option_positions(trades, pd.Timestamp("2024-01-15"))
+
+    assert len(events) == 1
+    assert not stock_txns
+    assert not issues
+    assert len(open_lots) == 1
+    assert open_lots[0].qty == 1
+    assert open_lots[0].close_date is None
+
+    cap = build_capital_timeline(all_lots, stock_txns, pd.Timestamp("2024-01-15"), df, {})
+    reserve = 10 * CONTRACT_MULTIPLIER
+    assert cap.loc[pd.Timestamp("2024-01-09"), "puts_reserve"] == 2 * reserve
+    assert cap.loc[pd.Timestamp("2024-01-10"), "puts_reserve"] == reserve
+    assert cap.loc[pd.Timestamp("2024-01-14"), "puts_reserve"] == reserve
+
+
+def test_build_per_ticker_totals_includes_unrealized_only_tickers():
+    realized = pd.DataFrame(
+        [
+            {
+                "year": 2024,
+                "ticker": "REAL",
+                "options_pnl": 100.0,
+                "stock_realized_pnl": 0.0,
+                "combined_realized": 100.0,
+            }
+        ]
+    )
+    unreal = pd.Series({"OPEN": 250.0, "REAL": -25.0}, dtype=float)
+
+    totals = build_per_ticker_totals(realized, unreal)
+
+    assert list(totals["ticker"]) == ["OPEN", "REAL"]
+    open_row = totals.loc[totals["ticker"] == "OPEN"].iloc[0]
+    real_row = totals.loc[totals["ticker"] == "REAL"].iloc[0]
+    assert open_row["combined_realized"] == 0.0
+    assert open_row["unrealized_pnl"] == 250.0
+    assert open_row["total_pnl"] == 250.0
+    assert real_row["combined_realized"] == 100.0
+    assert real_row["unrealized_pnl"] == -25.0
+    assert real_row["total_pnl"] == 75.0
+
+
+def test_build_options_cycle_chart_data_uses_total_realized_pnl():
+    monthly = pd.DataFrame(
+        {"total_realized_pnl": [120.0, -40.0]},
+        index=pd.to_datetime(["2024-01-31", "2024-02-29"]),
+    )
+
+    chart_df = build_options_cycle_chart_data(monthly)
+
+    assert list(chart_df.columns) == ["Date", "pnl", "color"]
+    assert chart_df["pnl"].tolist() == [120.0, -40.0]
+    assert chart_df["color"].tolist() == ["Positive", "Negative"]
