@@ -7,11 +7,13 @@ from streamlit_app import (
     CONTRACT_MULTIPLIER,
     OptionLot,
     OpenLot,
+    build_open_options_frame,
     build_options_cycle_chart_data,
     build_capital_timeline,
     build_option_trades,
     build_per_ticker_totals,
     calculate_unrealized_positions,
+    filter_df_to_range,
     process_option_positions,
     resolve_build_version,
 )
@@ -274,3 +276,45 @@ def test_resolve_build_version_uses_git_metadata(monkeypatch):
     assert resolve_build_version() == "git:abcdef123456 (2026-03-20T23:16:47+01:00)"
     assert ("git", "rev-parse", "--short=12", "HEAD") in calls
     assert ("git", "show", "-s", "--format=%cI", "HEAD") in calls
+
+
+def test_build_open_options_frame_preserves_expected_fields():
+    lots = [
+        OptionLot(
+            ticker="AAA",
+            otype="Put",
+            strike=10.0,
+            qty=2,
+            open_date=pd.Timestamp("2024-01-01"),
+            expiration=pd.Timestamp("2024-02-01"),
+            open_price=1.5,
+            comment="",
+            assigned=False,
+        )
+    ]
+
+    df = build_open_options_frame(lots)
+
+    assert list(df.columns) == ["ticker", "type", "strike", "qty", "expiration", "trans_date", "open_price"]
+    assert df.iloc[0].to_dict() == {
+        "ticker": "AAA",
+        "type": "Put",
+        "strike": 10.0,
+        "qty": 2,
+        "expiration": pd.Timestamp("2024-02-01"),
+        "trans_date": pd.Timestamp("2024-01-01"),
+        "open_price": 1.5,
+    }
+
+
+def test_filter_df_to_range_applies_ytd_window():
+    df = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-12-31", "2025-01-15", "2025-03-01"]),
+            "value": [1, 2, 3],
+        }
+    )
+
+    filtered = filter_df_to_range(df, "Date", pd.Timestamp("2025-03-20"), "YTD")
+
+    assert filtered["value"].tolist() == [2, 3]

@@ -1702,6 +1702,108 @@ def _render_data_status(sheet_id: str) -> None:
         st.warning("Drive file is newer than cached data. Click Reload to fetch the latest file.")
 
 
+def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) -> pd.DataFrame:
+    if yf is None:
+        return pd.DataFrame()
+    try:
+        segs = build_holding_segments(stock_txns, as_of)
+        if not segs:
+            return pd.DataFrame()
+
+        by_ticker = defaultdict(list)
+        for seg in segs:
+            by_ticker[seg.ticker].append(
+                (
+                    pd.to_datetime(seg.start).normalize(),
+                    pd.to_datetime(seg.end).normalize(),
+                    seg.shares,
+                )
+            )
+
+        div_rows = []
+        for ticker, seg_list in by_ticker.items():
+            try:
+                div_hist = yf.Ticker(ticker).dividends
+                if div_hist.empty:
+                    continue
+                div_hist.index = pd.to_datetime(div_hist.index).tz_localize(None).normalize()
+                for start, end, shares in seg_list:
+                    divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
+                    for pay_date, per_share in divs_in_period.items():
+                        div_rows.append(
+                            {
+                                "ticker": ticker,
+                                "ex_date": pay_date,
+                                "pay_date": pay_date,
+                                "per_share": per_share,
+                                "shares": shares,
+                                "cash": per_share * shares,
+                            }
+                        )
+            except Exception:
+                continue
+        return pd.DataFrame(div_rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def build_open_options_frame(open_option_lots: List[OptionLot]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "ticker": lot.ticker,
+                "type": lot.otype,
+                "strike": lot.strike,
+                "qty": lot.qty,
+                "expiration": lot.expiration,
+                "trans_date": lot.open_date,
+                "open_price": lot.open_price,
+            }
+            for lot in open_option_lots
+        ]
+    )
+
+
+def filter_df_to_range(df: pd.DataFrame, date_col: str, end: pd.Timestamp, range_choice: str) -> pd.DataFrame:
+    if df is None or df.empty or date_col not in df.columns:
+        return df
+    end = pd.to_datetime(end)
+    start = None
+    if range_choice == "3M":
+        start = end - pd.DateOffset(months=3)
+    elif range_choice == "6M":
+        start = end - pd.DateOffset(months=6)
+    elif range_choice == "YTD":
+        start = pd.Timestamp(end.year, 1, 1)
+    elif range_choice == "1Y":
+        start = end - pd.DateOffset(years=1)
+    if start is not None:
+        dates = pd.to_datetime(df[date_col])
+        mask = (dates >= start) & (dates <= end)
+        return df.loc[mask]
+    return df
+
+
+def render_issue_status_banner(issues: List[str], price_errors: List[str], price_summary: Dict[str, int]) -> None:
+    severity = "success"
+    coverage_problem = price_summary and (
+        price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+    )
+    if issues or price_errors:
+        severity = "error"
+    elif coverage_problem:
+        severity = "warning"
+
+    total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
+    if total_issues == 0:
+        msg = "0 issues detected (Logs tab)"
+    else:
+        msg = f"{total_issues} issue(s) detected — check Logs tab"
+
+    color = {"success": "#22c55e", "warning": "#f59e0b", "error": "#ef4444"}[severity]
+    st.markdown(f"<div style='font-weight:600; color:{color}; margin: 4px 0;'>{msg}</div>", unsafe_allow_html=True)
+
+
 def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, selected_sheets)
     sheet_counts = df_opts.groupby("source_sheet").size().rename("rows").reset_index()
@@ -1721,39 +1823,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     price_history = fetch_price_history_yf({t.ticker for t in stock_txns}, pd.to_datetime(start_date).normalize(), as_of_ts.normalize()) if pd.notna(start_date) else {}
     capital_daily = build_capital_timeline(all_option_lots, stock_txns, as_of_ts, df_opts, price_history)
 
-    div_df = pd.DataFrame()
-    if yf is not None:
-        try:
-            segs = build_holding_segments(stock_txns, as_of_ts)
-            if segs:
-                by_ticker = defaultdict(list)
-                for s in segs:
-                    by_ticker[s.ticker].append((pd.to_datetime(s.start).normalize(), pd.to_datetime(s.end).normalize(), s.shares))
-                div_rows = []
-                for ticker, seg_list in by_ticker.items():
-                    try:
-                        div_hist = yf.Ticker(ticker).dividends
-                        if div_hist.empty:
-                            continue
-                        div_hist.index = pd.to_datetime(div_hist.index).tz_localize(None).normalize()
-                        for start, end, shares in seg_list:
-                            divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
-                            for pay_date, per_share in divs_in_period.items():
-                                div_rows.append(
-                                    {
-                                        "ticker": ticker,
-                                        "ex_date": pay_date,
-                                        "pay_date": pay_date,
-                                        "per_share": per_share,
-                                        "shares": shares,
-                                        "cash": per_share * shares,
-                                    }
-                                )
-                    except Exception:
-                        continue
-                div_df = pd.DataFrame(div_rows)
-        except Exception:
-            div_df = pd.DataFrame()
+    div_df = collect_dividend_cashflows(stock_txns, as_of_ts)
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
@@ -1766,20 +1836,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     else:
         monthly_returns_active = pd.Series(dtype=float)
 
-    open_options_df = pd.DataFrame(
-        [
-            {
-                "ticker": lot.ticker,
-                "type": lot.otype,
-                "strike": lot.strike,
-                "qty": lot.qty,
-                "expiration": lot.expiration,
-                "trans_date": lot.open_date,
-                "open_price": lot.open_price,
-            }
-            for lot in open_option_lots
-        ]
-    )
+    open_options_df = build_open_options_frame(open_option_lots)
 
     tickers_to_price = sorted({lot.ticker for lot in ending_inventory}.union({lot.ticker for lot in open_option_lots}))
     live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(tickers_to_price)
@@ -1989,25 +2046,6 @@ def main():
     unrealized_blocked = state.get("unrealized_blocked", False)
     price_summary = state.get("price_summary", {})
 
-    def render_issue_status():
-        severity = "success"
-        coverage_problem = price_summary and (
-            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-        )
-        if issues or price_errors:
-            severity = "error"
-        elif coverage_problem:
-            severity = "warning"
-
-        total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
-        if total_issues == 0:
-            msg = "0 issues detected (Logs tab)"
-        else:
-            msg = f"{total_issues} issue(s) detected — check Logs tab"
-
-        color = {"success": "#22c55e", "warning": "#f59e0b", "error": "#ef4444"}[severity]
-        st.markdown(f"<div style='font-weight:600; color:{color}; margin: 4px 0;'>{msg}</div>", unsafe_allow_html=True)
-
     with snapshot_area:
         with col_main:
             st.markdown("#### Portfolio Snapshot")
@@ -2026,7 +2064,7 @@ def main():
                     "YTD Annualized TWR (MTM)" if include_unrealized else "YTD Annualized TWR",
                     f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
                 )
-        render_issue_status()
+        render_issue_status_banner(issues, price_errors, price_summary)
         st.divider()
 
     with tab_yearly:
@@ -2155,38 +2193,19 @@ def main():
         range_options = ["3M", "6M", "YTD", "1Y", "Since inception"]
         range_choice = st.radio("Range", range_options, index=range_options.index("YTD"), key="chart_range", horizontal=True)
 
-        def _filter_range(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
-            if df is None or df.empty or date_col not in df.columns:
-                return df
-            end = pd.to_datetime(state["as_of"])
-            start = None
-            if range_choice == "3M":
-                start = end - pd.DateOffset(months=3)
-            elif range_choice == "6M":
-                start = end - pd.DateOffset(months=6)
-            elif range_choice == "YTD":
-                start = pd.Timestamp(end.year, 1, 1)
-            elif range_choice == "1Y":
-                start = end - pd.DateOffset(years=1)
-            if start is not None:
-                dates = pd.to_datetime(df[date_col])
-                mask = (dates >= start) & (dates <= end)
-                return df.loc[mask]
-            return df
-
         aligned_bench = state.get("aligned_bench_returns", {})
         strat_curve = (1 + state["monthly_returns_w_div"]).cumprod() if not state["monthly_returns_w_div"].empty else pd.Series(dtype=float)
         if not strat_curve.empty:
             strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
         curves = []
         if not strat_curve.empty:
-            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+                curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
         for name, series in aligned_bench.items():
             if not series.empty:
                 curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
         if curves:
             eq_df = pd.concat(curves, ignore_index=True)
-            eq_df = _filter_range(eq_df, "Date")
+            eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
             if not eq_df.empty:
                 eq_df = eq_df.sort_values(["Series", "Date"])
                 eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
@@ -2210,7 +2229,7 @@ def main():
         # P&L by options cycle
         pnl_df = build_options_cycle_chart_data(state["monthly_cycles"])
         if not pnl_df.empty:
-            pnl_df = _filter_range(pnl_df, "Date")
+            pnl_df = filter_df_to_range(pnl_df, "Date", state["as_of"], range_choice)
             if not pnl_df.empty:
                 bar = (
                     alt.Chart(pnl_df)
@@ -2228,7 +2247,7 @@ def main():
         # Monthly return line (strategy only)
         if not state["monthly_returns_w_div"].empty:
             ret_df = pd.DataFrame({"Date": state["monthly_returns_w_div"].index, "Return": state["monthly_returns_w_div"].values})
-            ret_df = _filter_range(ret_df, "Date")
+            ret_df = filter_df_to_range(ret_df, "Date", state["as_of"], range_choice)
             if not ret_df.empty:
                 y_min = float(ret_df["Return"].min())
                 y_max = float(ret_df["Return"].max())
