@@ -23,6 +23,8 @@ import streamlit as st
 import altair as alt
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
+from data_sources import collect_dividend_cashflows as _collect_dividend_cashflows
+from reporting import build_open_options_frame, filter_df_to_range
 
 # Lazy import to avoid startup delays if not used
 try:
@@ -1703,85 +1705,7 @@ def _render_data_status(sheet_id: str) -> None:
 
 
 def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) -> pd.DataFrame:
-    if yf is None:
-        return pd.DataFrame()
-    try:
-        segs = build_holding_segments(stock_txns, as_of)
-        if not segs:
-            return pd.DataFrame()
-
-        by_ticker = defaultdict(list)
-        for seg in segs:
-            by_ticker[seg.ticker].append(
-                (
-                    pd.to_datetime(seg.start).normalize(),
-                    pd.to_datetime(seg.end).normalize(),
-                    seg.shares,
-                )
-            )
-
-        div_rows = []
-        for ticker, seg_list in by_ticker.items():
-            try:
-                div_hist = yf.Ticker(ticker).dividends
-                if div_hist.empty:
-                    continue
-                div_hist.index = pd.to_datetime(div_hist.index).tz_localize(None).normalize()
-                for start, end, shares in seg_list:
-                    divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
-                    for pay_date, per_share in divs_in_period.items():
-                        div_rows.append(
-                            {
-                                "ticker": ticker,
-                                "ex_date": pay_date,
-                                "pay_date": pay_date,
-                                "per_share": per_share,
-                                "shares": shares,
-                                "cash": per_share * shares,
-                            }
-                        )
-            except Exception:
-                continue
-        return pd.DataFrame(div_rows)
-    except Exception:
-        return pd.DataFrame()
-
-
-def build_open_options_frame(open_option_lots: List[OptionLot]) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "ticker": lot.ticker,
-                "type": lot.otype,
-                "strike": lot.strike,
-                "qty": lot.qty,
-                "expiration": lot.expiration,
-                "trans_date": lot.open_date,
-                "open_price": lot.open_price,
-            }
-            for lot in open_option_lots
-        ]
-    )
-
-
-def filter_df_to_range(df: pd.DataFrame, date_col: str, end: pd.Timestamp, range_choice: str) -> pd.DataFrame:
-    if df is None or df.empty or date_col not in df.columns:
-        return df
-    end = pd.to_datetime(end)
-    start = None
-    if range_choice == "3M":
-        start = end - pd.DateOffset(months=3)
-    elif range_choice == "6M":
-        start = end - pd.DateOffset(months=6)
-    elif range_choice == "YTD":
-        start = pd.Timestamp(end.year, 1, 1)
-    elif range_choice == "1Y":
-        start = end - pd.DateOffset(years=1)
-    if start is not None:
-        dates = pd.to_datetime(df[date_col])
-        mask = (dates >= start) & (dates <= end)
-        return df.loc[mask]
-    return df
+    return _collect_dividend_cashflows(stock_txns, as_of, build_holding_segments, yf)
 
 
 def render_issue_status_banner(issues: List[str], price_errors: List[str], price_summary: Dict[str, int]) -> None:
