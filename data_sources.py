@@ -35,13 +35,44 @@ def collect_dividend_cashflows(
         div_rows = []
         for ticker, seg_list in by_ticker.items():
             try:
-                div_hist = yf_module.Ticker(ticker).dividends
+                raw_div_hist = yf_module.Ticker(ticker).dividends
+                if raw_div_hist is None or raw_div_hist.empty:
+                    continue
+
+                # yfinance may return dividends as either:
+                # - Series (historical behavior), or
+                # - DataFrame with a "Dividends" column (newer behavior).
+                if isinstance(raw_div_hist, pd.DataFrame):
+                    if "Dividends" in raw_div_hist.columns:
+                        div_hist = raw_div_hist["Dividends"]
+                    else:
+                        numeric_cols = raw_div_hist.select_dtypes(include="number").columns
+                        if len(numeric_cols) == 0:
+                            continue
+                        div_hist = raw_div_hist[numeric_cols[0]]
+                else:
+                    div_hist = raw_div_hist
+
+                if div_hist is None or div_hist.empty:
+                    continue
+
+                div_hist = div_hist.dropna()
                 if div_hist.empty:
                     continue
-                div_hist.index = pd.to_datetime(div_hist.index).tz_localize(None).normalize()
+
+                dt_index = pd.to_datetime(div_hist.index, errors="coerce", utc=True)
+                dt_index = dt_index.tz_localize(None).normalize()
+                div_hist.index = dt_index
+                div_hist = div_hist[div_hist.index.notna()]
+                if div_hist.empty:
+                    continue
+
                 for start, end, shares in seg_list:
                     divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
                     for pay_date, per_share in divs_in_period.items():
+                        if pd.isna(pay_date) or pd.isna(per_share):
+                            continue
+                        per_share = float(per_share)
                         div_rows.append(
                             {
                                 "ticker": ticker,
