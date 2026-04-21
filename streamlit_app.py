@@ -1608,104 +1608,6 @@ def build_chains(stock_txns: List[StockTxn], option_events: List[OptionPnLEvent]
     return outcomes
 
 
-def unrealized_as_of(inventory: List[OpenLot], prices: Dict[str, float]) -> Tuple[pd.DataFrame, float]:
-    rows = []
-    total_unreal = 0.0
-    for lot in inventory:
-        px = prices.get(lot.ticker)
-        if px is None or pd.isna(px) or px <= 0:
-            continue
-        unreal = (px - lot.cost_per_share) * lot.shares_remaining
-        rows.append(
-            {
-                "ticker": lot.ticker,
-                "buy_date": lot.buy_date.date(),
-                "shares": lot.shares_remaining,
-                "cost_per_share": lot.cost_per_share,
-                "current_price": px,
-                "unrealized_pnl": unreal,
-            }
-        )
-        total_unreal += unreal
-    return pd.DataFrame(rows), total_unreal
-
-
-def find_open_options(df_opts: pd.DataFrame, as_of_date: pd.Timestamp):
-    df_opts_clean = df_opts[pd.to_numeric(df_opts["strike"], errors="coerce").notna()].copy()
-    df_opts_clean["trans_date"] = pd.to_datetime(df_opts_clean["trans_date"])
-    df_opts_clean["expiration"] = pd.to_datetime(df_opts_clean["expiration"])
-    sells = df_opts_clean[df_opts_clean["action"] == "Sell"].copy()
-    buys = df_opts_clean[df_opts_clean["action"] == "Buy"].copy()
-    open_options = []
-    for _, sell in sells.iterrows():
-        if sell["expiration"] > as_of_date:
-            matching_buy = buys[
-                (buys["ticker"] == sell["ticker"])
-                & (buys["type"] == sell["type"])
-                & (buys["strike"] == sell["strike"])
-                & (buys["expiration"] == sell["expiration"])
-                & (buys["trans_date"] > sell["trans_date"])
-            ]
-            if matching_buy.empty:
-                open_options.append(sell)
-    return pd.DataFrame(open_options)
-
-
-def fetch_current_option_prices_yf(open_opts_df):
-    """Fetch option prices for open short positions; return prices, errors, and coverage summary."""
-    if yf is None:
-        return {}, ["yfinance not installed; cannot fetch live option prices."], {"requested": 0, "fetched": 0}
-    if open_opts_df.empty:
-        return {}, [], {"requested": 0, "fetched": 0}
-    prices = {}
-    errors: List[str] = []
-    symbols = []
-    for _, opt in open_opts_df.iterrows():
-        if pd.isna(opt["strike"]):
-            continue
-        try:
-            ticker = opt["ticker"]
-            exp_str = opt["expiration"].strftime("%y%m%d")
-            opt_type = opt["type"][0].upper()
-            strike_str = f"{int(opt['strike'] * 1000):08d}"
-            option_symbol = f"{ticker}{exp_str}{opt_type}{strike_str}"
-            symbols.append(option_symbol)
-            price = yf.Ticker(option_symbol).fast_info.get("lastPrice")
-            if price is not None and price > 0:
-                prices[option_symbol] = price
-        except Exception as exc:
-            errors.append(f"{opt.get('ticker', 'UNK')}: {exc}")
-    missing = [s for s in symbols if s not in prices]
-    if missing:
-        errors.append(f"Missing option prices for: {', '.join(missing[:10])}" + (" ..." if len(missing) > 10 else ""))
-    summary = {"requested": len(symbols), "fetched": len(prices)}
-    return prices, errors, summary
-
-
-def calculate_advanced_unrealized_pnl(ending_inventory, open_options, live_stock_prices, live_option_prices):
-    unrealized_rows = []
-    for lot in ending_inventory:
-        current_price = live_stock_prices.get(lot.ticker, 0)
-        if current_price > 0:
-            pnl = (current_price - lot.cost_per_share) * lot.shares_remaining
-            unrealized_rows.append({"ticker": lot.ticker, "unrealized_pnl": pnl})
-    for _, opt in open_options.iterrows():
-        if pd.isna(opt["strike"]):
-            continue
-        ticker = opt["ticker"]
-        exp_str = opt["expiration"].strftime("%y%m%d")
-        opt_type = opt["type"][0].upper()
-        strike_str = f"{int(opt['strike'] * 1000):08d}"
-        option_symbol = f"{ticker}{exp_str}{opt_type}{strike_str}"
-        current_option_price_per_share = live_option_prices.get(option_symbol, 0)
-        if current_option_price_per_share > 0:
-            pnl = -(current_option_price_per_share * CONTRACT_MULTIPLIER * opt["qty"])
-            unrealized_rows.append({"ticker": opt["ticker"], "unrealized_pnl": pnl})
-    if not unrealized_rows:
-        return pd.Series(dtype=float)
-    return pd.DataFrame(unrealized_rows).groupby("ticker")["unrealized_pnl"].sum()
-
-
 def build_options_cycle_chart_data(monthly_summary: pd.DataFrame) -> pd.DataFrame:
     if monthly_summary is None or monthly_summary.empty or "total_realized_pnl" not in monthly_summary.columns:
         return pd.DataFrame(columns=["Date", "pnl", "color"])
@@ -1989,7 +1891,6 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "monthly_returns_active": monthly_returns_active,
         "open_options": open_options_df,
         "live_prices": live_prices,
-        "live_option_prices": {},
         "inv_df": inv_df,
         "total_unreal": total_unreal,
         "option_unreal": option_unreal,
@@ -2006,7 +1907,6 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "missing_required_price_tickers": missing_required_price_tickers,
         "price_summary": price_summary,
         "stock_prices": live_prices,
-        "option_prices": {},
         "benchmark_metrics": benchmark_metrics_df,
         "aligned_bench_returns": aligned_bench_returns,
         "per_ticker_totals": per_ticker_totals,
@@ -2613,14 +2513,6 @@ def main():
                 pd.DataFrame(
                     [{"ticker": k, "price": v} for k, v in state["stock_prices"].items()]
                 ).sort_values("ticker"),
-                use_container_width=True,
-            )
-        if state.get("option_prices"):
-            st.write("Option prices used:")
-            st.dataframe(
-                pd.DataFrame(
-                    [{"symbol": k, "price": v} for k, v in state["option_prices"].items()]
-                ).sort_values("symbol").head(50),
                 use_container_width=True,
             )
         if state.get("advanced_unreal") is not None and not getattr(state.get("advanced_unreal"), "empty", True):
