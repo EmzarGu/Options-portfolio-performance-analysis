@@ -1,15 +1,20 @@
 import subprocess
 
 import pandas as pd
+import pytest
 import streamlit_app as app
 
 from streamlit_app import (
     CONTRACT_MULTIPLIER,
     OptionLot,
     OpenLot,
+    StockTxn,
     build_open_options_frame,
     build_options_cycle_chart_data,
     build_capital_timeline,
+    build_dashboard_unrealized_adjusted_return_series,
+    build_dashboard_unrealized_snapshot,
+    build_yearly_with_dashboard_unrealized,
     build_option_trades,
     build_per_ticker_totals,
     calculate_unrealized_positions,
@@ -21,6 +26,11 @@ from streamlit_app import (
 
 def _make_df(rows):
     return pd.DataFrame(rows)
+
+
+def _make_capital_daily(start: str, periods: int, total: float) -> pd.DataFrame:
+    idx = pd.date_range(start, periods=periods, freq="D", name="date")
+    return pd.DataFrame({"total": [total] * periods}, index=idx)
 
 
 def test_realized_option_close_pnl():
@@ -318,3 +328,265 @@ def test_filter_df_to_range_applies_ytd_window():
     filtered = filter_df_to_range(df, "Date", pd.Timestamp("2025-03-20"), "YTD")
 
     assert filtered["value"].tolist() == [2, 3]
+
+
+def test_dashboard_unrealized_stock_only_characterization():
+    inventory = [
+        OpenLot(
+            ticker="AAA",
+            buy_date=pd.Timestamp("2025-03-01"),
+            shares_remaining=100,
+            cost_per_share=90.0,
+        )
+    ]
+    snapshot = build_dashboard_unrealized_snapshot([], inventory, {"AAA": 110.0})
+
+    assert snapshot["total_unreal"] == pytest.approx(2000.0)
+    assert snapshot["stock_unreal"] == pytest.approx(2000.0)
+    assert snapshot["option_unreal"] == pytest.approx(0.0)
+    assert snapshot["unrealized_blocked"] is False
+    assert snapshot["inv_df"]["source"].tolist() == ["stock_lot"]
+    assert float(snapshot["per_ticker_unreal"]["AAA"]) == pytest.approx(2000.0)
+
+    monthly_returns = pd.Series([0.10], index=pd.to_datetime(["2025-03-31"]))
+    capital_daily = _make_capital_daily("2025-03-01", periods=3, total=10_000.0)
+    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        pd.Timestamp("2025-03-15"),
+        True,
+        snapshot["total_unreal"],
+    )
+    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.30)
+
+    yearly = pd.DataFrame({"year": [2025], "total_realized_pnl": [100.0]})
+    yearly_with_unreal = build_yearly_with_dashboard_unrealized(
+        yearly,
+        True,
+        snapshot["total_unreal"],
+        pd.Timestamp("2025-03-15"),
+    )
+    assert yearly_with_unreal.loc[0, "total_pnl_incl_unreal"] == pytest.approx(2100.0)
+
+
+def test_dashboard_unrealized_option_only_characterization():
+    open_call = OptionLot(
+        ticker="OPT",
+        otype="Call",
+        strike=100.0,
+        qty=1,
+        open_date=pd.Timestamp("2025-03-01"),
+        expiration=pd.Timestamp("2025-04-18"),
+        open_price=2.0,
+        comment="",
+        assigned=False,
+    )
+    snapshot = build_dashboard_unrealized_snapshot([open_call], [], {})
+
+    assert snapshot["total_unreal"] == pytest.approx(200.0)
+    assert snapshot["stock_unreal"] == pytest.approx(0.0)
+    assert snapshot["option_unreal"] == pytest.approx(200.0)
+    assert snapshot["inv_df"].empty
+    assert float(snapshot["per_ticker_unreal"]["OPT"]) == pytest.approx(200.0)
+
+    monthly_returns = pd.Series([0.05], index=pd.to_datetime(["2025-03-31"]))
+    capital_daily = _make_capital_daily("2025-03-01", periods=3, total=1_000.0)
+    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        pd.Timestamp("2025-03-15"),
+        True,
+        snapshot["total_unreal"],
+    )
+    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.25)
+
+    yearly = pd.DataFrame({"year": [2025], "total_realized_pnl": [50.0]})
+    yearly_with_unreal = build_yearly_with_dashboard_unrealized(
+        yearly,
+        True,
+        snapshot["total_unreal"],
+        pd.Timestamp("2025-03-15"),
+    )
+    assert yearly_with_unreal.loc[0, "total_pnl_incl_unreal"] == pytest.approx(250.0)
+
+
+def test_dashboard_unrealized_mixed_portfolio_characterization():
+    inventory = [
+        OpenLot(
+            ticker="AAA",
+            buy_date=pd.Timestamp("2025-03-01"),
+            shares_remaining=100,
+            cost_per_share=100.0,
+        )
+    ]
+    open_call = OptionLot(
+        ticker="BBB",
+        otype="Call",
+        strike=120.0,
+        qty=1,
+        open_date=pd.Timestamp("2025-03-01"),
+        expiration=pd.Timestamp("2025-04-18"),
+        open_price=1.5,
+        comment="",
+        assigned=False,
+    )
+    open_put = OptionLot(
+        ticker="CCC",
+        otype="Put",
+        strike=50.0,
+        qty=1,
+        open_date=pd.Timestamp("2025-03-01"),
+        expiration=pd.Timestamp("2025-04-18"),
+        open_price=1.0,
+        comment="",
+        assigned=False,
+    )
+    snapshot = build_dashboard_unrealized_snapshot(
+        [open_call, open_put],
+        inventory,
+        {"AAA": 110.0, "CCC": 45.0},
+    )
+
+    assert snapshot["total_unreal"] == pytest.approx(750.0)
+    assert snapshot["stock_unreal"] == pytest.approx(500.0)
+    assert snapshot["option_unreal"] == pytest.approx(250.0)
+    assert float(snapshot["per_ticker_unreal"]["AAA"]) == pytest.approx(1000.0)
+    assert float(snapshot["per_ticker_unreal"]["BBB"]) == pytest.approx(150.0)
+    assert float(snapshot["per_ticker_unreal"]["CCC"]) == pytest.approx(-400.0)
+
+    monthly_returns = pd.Series([0.02], index=pd.to_datetime(["2025-03-31"]))
+    capital_daily = _make_capital_daily("2025-03-01", periods=3, total=5_000.0)
+    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        pd.Timestamp("2025-03-15"),
+        True,
+        snapshot["total_unreal"],
+    )
+    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.17)
+
+    yearly = pd.DataFrame({"year": [2025], "total_realized_pnl": [100.0]})
+    yearly_with_unreal = build_yearly_with_dashboard_unrealized(
+        yearly,
+        True,
+        snapshot["total_unreal"],
+        pd.Timestamp("2025-03-15"),
+    )
+    assert yearly_with_unreal.loc[0, "total_pnl_incl_unreal"] == pytest.approx(850.0)
+
+
+def test_dashboard_unrealized_missing_prices_characterization():
+    inventory = [
+        OpenLot(
+            ticker="AAA",
+            buy_date=pd.Timestamp("2025-03-01"),
+            shares_remaining=100,
+            cost_per_share=90.0,
+        )
+    ]
+    open_put = OptionLot(
+        ticker="BBB",
+        otype="Put",
+        strike=50.0,
+        qty=1,
+        open_date=pd.Timestamp("2025-03-01"),
+        expiration=pd.Timestamp("2025-04-18"),
+        open_price=1.0,
+        comment="",
+        assigned=False,
+    )
+    open_call = OptionLot(
+        ticker="CCC",
+        otype="Call",
+        strike=120.0,
+        qty=1,
+        open_date=pd.Timestamp("2025-03-01"),
+        expiration=pd.Timestamp("2025-04-18"),
+        open_price=1.5,
+        comment="",
+        assigned=False,
+    )
+    snapshot = build_dashboard_unrealized_snapshot([open_put, open_call], inventory, {})
+
+    assert snapshot["total_unreal"] == pytest.approx(250.0)
+    assert snapshot["stock_unreal"] == pytest.approx(0.0)
+    assert snapshot["option_unreal"] == pytest.approx(250.0)
+    assert snapshot["inv_df"].empty
+    assert snapshot["unrealized_blocked"] is True
+    assert snapshot["missing_required_price_tickers"] == ["AAA", "BBB"]
+    assert float(snapshot["per_ticker_unreal"]["BBB"]) == pytest.approx(100.0)
+    assert float(snapshot["per_ticker_unreal"]["CCC"]) == pytest.approx(150.0)
+    assert "AAA" not in snapshot["per_ticker_unreal"].index
+
+    monthly_returns = pd.Series([0.0], index=pd.to_datetime(["2025-03-31"]))
+    capital_daily = _make_capital_daily("2025-03-01", periods=3, total=1_000.0)
+    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        pd.Timestamp("2025-03-15"),
+        True,
+        snapshot["total_unreal"],
+        snapshot["unrealized_blocked"],
+    )
+    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.0)
+
+    yearly = pd.DataFrame(
+        {
+            "year": [2024, 2025],
+            "total_realized_pnl": [80.0, 50.0],
+        }
+    )
+    yearly_with_unreal = build_yearly_with_dashboard_unrealized(
+        yearly,
+        True,
+        snapshot["total_unreal"],
+        pd.Timestamp("2025-03-15"),
+        snapshot["unrealized_blocked"],
+    )
+    assert yearly_with_unreal.loc[0, "total_pnl_incl_unreal"] == pytest.approx(80.0)
+    assert pd.isna(yearly_with_unreal.loc[1, "total_pnl_incl_unreal"])
+
+
+def test_dashboard_unrealized_adjusted_returns_still_change_when_snapshot_complete():
+    monthly_returns = pd.Series([0.0], index=pd.to_datetime(["2025-03-31"]))
+    capital_daily = _make_capital_daily("2025-03-01", periods=3, total=1_000.0)
+
+    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        pd.Timestamp("2025-03-15"),
+        True,
+        250.0,
+        False,
+    )
+
+    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.25)
+
+
+def test_capital_timeline_weekend_and_holiday_characterization():
+    txns = [
+        StockTxn(
+            date=pd.Timestamp("2024-05-20"),
+            ticker="AAA",
+            side="BUY",
+            shares=100,
+            price=100.0,
+            source="Assigned Put",
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series([110.0], index=pd.to_datetime(["2024-05-24"]))
+    }
+
+    cap = build_capital_timeline(
+        [],
+        txns,
+        pd.Timestamp("2024-05-28"),
+        pd.DataFrame({"trans_date": [pd.Timestamp("2024-05-20")]}),
+        price_history,
+    )
+
+    assert cap.loc[pd.Timestamp("2024-05-24"), "shares_invested"] == pytest.approx(11_000.0)
+    assert cap.loc[pd.Timestamp("2024-05-25"), "shares_invested"] == pytest.approx(10_000.0)
+    assert cap.loc[pd.Timestamp("2024-05-26"), "shares_invested"] == pytest.approx(10_000.0)
+    assert cap.loc[pd.Timestamp("2024-05-27"), "shares_invested"] == pytest.approx(10_000.0)

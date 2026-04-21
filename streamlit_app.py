@@ -58,6 +58,16 @@ CONTRACT_MULTIPLIER = 100
 # Keep the original on-disk prefs path for local runs; add a home-dir fallback for rebuilds.
 PREFS_PATH = Path(".streamlit_user_prefs.json")
 PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
+UNREALIZED_ADJUSTED_TOGGLE_LABEL = "Add heuristic unrealized to current-year totals and TWR"
+UNREALIZED_ADJUSTED_EXPLANATION = (
+    "Uses the current unrealized snapshot to adjust current-year totals and TWR. "
+    "This is not a full option mark-to-market calculation."
+)
+UNREALIZED_ADJUSTED_TWR_LABEL = "YTD Annualized TWR (unrealized-adjusted)"
+UNREALIZED_ADJUSTED_VIEW_LABEL = "##### Comprehensive Yearly Performance (Unrealized-adjusted view)"
+UNREALIZED_ADJUSTED_TOTAL_LABEL = "Total P&L (incl heuristic unrealized)"
+UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL = "Ann. TWR (unrealized-adjusted)"
+CURRENT_UNREALIZED_SNAPSHOT_LABEL = "Current unrealized snapshot"
 
 
 # ------------------------------------------------------------
@@ -1420,6 +1430,87 @@ def calculate_unrealized_positions(
     return inv_df, per_ticker_series, total_unreal
 
 
+def build_dashboard_unrealized_snapshot(
+    open_option_lots: List[OptionLot],
+    ending_inventory: List[OpenLot],
+    live_prices: Dict[str, float],
+) -> Dict[str, object]:
+    """Return the current dashboard unrealized snapshot without changing its legacy behavior."""
+    required_price_tickers = {lot.ticker for lot in ending_inventory}
+    required_price_tickers.update(lot.ticker for lot in open_option_lots if lot.otype == "Put")
+    missing_required_price_tickers = sorted(
+        ticker
+        for ticker in required_price_tickers
+        if ticker not in live_prices or pd.isna(live_prices.get(ticker))
+    )
+    inv_df, per_ticker_unreal, total_unreal = calculate_unrealized_positions(
+        open_option_lots,
+        ending_inventory,
+        live_prices,
+    )
+    stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
+    option_unreal = total_unreal - stock_unreal
+    return {
+        "inv_df": inv_df,
+        "per_ticker_unreal": per_ticker_unreal,
+        "total_unreal": total_unreal,
+        "stock_unreal": stock_unreal,
+        "option_unreal": option_unreal,
+        "unrealized_blocked": bool(missing_required_price_tickers),
+        "missing_required_price_tickers": missing_required_price_tickers,
+    }
+
+
+def build_dashboard_unrealized_adjusted_return_series(
+    monthly_returns: pd.Series,
+    capital_daily: pd.DataFrame,
+    as_of_ts: pd.Timestamp,
+    include_unrealized_current_year: bool,
+    total_unreal: float,
+    unrealized_blocked: bool = False,
+) -> pd.Series:
+    """Apply the dashboard's current unrealized-adjusted return treatment."""
+    monthly_returns_unrealized_adjusted = monthly_returns.copy()
+    if unrealized_blocked:
+        return monthly_returns_unrealized_adjusted
+    if include_unrealized_current_year and total_unreal != 0:
+        cap_year_stats = capital_stats_by_year(capital_daily)
+        cap_curr_year = cap_year_stats.loc[cap_year_stats["year"] == as_of_ts.year, "avg_capital"]
+        cap_basis = float(cap_curr_year.iloc[0]) if not cap_curr_year.empty else np.nan
+        if pd.notna(cap_basis) and cap_basis > 0:
+            unrealized_return_component = total_unreal / cap_basis
+            month_end = pd.to_datetime(as_of_ts).to_period("M").to_timestamp("M")
+            base_ret = (
+                monthly_returns_unrealized_adjusted.loc[month_end]
+                if month_end in monthly_returns_unrealized_adjusted.index
+                else 0.0
+            )
+            monthly_returns_unrealized_adjusted.loc[month_end] = base_ret + unrealized_return_component
+    return monthly_returns_unrealized_adjusted
+
+
+def build_yearly_with_dashboard_unrealized(
+    yearly: pd.DataFrame,
+    include_unrealized_current_year: bool,
+    total_unreal: float,
+    as_of_ts: pd.Timestamp,
+    unrealized_blocked: bool = False,
+) -> pd.DataFrame:
+    """Apply the dashboard's current unrealized total to the yearly summary."""
+    yearly_with_unreal = yearly.copy()
+    yearly_with_unreal["total_pnl_incl_unreal"] = yearly_with_unreal.get("total_realized_pnl", pd.Series(dtype=float))
+    if unrealized_blocked and not yearly_with_unreal.empty:
+        mask_curr = yearly_with_unreal["year"].eq(as_of_ts.year)
+        yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = np.nan
+        return yearly_with_unreal
+    if include_unrealized_current_year and total_unreal != 0 and not yearly_with_unreal.empty:
+        mask_curr = yearly_with_unreal["year"].eq(as_of_ts.year)
+        yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = (
+            yearly_with_unreal.loc[mask_curr, "total_realized_pnl"] + total_unreal
+        )
+    return yearly_with_unreal
+
+
 def _chain_stock_realized(stock_txns: List[StockTxn]) -> float:
     by_ticker: Dict[str, List[OpenLot]] = defaultdict(list)
     realized = 0.0
@@ -1753,7 +1844,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
     monthly_returns.index = pd.to_datetime(monthly_returns.index, errors="coerce")
     monthly_returns = monthly_returns[monthly_returns.index.notna()]
-    monthly_returns_mtm = monthly_returns.copy()
+    monthly_returns_unrealized_adjusted = monthly_returns.copy()
     # Active months: exclude months with zero options P&L (i.e., no option trades)
     if "realized_options_pnl" in monthly_summary and "roac" in monthly_summary:
         monthly_returns_active = monthly_summary.loc[monthly_summary["realized_options_pnl"] != 0, "roac"].dropna()
@@ -1770,25 +1861,32 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "stocks_fetched": stock_summary.get("fetched", 0),
     }
 
-    inv_df, per_ticker_unreal, total_unreal = calculate_unrealized_positions(open_option_lots, ending_inventory, live_prices)
-    stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
-    option_unreal = total_unreal - stock_unreal
-    # Build an MTM return series by allocating current-year unrealized into the current month using avg capital as base.
-    if include_unrealized_current_year and total_unreal != 0:
-        cap_year_stats = capital_stats_by_year(capital_daily)
-        cap_curr_year = cap_year_stats.loc[cap_year_stats["year"] == as_of_ts.year, "avg_capital"]
-        cap_basis = float(cap_curr_year.iloc[0]) if not cap_curr_year.empty else np.nan
-        if pd.notna(cap_basis) and cap_basis > 0:
-            mtm_return_component = total_unreal / cap_basis
-            month_end = pd.to_datetime(as_of_ts).to_period("M").to_timestamp("M")
-            base_ret = monthly_returns_mtm.loc[month_end] if month_end in monthly_returns_mtm.index else 0.0
-            monthly_returns_mtm.loc[month_end] = base_ret + mtm_return_component
+    unrealized_snapshot = build_dashboard_unrealized_snapshot(open_option_lots, ending_inventory, live_prices)
+    inv_df = unrealized_snapshot["inv_df"]
+    per_ticker_unreal = unrealized_snapshot["per_ticker_unreal"]
+    total_unreal = unrealized_snapshot["total_unreal"]
+    stock_unreal = unrealized_snapshot["stock_unreal"]
+    option_unreal = unrealized_snapshot["option_unreal"]
+    missing_required_price_tickers = unrealized_snapshot["missing_required_price_tickers"]
+    monthly_returns_unrealized_adjusted = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        as_of_ts,
+        include_unrealized_current_year,
+        total_unreal,
+        unrealized_snapshot["unrealized_blocked"],
+    )
 
     coverage_gaps = []
     if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
         coverage_gaps.append(f"Stocks priced: {price_summary['stocks_fetched']}/{price_summary['stocks_requested']}")
     if coverage_gaps:
         issues.append("Price coverage incomplete: " + "; ".join(coverage_gaps))
+    if missing_required_price_tickers:
+        issues.append(
+            "Current unrealized snapshot incomplete: missing required prices for "
+            + ", ".join(missing_required_price_tickers)
+        )
     if price_errors:
         issues.extend([f"Price error: {e}" for e in price_errors])
 
@@ -1796,18 +1894,31 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     twr_annualized = twr_annualized_by_year(monthly_returns.dropna())
     if not twr_annualized.empty:
         yearly = yearly.merge(twr_annualized.rename("annualized_return_twr"), left_on="year", right_index=True, how="left")
-    twr_annualized_mtm = twr_annualized_by_year(monthly_returns_mtm.dropna()) if hasattr(monthly_returns_mtm.index, "year") else pd.Series(dtype=float)
-    if not twr_annualized_mtm.empty:
-        yearly = yearly.merge(twr_annualized_mtm.rename("annualized_return_twr_mtm"), left_on="year", right_index=True, how="left")
+    twr_annualized_unrealized_adjusted = (
+        twr_annualized_by_year(monthly_returns_unrealized_adjusted.dropna())
+        if hasattr(monthly_returns_unrealized_adjusted.index, "year")
+        else pd.Series(dtype=float)
+    )
+    if not unrealized_snapshot["unrealized_blocked"] and not twr_annualized_unrealized_adjusted.empty:
+        yearly = yearly.merge(
+            twr_annualized_unrealized_adjusted.rename("annualized_return_twr_unrealized_adjusted"),
+            left_on="year",
+            right_index=True,
+            how="left",
+        )
+    elif include_unrealized_current_year:
+        yearly["annualized_return_twr_unrealized_adjusted"] = np.nan
     twr_active = twr_annualized_by_year(monthly_returns_active.dropna())
     if not twr_active.empty:
         yearly = yearly.merge(twr_active.rename("annualized_return_twr_active"), left_on="year", right_index=True, how="left")
 
-    yearly_with_unreal = yearly.copy()
-    yearly_with_unreal["total_pnl_incl_unreal"] = yearly_with_unreal.get("total_realized_pnl", pd.Series(dtype=float))
-    if include_unrealized_current_year and total_unreal != 0 and not yearly_with_unreal.empty:
-        mask_curr = yearly_with_unreal["year"].eq(as_of_ts.year)
-        yearly_with_unreal.loc[mask_curr, "total_pnl_incl_unreal"] = yearly_with_unreal.loc[mask_curr, "total_realized_pnl"] + total_unreal
+    yearly_with_unreal = build_yearly_with_dashboard_unrealized(
+        yearly,
+        include_unrealized_current_year,
+        total_unreal,
+        as_of_ts,
+        unrealized_snapshot["unrealized_blocked"],
+    )
 
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
     per_ticker_totals = build_per_ticker_totals(per_ticker, per_ticker_unreal)
@@ -1853,7 +1964,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "capital_daily": capital_daily,
         "monthly_cycles": monthly_summary,
         "monthly_returns_w_div": monthly_returns,
-        "monthly_returns_mtm": monthly_returns_mtm,
+        "monthly_returns_unrealized_adjusted": monthly_returns_unrealized_adjusted,
         "monthly_returns_active": monthly_returns_active,
         "open_options": open_options_df,
         "live_prices": live_prices,
@@ -1870,7 +1981,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "as_of": as_of_ts,
         "issues": issues,
         "price_errors": price_errors,
-        "unrealized_blocked": False,
+        "unrealized_blocked": unrealized_snapshot["unrealized_blocked"],
+        "missing_required_price_tickers": missing_required_price_tickers,
         "price_summary": price_summary,
         "stock_prices": live_prices,
         "option_prices": {},
@@ -1894,10 +2006,11 @@ def main():
     with col_side:
         as_of_input = st.date_input("As of date", value=date.today())
         include_unrealized = st.checkbox(
-            "Add unrealized to current-year totals and TWR (MTM)",
+            UNREALIZED_ADJUSTED_TOGGLE_LABEL,
             value=bool(prefs.get("include_unrealized", False)),
             key="include_unrealized",
         )
+        st.caption(UNREALIZED_ADJUSTED_EXPLANATION)
 
     snapshot_area = st.container()
     tabs_area = st.container()
@@ -1963,11 +2076,12 @@ def main():
     )
     realized_total = float(ytd_row.get("total_realized_pnl", 0.0) or 0.0)
     ytd_total = realized_total + (state["total_unreal"] if include_unrealized else 0.0)
-    twr_field = "annualized_return_twr_mtm" if include_unrealized else "annualized_return_twr"
+    twr_field = "annualized_return_twr_unrealized_adjusted" if include_unrealized else "annualized_return_twr"
     ytd_twr = ytd_row.get(twr_field, pd.NA)
     issues = state.get("issues", [])
     price_errors = state.get("price_errors", [])
     unrealized_blocked = state.get("unrealized_blocked", False)
+    missing_required_price_tickers = state.get("missing_required_price_tickers", [])
     price_summary = state.get("price_summary", {})
 
     with snapshot_area:
@@ -1975,18 +2089,35 @@ def main():
             st.markdown("#### Portfolio Snapshot")
             mc1, mc2, mc3, mc4 = st.columns(4)
             with mc1:
-                metric_card("YTD Total P&L", f"${ytd_total:,.0f}", delta=None)
+                total_pnl_value = "n/a" if include_unrealized and unrealized_blocked else f"${ytd_total:,.0f}"
+                metric_card("YTD Total P&L", total_pnl_value, delta=None)
             with mc2:
                 metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
             with mc3:
+                unrealized_snapshot_value = (
+                    "incomplete"
+                    if unrealized_blocked
+                    else f"${state['total_unreal']:,.0f} (opt ${state.get('option_unreal', 0.0):,.0f} / stk ${state.get('stock_unreal', 0.0):,.0f})"
+                )
                 metric_card(
-                    "Unrealized P&L",
-                    f"${state['total_unreal']:,.0f} (opt ${state.get('option_unreal', 0.0):,.0f} / stk ${state.get('stock_unreal', 0.0):,.0f})",
+                    CURRENT_UNREALIZED_SNAPSHOT_LABEL,
+                    unrealized_snapshot_value,
                 )
             with mc4:
+                unrealized_adjusted_twr_value = (
+                    "n/a"
+                    if include_unrealized and unrealized_blocked
+                    else f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a"
+                )
                 metric_card(
-                    "YTD Annualized TWR (MTM)" if include_unrealized else "YTD Annualized TWR",
-                    f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a",
+                    UNREALIZED_ADJUSTED_TWR_LABEL if include_unrealized else "YTD Annualized TWR",
+                    unrealized_adjusted_twr_value,
+                )
+            if unrealized_blocked and missing_required_price_tickers:
+                st.warning(
+                    "Current unrealized snapshot is incomplete: missing required prices for "
+                    + ", ".join(missing_required_price_tickers)
+                    + ". Unrealized-adjusted totals and TWR are suppressed."
                 )
         render_issue_status_banner(issues, price_errors, price_summary)
         st.divider()
@@ -2036,33 +2167,36 @@ def main():
             use_container_width=True,
         )
 
-        # Comprehensive Yearly Performance (MTM view)
-        st.markdown("##### Comprehensive Yearly Performance (MTM view)")
-        mtm_cols = [
+        # Comprehensive Yearly Performance (unrealized-adjusted view)
+        st.markdown(UNREALIZED_ADJUSTED_VIEW_LABEL)
+        st.caption(UNREALIZED_ADJUSTED_EXPLANATION)
+        unrealized_adjusted_cols = [
             "year",
             "total_realized_pnl",
             "total_pnl_incl_unreal",
             "ann_roac",
             "ann_ropc",
             "annualized_return_twr",
-            "annualized_return_twr_mtm",
+            "annualized_return_twr_unrealized_adjusted",
         ]
-        mtm_map = {
+        unrealized_adjusted_map = {
             "year": "Year",
             "total_realized_pnl": "Realized P&L",
-            "total_pnl_incl_unreal": "Total P&L (incl unreal)",
+            "total_pnl_incl_unreal": UNREALIZED_ADJUSTED_TOTAL_LABEL,
             "ann_roac": "Ann. return on avg",
             "ann_ropc": "Ann. return on peak",
             "annualized_return_twr": "Ann. TWR",
-            "annualized_return_twr_mtm": "Ann. TWR (MTM)",
+            "annualized_return_twr_unrealized_adjusted": UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL,
         }
-        mtm_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
-        mtm_display = mtm_source[[c for c in mtm_cols if c in mtm_source.columns]].rename(columns=mtm_map)
+        unrealized_adjusted_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
+        unrealized_adjusted_display = unrealized_adjusted_source[
+            [c for c in unrealized_adjusted_cols if c in unrealized_adjusted_source.columns]
+        ].rename(columns=unrealized_adjusted_map)
         st.dataframe(
             _format_df(
-                mtm_display.reset_index(drop=True),
-                currency_cols=["Realized P&L", "Total P&L (incl unreal)"],
-                pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR", "Ann. TWR (MTM)"],
+                unrealized_adjusted_display.reset_index(drop=True),
+                currency_cols=["Realized P&L", UNREALIZED_ADJUSTED_TOTAL_LABEL],
+                pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR", UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL],
                 int_cols=["Year"],
                 hide_index=True,
             ),
@@ -2296,7 +2430,9 @@ def main():
             use_container_width=True,
         )
         totals_df = state.get("per_ticker_totals", pd.DataFrame())
-        if not totals_df.empty:
+        if unrealized_blocked:
+            st.info("Per-ticker realized + unrealized totals are suppressed because the current unrealized snapshot is incomplete.")
+        elif not totals_df.empty:
             st.markdown("##### Per-ticker P&L (realized + unrealized)")
             totals_map = {
                 "ticker": "Ticker",
@@ -2489,14 +2625,14 @@ def main():
 - Actions processed: `Sell/Buy` (plus `Bought` → `Buy`). Blank rows are skipped.
 
 **Capital & P&L**
-- Capital base: short-put reserve at strike*100*contracts; shares marked to latest close if fetched, else cost. Options are not MTM.
+- Capital base: short-put reserve at strike*100*contracts; shares marked to latest close if fetched, else cost. Open options are not fully marked to market.
 - Realized P&L: option premia + stock sales + dividends.
-- Unrealized: current stock/option unrealized shown separately; only added to current-year RoAC/RoPC when the checkbox is on.
+- Current unrealized snapshot: stock unrealized plus the dashboard's current heuristic option treatment. If enabled, that snapshot is added to current-year totals and the unrealized-adjusted TWR summary.
 
 **Returns**
 - Monthly returns (RoAC/RoPC) = monthly realized P&L ÷ monthly avg/peak capital (calendar months).
 - Annualized TWR (realized) = geometric product of monthly returns; “active” drops months with zero option P&L.
-- Growth charts rebase to 1 at the start of the selected range; MTM TWR is not displayed.
+- Unrealized-adjusted TWR applies the current unrealized snapshot to the current month for the current-year summary. Growth charts remain based on realized returns.
 
 **Assignments & inventory**
 - Put rows marked “assigned” create stock lots; covered-call assignments reduce inventory FIFO. If quantities or flags don’t line up, calls/puts can appear unmatched.
@@ -2505,7 +2641,7 @@ def main():
 - Benchmarks from yfinance monthly prices; missing prices fall back to last available or cost. Coverage issues surface in Logs.
 
 **Limitations / edge cases**
-- No option MTM; no external deposit/withdrawal modeling.
+- No true option MTM; no external deposit/withdrawal modeling.
 - Date parsing depends on sheet date fields being parseable; bad rows go to Issues.
 - Mixed legs (“Put/Call”, “Call/Put”) infer the short leg via type/comment heuristics.
             """

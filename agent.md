@@ -14,6 +14,7 @@ You are a coding agent working inside this repository. Follow these rules at all
 
 ## Testing
 - If tests exist, run them after changes.
+- Run tests via `make test` so the project `.venv` is used instead of the system Python.
 - If tests do not exist, suggest reasonable tests.
 - Never ignore test failures.
 
