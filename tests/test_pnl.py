@@ -563,7 +563,35 @@ def test_dashboard_unrealized_adjusted_returns_still_change_when_snapshot_comple
     assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.25)
 
 
-def test_capital_timeline_weekend_and_holiday_characterization():
+def test_complete_price_unrealized_adjusted_snapshot_unchanged_by_capital_fix():
+    inventory = [
+        OpenLot(
+            ticker="AAA",
+            buy_date=pd.Timestamp("2025-03-01"),
+            shares_remaining=100,
+            cost_per_share=90.0,
+        )
+    ]
+    snapshot = build_dashboard_unrealized_snapshot([], inventory, {"AAA": 110.0})
+
+    assert snapshot["unrealized_blocked"] is False
+    assert snapshot["total_unreal"] == pytest.approx(2000.0)
+
+    monthly_returns = pd.Series([0.10], index=pd.to_datetime(["2025-03-31"]))
+    capital_daily = _make_capital_daily("2025-03-01", periods=3, total=10_000.0)
+    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
+        monthly_returns,
+        capital_daily,
+        pd.Timestamp("2025-03-15"),
+        True,
+        snapshot["total_unreal"],
+        snapshot["unrealized_blocked"],
+    )
+
+    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.30)
+
+
+def test_capital_timeline_weekend_carries_forward_friday_close():
     txns = [
         StockTxn(
             date=pd.Timestamp("2024-05-20"),
@@ -587,6 +615,84 @@ def test_capital_timeline_weekend_and_holiday_characterization():
     )
 
     assert cap.loc[pd.Timestamp("2024-05-24"), "shares_invested"] == pytest.approx(11_000.0)
-    assert cap.loc[pd.Timestamp("2024-05-25"), "shares_invested"] == pytest.approx(10_000.0)
-    assert cap.loc[pd.Timestamp("2024-05-26"), "shares_invested"] == pytest.approx(10_000.0)
-    assert cap.loc[pd.Timestamp("2024-05-27"), "shares_invested"] == pytest.approx(10_000.0)
+    assert cap.loc[pd.Timestamp("2024-05-25"), "shares_invested"] == pytest.approx(11_000.0)
+    assert cap.loc[pd.Timestamp("2024-05-26"), "shares_invested"] == pytest.approx(11_000.0)
+
+
+def test_capital_timeline_holiday_carries_forward_prior_trading_close():
+    txns = [
+        StockTxn(
+            date=pd.Timestamp("2024-05-20"),
+            ticker="AAA",
+            side="BUY",
+            shares=100,
+            price=100.0,
+            source="Assigned Put",
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series([110.0], index=pd.to_datetime(["2024-05-24"]))
+    }
+
+    cap = build_capital_timeline(
+        [],
+        txns,
+        pd.Timestamp("2024-05-28"),
+        pd.DataFrame({"trans_date": [pd.Timestamp("2024-05-20")]}),
+        price_history,
+    )
+
+    assert cap.loc[pd.Timestamp("2024-05-27"), "shares_invested"] == pytest.approx(11_000.0)
+
+
+def test_capital_timeline_uses_cost_basis_when_no_prior_close_exists_yet():
+    txns = [
+        StockTxn(
+            date=pd.Timestamp("2024-05-20"),
+            ticker="AAA",
+            side="BUY",
+            shares=100,
+            price=100.0,
+            source="Assigned Put",
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series([110.0], index=pd.to_datetime(["2024-05-21"]))
+    }
+
+    cap = build_capital_timeline(
+        [],
+        txns,
+        pd.Timestamp("2024-05-22"),
+        pd.DataFrame({"trans_date": [pd.Timestamp("2024-05-20")]}),
+        price_history,
+    )
+
+    assert cap.loc[pd.Timestamp("2024-05-20"), "shares_invested"] == pytest.approx(10_000.0)
+    assert cap.loc[pd.Timestamp("2024-05-21"), "shares_invested"] == pytest.approx(11_000.0)
+
+
+def test_capital_timeline_uses_same_day_close_when_available():
+    txns = [
+        StockTxn(
+            date=pd.Timestamp("2024-05-20"),
+            ticker="AAA",
+            side="BUY",
+            shares=100,
+            price=100.0,
+            source="Assigned Put",
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series([112.0], index=pd.to_datetime(["2024-05-22"]))
+    }
+
+    cap = build_capital_timeline(
+        [],
+        txns,
+        pd.Timestamp("2024-05-23"),
+        pd.DataFrame({"trans_date": [pd.Timestamp("2024-05-20")]}),
+        price_history,
+    )
+
+    assert cap.loc[pd.Timestamp("2024-05-22"), "shares_invested"] == pytest.approx(11_200.0)

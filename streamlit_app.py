@@ -852,6 +852,34 @@ def daterange_days(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
     return pd.date_range(start, end, freq="D", inclusive="left")
 
 
+def resolve_capital_price_on_day(
+    px_series: Optional[pd.Series],
+    valuation_date: pd.Timestamp,
+    fallback_price: float,
+) -> float:
+    """Resolve a price for capital-denominator use: same-day close, else last prior close, else fallback."""
+    if px_series is None:
+        return fallback_price
+    try:
+        prices = px_series.dropna().copy()
+        if prices.empty:
+            return fallback_price
+        prices.index = pd.to_datetime(prices.index, errors="coerce")
+        prices = prices[prices.index.notna()].sort_index()
+        if prices.empty:
+            return fallback_price
+        valuation_date = pd.to_datetime(valuation_date).normalize()
+        exact_price = prices.get(valuation_date, np.nan)
+        if pd.notna(exact_price):
+            return float(exact_price)
+        prior_prices = prices.loc[prices.index <= valuation_date]
+        if not prior_prices.empty:
+            return float(prior_prices.iloc[-1])
+    except Exception:
+        return fallback_price
+    return fallback_price
+
+
 def build_capital_timeline(
     option_lots: List[OptionLot],
     txns: List[StockTxn],
@@ -877,14 +905,7 @@ def build_capital_timeline(
     for seg in segs:
         px_series = price_history.get(seg.ticker)
         for d in daterange_days(seg.start, seg.end):
-            price_on_day = None
-            if px_series is not None:
-                try:
-                    price_on_day = float(px_series.get(d, np.nan))
-                except Exception:
-                    price_on_day = np.nan
-            if pd.isna(price_on_day):
-                price_on_day = seg.cost_per_share
+            price_on_day = resolve_capital_price_on_day(px_series, d, seg.cost_per_share)
             invested = seg.shares * price_on_day
             rows.append((d, "shares_invested", invested))
 
