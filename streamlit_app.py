@@ -23,7 +23,7 @@ import streamlit as st
 import altair as alt
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
-from data_sources import collect_dividend_cashflows as _collect_dividend_cashflows
+from data_sources import DividendFetchResult, collect_dividend_cashflows as _collect_dividend_cashflows
 from reporting import build_open_options_frame, filter_df_to_range
 
 # Lazy import to avoid startup delays if not used
@@ -1862,7 +1862,27 @@ def _render_data_status(sheet_id: str) -> None:
         st.warning("Drive file is newer than cached data. Click Reload to fetch the latest file.")
 
 
-def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) -> pd.DataFrame:
+def normalize_dividend_fetch_result(result) -> DividendFetchResult:
+    if isinstance(result, DividendFetchResult):
+        return result
+    if isinstance(result, pd.DataFrame):
+        return DividendFetchResult(
+            cashflows=result,
+            coverage_complete=True,
+            attempted_tickers=[],
+            failed_tickers=[],
+            errors=[],
+        )
+    return DividendFetchResult(
+        cashflows=pd.DataFrame(columns=["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]),
+        coverage_complete=False,
+        attempted_tickers=[],
+        failed_tickers=[],
+        errors=["Dividend fetch returned an unexpected result shape."],
+    )
+
+
+def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) -> DividendFetchResult:
     return _collect_dividend_cashflows(stock_txns, as_of, build_holding_segments, yf)
 
 
@@ -1915,7 +1935,17 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     holding_segments = build_holding_segments(stock_txns, as_of_ts)
     capital_history_state = assess_capital_history_coverage(holding_segments, price_history)
 
-    div_df = collect_dividend_cashflows(stock_txns, as_of_ts)
+    dividend_fetch_result = normalize_dividend_fetch_result(collect_dividend_cashflows(stock_txns, as_of_ts))
+    div_df = dividend_fetch_result.cashflows
+    dividend_coverage_complete = bool(dividend_fetch_result.coverage_complete)
+    dividend_attempted_tickers = dividend_fetch_result.attempted_tickers
+    dividend_failed_tickers = dividend_fetch_result.failed_tickers
+    dividend_affected_tickers = dividend_failed_tickers or dividend_attempted_tickers
+    dividend_errors = dividend_fetch_result.errors
+    dividend_summary = {
+        "attempted": len(dividend_attempted_tickers),
+        "failed": len(dividend_failed_tickers),
+    }
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     affected_months = capital_history_state["capital_history_affected_months"]
@@ -2101,6 +2131,12 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "price_summary": price_summary,
         "historical_price_summary": historical_price_summary,
         "historical_price_errors": historical_price_errors,
+        "dividend_coverage_complete": dividend_coverage_complete,
+        "dividend_attempted_tickers": dividend_attempted_tickers,
+        "dividend_failed_tickers": dividend_failed_tickers,
+        "dividend_affected_tickers": dividend_affected_tickers,
+        "dividend_errors": dividend_errors,
+        "dividend_summary": dividend_summary,
         "stock_prices": live_prices,
         "benchmark_metrics": benchmark_metrics_df,
         "aligned_bench_returns": aligned_bench_returns,
@@ -2210,6 +2246,9 @@ def main():
     capital_history_incomplete = state.get("capital_history_incomplete", False)
     capital_history_coverage_issues = state.get("capital_history_coverage_issues", [])
     capital_history_affected_years = set(state.get("capital_history_affected_years", []))
+    dividend_coverage_complete = state.get("dividend_coverage_complete", True)
+    dividend_affected_tickers = state.get("dividend_affected_tickers", [])
+    dividend_errors = state.get("dividend_errors", [])
     monthly_returns_covered = state.get("monthly_returns_covered", pd.Series(dtype=float))
     first_incomplete_return_month = state.get("first_incomplete_return_month")
     last_complete_return_month = state.get("last_complete_return_month")
@@ -2225,6 +2264,18 @@ def main():
         covered_period_note = (
             "No fully covered return period is available because historical capital price coverage is incomplete."
         )
+    dividend_warning_note = None
+    if not dividend_coverage_complete:
+        if dividend_affected_tickers:
+            dividend_warning_note = (
+                "Dividend data is incomplete for "
+                + ", ".join(dividend_affected_tickers)
+                + ". Realized P&L and return metrics remain visible but may understate dividends."
+            )
+        else:
+            dividend_warning_note = (
+                "Dividend data is incomplete. Realized P&L and return metrics remain visible but may understate dividends."
+            )
 
     with snapshot_area:
         with col_main:
@@ -2271,12 +2322,16 @@ def main():
                     + coverage_summary
                     + ". RoAC/RoPC/TWR-based metrics are suppressed for affected periods."
                 )
+            if dividend_warning_note:
+                st.warning(dividend_warning_note)
         render_issue_status_banner(issues, price_errors, price_summary)
         st.divider()
 
     with tab_yearly:
         # Comprehensive Yearly Performance (Realized View)
         st.markdown("##### Comprehensive Yearly Performance (Realized View)")
+        if dividend_warning_note:
+            st.warning(dividend_warning_note)
         realized_cols = [
             "year",
             "realized_options_pnl",
@@ -2517,6 +2572,8 @@ def main():
 
     with tab_monthly:
         st.markdown("##### Monthly performance (calendar months)")
+        if dividend_warning_note:
+            st.warning(dividend_warning_note)
         col_map = {
             "index": "Month",
             "month": "Month",
@@ -2728,7 +2785,7 @@ def main():
         coverage_problem = price_summary and (
             price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
         )
-        if issues or price_errors or coverage_problem:
+        if issues or price_errors or coverage_problem or (not dividend_coverage_complete):
             if issues:
                 st.warning("Issues:")
                 st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
@@ -2782,6 +2839,26 @@ def main():
                 st.write("Historical capital price coverage issues:")
                 st.dataframe(coverage_df, use_container_width=True)
                 st.info("RoAC, RoPC, annualized return metrics, and return-based charts were suppressed for affected periods.")
+            dividend_summary = state.get("dividend_summary", {})
+            if dividend_summary:
+                st.write("Dividend fetch coverage:")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "asset": "dividends",
+                                "attempted_tickers": dividend_summary.get("attempted", 0),
+                                "failed_tickers": dividend_summary.get("failed", 0),
+                            }
+                        ]
+                    ),
+                    use_container_width=True,
+                )
+            if dividend_errors:
+                st.write("Dividend fetch issues:")
+                st.dataframe(pd.DataFrame({"error": dividend_errors}), use_container_width=True)
+            if dividend_warning_note:
+                st.info(dividend_warning_note)
         else:
             st.success("No issues detected.")
         if state.get("stock_prices"):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, List
 
 import pandas as pd
@@ -9,18 +10,32 @@ if TYPE_CHECKING:
     from streamlit_app import HoldSeg, StockTxn
 
 
+DIVIDEND_COLUMNS = ["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]
+
+
+@dataclass(frozen=True)
+class DividendFetchResult:
+    cashflows: pd.DataFrame
+    coverage_complete: bool
+    attempted_tickers: List[str]
+    failed_tickers: List[str]
+    errors: List[str]
+
+
+def _empty_dividend_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=DIVIDEND_COLUMNS)
+
+
 def collect_dividend_cashflows(
     stock_txns: List["StockTxn"],
     as_of: pd.Timestamp,
     build_holding_segments: Callable[[List["StockTxn"], pd.Timestamp], List["HoldSeg"]],
     yf_module,
-) -> pd.DataFrame:
-    if yf_module is None:
-        return pd.DataFrame()
+) -> DividendFetchResult:
     try:
         segs = build_holding_segments(stock_txns, as_of)
         if not segs:
-            return pd.DataFrame()
+            return DividendFetchResult(_empty_dividend_frame(), True, [], [], [])
 
         by_ticker = defaultdict(list)
         for seg in segs:
@@ -32,7 +47,19 @@ def collect_dividend_cashflows(
                 )
             )
 
+        attempted_tickers = sorted(by_ticker)
+        if yf_module is None:
+            return DividendFetchResult(
+                _empty_dividend_frame(),
+                False,
+                attempted_tickers,
+                attempted_tickers,
+                ["yfinance not installed; cannot fetch dividend history."],
+            )
+
         div_rows = []
+        failed_tickers: List[str] = []
+        errors: List[str] = []
         for ticker, seg_list in by_ticker.items():
             try:
                 raw_div_hist = yf_module.Ticker(ticker).dividends
@@ -48,24 +75,26 @@ def collect_dividend_cashflows(
                     else:
                         numeric_cols = raw_div_hist.select_dtypes(include="number").columns
                         if len(numeric_cols) == 0:
-                            continue
+                            raise ValueError("dividend history returned no usable numeric dividend column")
                         div_hist = raw_div_hist[numeric_cols[0]]
                 else:
                     div_hist = raw_div_hist
 
-                if div_hist is None or div_hist.empty:
+                if div_hist is None:
+                    raise ValueError("dividend history returned no usable data")
+                if div_hist.empty:
                     continue
 
                 div_hist = div_hist.dropna()
                 if div_hist.empty:
-                    continue
+                    raise ValueError("dividend history contained no valid dividend entries")
 
                 dt_index = pd.to_datetime(div_hist.index, errors="coerce", utc=True)
                 dt_index = dt_index.tz_localize(None).normalize()
                 div_hist.index = dt_index
                 div_hist = div_hist[div_hist.index.notna()]
                 if div_hist.empty:
-                    continue
+                    raise ValueError("dividend history dates could not be parsed")
 
                 for start, end, shares in seg_list:
                     divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
@@ -83,8 +112,24 @@ def collect_dividend_cashflows(
                                 "cash": per_share * shares,
                             }
                         )
-            except Exception:
-                continue
-        return pd.DataFrame(div_rows)
-    except Exception:
-        return pd.DataFrame()
+            except Exception as exc:
+                failed_tickers.append(ticker)
+                errors.append(f"{ticker}: {exc}")
+        cashflows = pd.DataFrame(div_rows)
+        if cashflows.empty:
+            cashflows = _empty_dividend_frame()
+        return DividendFetchResult(
+            cashflows,
+            len(failed_tickers) == 0,
+            attempted_tickers,
+            sorted(set(failed_tickers)),
+            errors,
+        )
+    except Exception as exc:
+        return DividendFetchResult(
+            _empty_dividend_frame(),
+            False,
+            [],
+            [],
+            [f"Dividend fetch initialization failed: {exc}"],
+        )
