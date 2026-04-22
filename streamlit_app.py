@@ -919,6 +919,111 @@ def build_capital_timeline(
     return daily
 
 
+def _count_business_days(start: pd.Timestamp, end: pd.Timestamp) -> int:
+    start = pd.to_datetime(start)
+    end = pd.to_datetime(end)
+    if pd.isna(start) or pd.isna(end) or start > end:
+        return 0
+    return len(pd.bdate_range(start, end))
+
+
+def assess_capital_history_coverage(
+    holding_segments: List[HoldSeg],
+    price_history: Dict[str, pd.Series],
+) -> Dict[str, object]:
+    """
+    Identify denominator-history gaps that should block return metrics.
+
+    Cost-basis fallback remains acceptable only before a position has any prior
+    fetched close. Once a segment should have durable historical coverage, stale
+    or missing history marks the capital timeline as incomplete.
+    """
+    coverage_issues: List[Dict[str, object]] = []
+    affected_months = set()
+    affected_years = set()
+    affected_tickers = set()
+
+    def add_issue(ticker: str, start_date: pd.Timestamp, end_date: pd.Timestamp, reason: str) -> None:
+        start_ts = pd.to_datetime(start_date).normalize()
+        end_ts = pd.to_datetime(end_date).normalize()
+        if pd.isna(start_ts) or pd.isna(end_ts) or start_ts > end_ts:
+            return
+        coverage_issues.append(
+            {
+                "ticker": ticker,
+                "start_date": start_ts,
+                "end_date": end_ts,
+                "reason": reason,
+            }
+        )
+        affected_tickers.add(ticker)
+        for d in pd.date_range(start_ts, end_ts, freq="D"):
+            affected_months.add(d.to_period("M").to_timestamp("M"))
+            affected_years.add(d.year)
+
+    for seg in holding_segments:
+        valuation_days = daterange_days(seg.start, seg.end)
+        if valuation_days.empty:
+            continue
+
+        px_series = price_history.get(seg.ticker)
+        if px_series is None:
+            if len(valuation_days) > 1:
+                add_issue(seg.ticker, valuation_days[1], valuation_days[-1], "missing_history")
+            continue
+
+        prices = px_series.dropna().copy()
+        if prices.empty:
+            if len(valuation_days) > 1:
+                add_issue(seg.ticker, valuation_days[1], valuation_days[-1], "missing_history")
+            continue
+
+        prices.index = pd.to_datetime(prices.index, errors="coerce")
+        prices = prices[prices.index.notna()].sort_index()
+        if prices.empty:
+            if len(valuation_days) > 1:
+                add_issue(seg.ticker, valuation_days[1], valuation_days[-1], "missing_history")
+            continue
+        prices.index = prices.index.normalize()
+
+        first_price_date = prices.index.min()
+        last_price_date = prices.index.max()
+
+        early_days = valuation_days[valuation_days < first_price_date]
+        if len(early_days) > 1:
+            missing_bdays_before_first = _count_business_days(
+                early_days[0] + pd.Timedelta(days=1),
+                first_price_date - pd.Timedelta(days=1),
+            )
+            if missing_bdays_before_first > 1:
+                add_issue(seg.ticker, early_days[1], early_days[-1], "missing_before_first_close")
+
+        in_range_prices = prices[(prices.index >= first_price_date) & (prices.index <= last_price_date)]
+        if len(in_range_prices.index) > 1:
+            for prev_date, next_date in zip(in_range_prices.index[:-1], in_range_prices.index[1:]):
+                gap_start = prev_date + pd.Timedelta(days=1)
+                gap_end = next_date - pd.Timedelta(days=1)
+                if _count_business_days(gap_start, gap_end) > 1:
+                    add_issue(seg.ticker, gap_start, gap_end, "internal_gap")
+
+        late_days = valuation_days[valuation_days > last_price_date]
+        if len(late_days) > 0:
+            missing_bdays_after_last = _count_business_days(
+                last_price_date + pd.Timedelta(days=1),
+                late_days[-1],
+            )
+            if missing_bdays_after_last > 1:
+                add_issue(seg.ticker, late_days[0], late_days[-1], "stale_tail")
+
+    return {
+        "capital_history_incomplete": bool(coverage_issues),
+        "capital_history_coverage_issues": coverage_issues,
+        "capital_history_affected_months": sorted(affected_months),
+        "capital_history_affected_years": sorted(affected_years),
+        "capital_history_affected_tickers": sorted(affected_tickers),
+    }
+
+
 def build_monthly_summary(
     realized_option_events: List[OptionPnLEvent],
     realized_sales: List[RealizedSale],
@@ -1227,7 +1332,7 @@ def period_returns(ret_series: pd.Series):
         return out
     def trailing_n(n):
         sub = srt.tail(n)
-        return (1 + sub).prod() - 1 if len(sub) else np.nan
+        return (1 + sub).prod() - 1 if len(sub) == n else np.nan
     out["Return 3M"] = trailing_n(3)
     out["Return 6M"] = trailing_n(6)
     out["Return 1Y"] = trailing_n(12)
@@ -1242,6 +1347,32 @@ def capital_stats_by_year(capital_daily: pd.DataFrame) -> pd.DataFrame:
     df = capital_daily.reset_index()
     df["year"] = df["date"].dt.year
     return df.groupby("year").agg(avg_capital=("total", "mean"), peak_capital=("total", "max")).reset_index()
+
+
+def build_covered_return_series(
+    monthly_returns: pd.Series,
+    affected_months: List[pd.Timestamp],
+) -> Dict[str, object]:
+    """
+    Return the contiguous fully covered prefix for return-based charts/metrics.
+
+    Once denominator incompleteness starts, later months are excluded from
+    cumulative return displays and benchmark comparisons.
+    """
+    covered = monthly_returns.copy()
+    covered.index = pd.to_datetime(covered.index, errors="coerce")
+    covered = covered[covered.index.notna()].sort_index()
+    affected = sorted(pd.to_datetime(m).to_period("M").to_timestamp("M") for m in affected_months if pd.notna(m))
+    first_incomplete_month = affected[0] if affected else None
+    if first_incomplete_month is not None:
+        covered = covered[covered.index < first_incomplete_month]
+    last_complete_month = covered.index.max() if not covered.empty else None
+    return {
+        "covered_returns": covered,
+        "first_incomplete_month": first_incomplete_month,
+        "last_complete_month": last_complete_month,
+        "truncated": first_incomplete_month is not None and last_complete_month is not None,
+    }
 
 
 def resolve_build_version() -> str:
@@ -1328,14 +1459,22 @@ def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[
     return prices, errors, summary
 
 
-def fetch_price_history_yf(tickers, start: pd.Timestamp, end: pd.Timestamp) -> Dict[str, pd.Series]:
+def fetch_price_history_yf(
+    tickers,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> Tuple[Dict[str, pd.Series], List[str], Dict[str, int]]:
     """Daily close prices per ticker between start and end (inclusive end)."""
     history: Dict[str, pd.Series] = {}
+    errors: List[str] = []
+    summary = {"requested": 0, "fetched": 0}
     if yf is None:
-        return history
+        errors.append("yfinance not installed; cannot fetch historical stock prices.")
+        return history, errors, summary
     tickers = sorted({t for t in tickers if t})
+    summary["requested"] = len(tickers)
     if not tickers or pd.isna(start) or pd.isna(end):
-        return history
+        return history, errors, summary
     try:
         data = yf.download(
             tickers=tickers,
@@ -1357,13 +1496,18 @@ def fetch_price_history_yf(tickers, start: pd.Timestamp, end: pd.Timestamp) -> D
             series = data["Adj Close"].dropna() if "Adj Close" in data else data.get("Close", pd.Series(dtype=float)).dropna()
             if not series.empty and len(tickers) == 1:
                 history[tickers[0]] = series.tz_localize(None).rename(tickers[0])
-    except Exception:
-        return history
+    except Exception as exc:
+        errors.append(f"Historical price download failed: {exc}")
+        return history, errors, summary
     # normalize date index
     for t, s in list(history.items()):
         s.index = pd.to_datetime(s.index).normalize()
         history[t] = s
-    return history
+    summary["fetched"] = len(history)
+    missing_tickers = [t for t in tickers if t not in history]
+    if missing_tickers:
+        errors.append(f"Missing historical price series for tickers: {', '.join(missing_tickers)}")
+    return history, errors, summary
 
 
 def calculate_unrealized_positions(
@@ -1749,6 +1893,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     as_of_ts = min(pd.Timestamp(as_of), today_norm)
     issues: List[str] = []
     price_errors: List[str] = []
+    historical_price_errors: List[str] = []
 
     df_opts = df_opts[df_opts["trans_date"] <= as_of_ts].copy()
 
@@ -1758,15 +1903,35 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     realized_sales, ending_inventory = compute_stock_realized_and_inventory(stock_txns, issues)
     chain_outcomes = build_chains(stock_txns, realized_option_events, as_of_ts)
     start_date = df_opts["trans_date"].min() if not df_opts.empty else as_of_ts
-    price_history = fetch_price_history_yf({t.ticker for t in stock_txns}, pd.to_datetime(start_date).normalize(), as_of_ts.normalize()) if pd.notna(start_date) else {}
+    if pd.notna(start_date):
+        price_history, historical_price_errors, historical_price_summary = fetch_price_history_yf(
+            {t.ticker for t in stock_txns},
+            pd.to_datetime(start_date).normalize(),
+            as_of_ts.normalize(),
+        )
+    else:
+        price_history, historical_price_errors, historical_price_summary = {}, [], {"requested": 0, "fetched": 0}
     capital_daily = build_capital_timeline(all_option_lots, stock_txns, as_of_ts, df_opts, price_history)
+    holding_segments = build_holding_segments(stock_txns, as_of_ts)
+    capital_history_state = assess_capital_history_coverage(holding_segments, price_history)
 
     div_df = collect_dividend_cashflows(stock_txns, as_of_ts)
 
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
+    affected_months = capital_history_state["capital_history_affected_months"]
+    if capital_history_state["capital_history_incomplete"] and not monthly_summary.empty:
+        affected_month_mask = monthly_summary.index.isin(affected_months)
+        for col in ("roac", "ropc"):
+            if col in monthly_summary.columns:
+                monthly_summary.loc[affected_month_mask, col] = np.nan
     monthly_returns = monthly_summary["roac"].dropna() if "roac" in monthly_summary else pd.Series(dtype=float)
     monthly_returns.index = pd.to_datetime(monthly_returns.index, errors="coerce")
     monthly_returns = monthly_returns[monthly_returns.index.notna()]
+    covered_return_state = build_covered_return_series(
+        monthly_returns,
+        capital_history_state["capital_history_affected_months"],
+    )
+    monthly_returns_covered = covered_return_state["covered_returns"]
     monthly_returns_unrealized_adjusted = monthly_returns.copy()
     # Active months: exclude months with zero options P&L (i.e., no option trades)
     if "realized_options_pnl" in monthly_summary and "roac" in monthly_summary:
@@ -1810,6 +1975,18 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
             "Current unrealized snapshot incomplete: missing required prices for "
             + ", ".join(missing_required_price_tickers)
         )
+    if historical_price_errors:
+        issues.extend([f"Historical price error: {e}" for e in historical_price_errors])
+    if capital_history_state["capital_history_incomplete"]:
+        capital_history_issue_text = "; ".join(
+            f"{item['ticker']} ({pd.to_datetime(item['start_date']).date()} to {pd.to_datetime(item['end_date']).date()})"
+            for item in capital_history_state["capital_history_coverage_issues"]
+        )
+        issues.append(
+            "Historical capital price coverage incomplete: "
+            + capital_history_issue_text
+            + ". Denominator-based return metrics are suppressed for affected periods."
+        )
     if price_errors:
         issues.extend([f"Price error: {e}" for e in price_errors])
 
@@ -1834,6 +2011,21 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     twr_active = twr_annualized_by_year(monthly_returns_active.dropna())
     if not twr_active.empty:
         yearly = yearly.merge(twr_active.rename("annualized_return_twr_active"), left_on="year", right_index=True, how="left")
+    if capital_history_state["capital_history_incomplete"] and not yearly.empty:
+        affected_years = set(capital_history_state["capital_history_affected_years"])
+        affected_year_mask = yearly["year"].isin(affected_years)
+        for col in (
+            "roac_year",
+            "ropc_year",
+            "ann_roac",
+            "ann_ropc",
+            "annualized_return_twr",
+            "annualized_return_twr_active",
+            "annualized_return_twr_unrealized_adjusted",
+        ):
+            if col not in yearly.columns:
+                yearly[col] = np.nan
+            yearly.loc[affected_year_mask, col] = np.nan
 
     yearly_with_unreal = build_yearly_with_dashboard_unrealized(
         yearly,
@@ -1851,7 +2043,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
 
     # Benchmarks using monthly returns alignment (clip to as_of)
     benchmark_tickers = {"Cboe BXM": "^BXM", "PUTW ETF": "PUTW", "SCHD ETF": "SCHD"}
-    strat_rets = monthly_returns.copy()
+    strat_rets = monthly_returns_covered.copy()
     if not strat_rets.empty:
         strat_rets.index = pd.to_datetime(strat_rets.index).to_period("M").to_timestamp("M")
         strat_rets = strat_rets[strat_rets.index <= as_of_ts.normalize()]
@@ -1887,6 +2079,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "capital_daily": capital_daily,
         "monthly_cycles": monthly_summary,
         "monthly_returns_w_div": monthly_returns,
+        "monthly_returns_covered": monthly_returns_covered,
         "monthly_returns_unrealized_adjusted": monthly_returns_unrealized_adjusted,
         "monthly_returns_active": monthly_returns_active,
         "open_options": open_options_df,
@@ -1906,6 +2099,8 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "unrealized_blocked": unrealized_snapshot["unrealized_blocked"],
         "missing_required_price_tickers": missing_required_price_tickers,
         "price_summary": price_summary,
+        "historical_price_summary": historical_price_summary,
+        "historical_price_errors": historical_price_errors,
         "stock_prices": live_prices,
         "benchmark_metrics": benchmark_metrics_df,
         "aligned_bench_returns": aligned_bench_returns,
@@ -1915,6 +2110,14 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         "realized_option_events": realized_option_events,
         "chain_outcomes": chain_outcomes,
         "sheet_counts": sheet_counts,
+        "capital_history_incomplete": capital_history_state["capital_history_incomplete"],
+        "capital_history_coverage_issues": capital_history_state["capital_history_coverage_issues"],
+        "capital_history_affected_months": capital_history_state["capital_history_affected_months"],
+        "capital_history_affected_years": capital_history_state["capital_history_affected_years"],
+        "capital_history_affected_tickers": capital_history_state["capital_history_affected_tickers"],
+        "first_incomplete_return_month": covered_return_state["first_incomplete_month"],
+        "last_complete_return_month": covered_return_state["last_complete_month"],
+        "return_series_truncated": covered_return_state["truncated"],
     }
 
 
@@ -2004,6 +2207,24 @@ def main():
     unrealized_blocked = state.get("unrealized_blocked", False)
     missing_required_price_tickers = state.get("missing_required_price_tickers", [])
     price_summary = state.get("price_summary", {})
+    capital_history_incomplete = state.get("capital_history_incomplete", False)
+    capital_history_coverage_issues = state.get("capital_history_coverage_issues", [])
+    capital_history_affected_years = set(state.get("capital_history_affected_years", []))
+    monthly_returns_covered = state.get("monthly_returns_covered", pd.Series(dtype=float))
+    first_incomplete_return_month = state.get("first_incomplete_return_month")
+    last_complete_return_month = state.get("last_complete_return_month")
+    return_series_truncated = state.get("return_series_truncated", False)
+    covered_period_note = None
+    if return_series_truncated and pd.notna(last_complete_return_month) and pd.notna(first_incomplete_return_month):
+        covered_period_note = (
+            "Return-based charts and benchmark metrics are shown through "
+            f"{pd.to_datetime(last_complete_return_month).date()} only. "
+            "Later periods are incomplete due to missing historical capital prices and are excluded."
+        )
+    elif capital_history_incomplete and monthly_returns_covered.empty:
+        covered_period_note = (
+            "No fully covered return period is available because historical capital price coverage is incomplete."
+        )
 
     with snapshot_area:
         with col_main:
@@ -2027,7 +2248,7 @@ def main():
             with mc4:
                 unrealized_adjusted_twr_value = (
                     "n/a"
-                    if include_unrealized and unrealized_blocked
+                    if (include_unrealized and unrealized_blocked) or (as_of_year in capital_history_affected_years)
                     else f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a"
                 )
                 metric_card(
@@ -2035,10 +2256,20 @@ def main():
                     unrealized_adjusted_twr_value,
                 )
             if unrealized_blocked and missing_required_price_tickers:
+                    st.warning(
+                        "Current unrealized snapshot is incomplete: missing required prices for "
+                        + ", ".join(missing_required_price_tickers)
+                        + ". Unrealized-adjusted totals and TWR are suppressed."
+                    )
+            if capital_history_incomplete and capital_history_coverage_issues:
+                coverage_summary = "; ".join(
+                    f"{item['ticker']} ({pd.to_datetime(item['start_date']).date()} to {pd.to_datetime(item['end_date']).date()})"
+                    for item in capital_history_coverage_issues
+                )
                 st.warning(
-                    "Current unrealized snapshot is incomplete: missing required prices for "
-                    + ", ".join(missing_required_price_tickers)
-                    + ". Unrealized-adjusted totals and TWR are suppressed."
+                    "Historical capital price coverage is incomplete for "
+                    + coverage_summary
+                    + ". RoAC/RoPC/TWR-based metrics are suppressed for affected periods."
                 )
         render_issue_status_banner(issues, price_errors, price_summary)
         st.divider()
@@ -2141,7 +2372,11 @@ def main():
         # Benchmark metrics
         st.markdown("##### Key Performance Metrics (vs. Benchmarks)")
         bench_df = state.get("benchmark_metrics", pd.DataFrame())
-        if not bench_df.empty:
+        if covered_period_note:
+            st.info(covered_period_note)
+        if capital_history_incomplete and monthly_returns_covered.empty:
+            st.info("Return-based strategy metrics are unavailable because no complete covered comparison period exists.")
+        elif not bench_df.empty:
             bench_display = bench_df.copy()
             bench_display = bench_display.rename(columns={
                 "CAGR": "CAGR",
@@ -2171,39 +2406,44 @@ def main():
         st.markdown("##### Charts")
         range_options = ["3M", "6M", "YTD", "1Y", "Since inception"]
         range_choice = st.radio("Range", range_options, index=range_options.index("YTD"), key="chart_range", horizontal=True)
+        if return_series_truncated and covered_period_note:
+            st.info(covered_period_note)
 
-        aligned_bench = state.get("aligned_bench_returns", {})
-        strat_curve = (1 + state["monthly_returns_w_div"]).cumprod() if not state["monthly_returns_w_div"].empty else pd.Series(dtype=float)
-        if not strat_curve.empty:
-            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
-        curves = []
-        if not strat_curve.empty:
+        if capital_history_incomplete and monthly_returns_covered.empty:
+            st.info("Return-based charts are unavailable because no complete covered return period exists.")
+        else:
+            aligned_bench = state.get("aligned_bench_returns", {})
+            strat_curve = (1 + monthly_returns_covered).cumprod() if not monthly_returns_covered.empty else pd.Series(dtype=float)
+            if not strat_curve.empty:
+                strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
+            curves = []
+            if not strat_curve.empty:
                 curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
-        for name, series in aligned_bench.items():
-            if not series.empty:
-                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
-        if curves:
-            eq_df = pd.concat(curves, ignore_index=True)
-            eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
-            if not eq_df.empty:
-                eq_df = eq_df.sort_values(["Series", "Date"])
-                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
-                g_min = float(eq_df["Growth"].min())
-                g_max = float(eq_df["Growth"].max())
-                pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
-                y_domain = [g_min - pad, g_max + pad]
-                chart = (
-                    alt.Chart(eq_df)
-                    .mark_line()
-                    .encode(
-                        x=alt.X("Date:T", title="Date"),
-                        y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=y_domain, nice=True)),
-                        color=alt.Color("Series:N", title="Series"),
-                        tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
+            for name, series in aligned_bench.items():
+                if not series.empty:
+                    curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
+            if curves:
+                eq_df = pd.concat(curves, ignore_index=True)
+                eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
+                if not eq_df.empty:
+                    eq_df = eq_df.sort_values(["Series", "Date"])
+                    eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
+                    g_min = float(eq_df["Growth"].min())
+                    g_max = float(eq_df["Growth"].max())
+                    pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
+                    y_domain = [g_min - pad, g_max + pad]
+                    chart = (
+                        alt.Chart(eq_df)
+                        .mark_line()
+                        .encode(
+                            x=alt.X("Date:T", title="Date"),
+                            y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=y_domain, nice=True)),
+                            color=alt.Color("Series:N", title="Series"),
+                            tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
+                        )
+                        .properties(height=260, title="Cumulative Growth vs Benchmarks")
                     )
-                    .properties(height=260, title="Cumulative Growth vs Benchmarks")
-                )
-                st.altair_chart(chart, use_container_width=True)
+                    st.altair_chart(chart, use_container_width=True)
 
         # P&L by options cycle
         pnl_df = build_options_cycle_chart_data(state["monthly_cycles"])
@@ -2224,8 +2464,8 @@ def main():
                 st.altair_chart(bar, use_container_width=True)
 
         # Monthly return line (strategy only)
-        if not state["monthly_returns_w_div"].empty:
-            ret_df = pd.DataFrame({"Date": state["monthly_returns_w_div"].index, "Return": state["monthly_returns_w_div"].values})
+        if not monthly_returns_covered.empty:
+            ret_df = pd.DataFrame({"Date": monthly_returns_covered.index, "Return": monthly_returns_covered.values})
             ret_df = filter_df_to_range(ret_df, "Date", state["as_of"], range_choice)
             if not ret_df.empty:
                 y_min = float(ret_df["Return"].min())
@@ -2272,6 +2512,8 @@ def main():
                 )
                 ret_chart = alt.layer(bands_chart, line_chart).properties(height=220, title="Monthly Returns (RoAC)")
                 st.altair_chart(ret_chart, use_container_width=True)
+        elif capital_history_incomplete:
+            st.info("No complete monthly return segment is available to chart.")
 
     with tab_monthly:
         st.markdown("##### Monthly performance (calendar months)")
@@ -2301,11 +2543,15 @@ def main():
             ),
             use_container_width=True,
         )
-        if not state["monthly_returns_w_div"].empty:
-            equity_curve = (1 + state["monthly_returns_w_div"]).cumprod()
+        if return_series_truncated and covered_period_note:
+            st.info(covered_period_note)
+        if capital_history_incomplete and monthly_returns_covered.empty:
+            st.info("Cumulative return chart is unavailable because no complete covered return period exists.")
+        elif not monthly_returns_covered.empty:
+            equity_curve = (1 + monthly_returns_covered).cumprod()
             curve_df = pd.DataFrame(
                 {
-                    "Month": state["monthly_returns_w_div"].index,
+                    "Month": monthly_returns_covered.index,
                     "Growth": equity_curve.values,
                 }
             )
@@ -2500,11 +2746,42 @@ def main():
                     ),
                     use_container_width=True,
                 )
+            historical_price_summary = state.get("historical_price_summary", {})
+            if historical_price_summary:
+                st.write("Historical price fetch coverage:")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "asset": "historical_stocks",
+                                "requested": historical_price_summary.get("requested", 0),
+                                "fetched": historical_price_summary.get("fetched", 0),
+                            },
+                        ]
+                    ),
+                    use_container_width=True,
+                )
             if price_errors:
                 st.write("Price fetch issues:")
                 st.dataframe(pd.DataFrame({"error": price_errors}), use_container_width=True)
+            historical_price_errors = state.get("historical_price_errors", [])
+            if historical_price_errors:
+                st.write("Historical price fetch issues:")
+                st.dataframe(pd.DataFrame({"error": historical_price_errors}), use_container_width=True)
             if unrealized_blocked:
                 st.info("Unrealized P&L and related metrics were suppressed due to missing prices.")
+            if capital_history_incomplete and capital_history_coverage_issues:
+                coverage_df = pd.DataFrame(capital_history_coverage_issues).rename(
+                    columns={
+                        "ticker": "ticker",
+                        "start_date": "start_date",
+                        "end_date": "end_date",
+                        "reason": "reason",
+                    }
+                )
+                st.write("Historical capital price coverage issues:")
+                st.dataframe(coverage_df, use_container_width=True)
+                st.info("RoAC, RoPC, annualized return metrics, and return-based charts were suppressed for affected periods.")
         else:
             st.success("No issues detected.")
         if state.get("stock_prices"):

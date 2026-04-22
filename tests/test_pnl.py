@@ -6,12 +6,15 @@ import streamlit_app as app
 
 from streamlit_app import (
     CONTRACT_MULTIPLIER,
+    HoldSeg,
     OptionLot,
     OpenLot,
     StockTxn,
+    assess_capital_history_coverage,
     build_open_options_frame,
     build_options_cycle_chart_data,
     build_capital_timeline,
+    build_covered_return_series,
     build_dashboard_unrealized_adjusted_return_series,
     build_dashboard_unrealized_snapshot,
     build_yearly_with_dashboard_unrealized,
@@ -696,3 +699,302 @@ def test_capital_timeline_uses_same_day_close_when_available():
     )
 
     assert cap.loc[pd.Timestamp("2024-05-22"), "shares_invested"] == pytest.approx(11_200.0)
+
+
+def test_capital_history_coverage_flags_missing_history_after_first_day():
+    segments = [
+        HoldSeg(
+            ticker="AAA",
+            start=pd.Timestamp("2024-05-20"),
+            end=pd.Timestamp("2024-05-23"),
+            shares=100,
+            cost_per_share=100.0,
+        )
+    ]
+
+    coverage = assess_capital_history_coverage(segments, {})
+
+    assert coverage["capital_history_incomplete"] is True
+    assert coverage["capital_history_affected_tickers"] == ["AAA"]
+    issue = coverage["capital_history_coverage_issues"][0]
+    assert issue["ticker"] == "AAA"
+    assert issue["start_date"] == pd.Timestamp("2024-05-21")
+    assert issue["end_date"] == pd.Timestamp("2024-05-22")
+    assert issue["reason"] == "missing_history"
+
+
+def test_capital_history_coverage_flags_partial_tail_history():
+    segments = [
+        HoldSeg(
+            ticker="AAA",
+            start=pd.Timestamp("2024-05-20"),
+            end=pd.Timestamp("2024-05-29"),
+            shares=100,
+            cost_per_share=100.0,
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series(
+            [101.0, 102.0],
+            index=pd.to_datetime(["2024-05-21", "2024-05-22"]),
+        )
+    }
+
+    coverage = assess_capital_history_coverage(segments, price_history)
+
+    assert coverage["capital_history_incomplete"] is True
+    assert coverage["capital_history_affected_tickers"] == ["AAA"]
+    issue = coverage["capital_history_coverage_issues"][0]
+    assert issue["reason"] == "stale_tail"
+    assert issue["start_date"] == pd.Timestamp("2024-05-23")
+    assert issue["end_date"] == pd.Timestamp("2024-05-28")
+
+
+def test_capital_history_coverage_allows_legitimate_initial_cost_basis_fallback():
+    segments = [
+        HoldSeg(
+            ticker="AAA",
+            start=pd.Timestamp("2024-05-20"),
+            end=pd.Timestamp("2024-05-22"),
+            shares=100,
+            cost_per_share=100.0,
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series(
+            [110.0],
+            index=pd.to_datetime(["2024-05-21"]),
+        )
+    }
+
+    coverage = assess_capital_history_coverage(segments, price_history)
+
+    assert coverage["capital_history_incomplete"] is False
+    assert coverage["capital_history_coverage_issues"] == []
+
+
+def test_pipeline_suppresses_denominator_returns_when_historical_price_fetch_fails(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-10"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: (
+            {},
+            ["Historical price download failed: boom"],
+            {"requested": len(set(tickers)), "fetched": 0},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 110.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
+
+    assert state["capital_history_incomplete"] is True
+    assert state["capital_history_affected_tickers"] == ["AAA"]
+    assert state["historical_price_summary"] == {"requested": 1, "fetched": 0}
+    assert any("Historical price download failed: boom" in msg for msg in state["issues"])
+    assert any("AAA" in msg for msg in state["issues"])
+    assert state["monthly_cycles"]["roac"].isna().all()
+    assert state["monthly_cycles"]["ropc"].isna().all()
+    yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
+    assert pd.isna(yearly_row["ann_roac"])
+    assert pd.isna(yearly_row["annualized_return_twr"])
+    assert pd.isna(yearly_row["annualized_return_twr_active"])
+
+
+def test_pipeline_denominator_returns_remain_when_historical_price_history_is_complete(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-10"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: (
+            {
+                "AAA": pd.Series(
+                    [101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
+                    index=pd.to_datetime(
+                        [
+                            "2024-05-13",
+                            "2024-05-14",
+                            "2024-05-15",
+                            "2024-05-16",
+                            "2024-05-17",
+                            "2024-05-20",
+                        ]
+                    ),
+                )
+            },
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 110.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
+
+    assert state["capital_history_incomplete"] is False
+    assert state["capital_history_coverage_issues"] == []
+    assert state["monthly_cycles"]["roac"].notna().all()
+    assert state["monthly_cycles"]["ropc"].notna().all()
+    yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
+    assert pd.notna(yearly_row["ann_roac"])
+
+
+def test_build_covered_return_series_truncates_at_first_incomplete_month():
+    monthly_returns = pd.Series(
+        [0.05, 0.04, 0.03],
+        index=pd.to_datetime(["2024-03-31", "2024-04-30", "2024-05-31"]),
+    )
+
+    covered = build_covered_return_series(
+        monthly_returns,
+        [pd.Timestamp("2024-05-31")],
+    )
+
+    assert covered["first_incomplete_month"] == pd.Timestamp("2024-05-31")
+    assert covered["last_complete_month"] == pd.Timestamp("2024-04-30")
+    assert covered["truncated"] is True
+    assert list(covered["covered_returns"].index) == [pd.Timestamp("2024-03-31"), pd.Timestamp("2024-04-30")]
+
+
+def test_pipeline_truncates_return_series_and_benchmark_metrics_to_last_complete_month(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-20"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: (
+            {
+                "AAA": pd.Series(
+                    [101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0],
+                    index=pd.to_datetime(
+                        [
+                            "2024-05-21",
+                            "2024-05-22",
+                            "2024-05-23",
+                            "2024-05-24",
+                            "2024-05-27",
+                            "2024-05-28",
+                            "2024-05-29",
+                            "2024-05-30",
+                            "2024-05-31",
+                        ]
+                    ),
+                )
+            },
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 110.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(
+        app,
+        "align_benchmarks_monthly",
+        lambda tickers, idx: {"Bench": pd.Series([0.02] * len(idx), index=idx)} if len(idx) else {},
+    )
+
+    state = app.build_pipeline(pd.Timestamp("2024-06-20").date(), False, ["Options 2024"])
+
+    may = pd.Timestamp("2024-05-31")
+    june = pd.Timestamp("2024-06-30")
+
+    assert state["capital_history_incomplete"] is True
+    assert state["first_incomplete_return_month"] == june
+    assert state["last_complete_return_month"] == may
+    assert state["monthly_cycles"].loc[may, "roac"] == pytest.approx(state["monthly_returns_covered"].iloc[0])
+    assert pd.isna(state["monthly_cycles"].loc[june, "roac"])
+    assert pd.isna(state["monthly_cycles"].loc[june, "ropc"])
+    assert list(state["monthly_returns_covered"].index) == [may]
+    assert list(state["aligned_bench_returns"]["Bench"].index) == [may]
+
+    strategy_row = state["benchmark_metrics"].loc[state["benchmark_metrics"]["Series"] == "My Strategy"].iloc[0]
+    assert strategy_row["Return YTD"] == pytest.approx(state["monthly_returns_covered"].iloc[0])
+    assert pd.isna(strategy_row["Return 3M"])
+    assert pd.isna(strategy_row["Return 6M"])
+    assert pd.isna(strategy_row["Return 1Y"])
