@@ -39,6 +39,118 @@ def _make_capital_daily(start: str, periods: int, total: float) -> pd.DataFrame:
     return pd.DataFrame({"total": [total] * periods}, index=idx)
 
 
+@pytest.mark.parametrize(
+    "type_value,strike_value,comment,expected_type,expected_strike",
+    [
+        ("Put/Call", "90/110", "short put, long call", "Put", 90.0),
+        ("Put/Call", "90/110", "sold put, bought call", "Put", 90.0),
+        ("Put/Call", "90/110", "written put / long call", "Put", 90.0),
+        ("Put/Call", "90/110", "short call, long put", "Call", 110.0),
+        ("Put/Call", "90/110", "sold call and bought put", "Call", 110.0),
+        ("Put/Call", "90/110", "written call / long put", "Call", 110.0),
+        ("Put/Call", "90/110", "collar roll", None, None),
+        ("Put/Call", "90/110", "", None, None),
+        ("Call/Put", "110/90", "short call, long put", "Call", 110.0),
+        ("Call/Put", "110/90", "sold call and bought put", "Call", 110.0),
+        ("Call/Put", "110/90", "written call / long put", "Call", 110.0),
+        ("Call/Put", "110/90", "short put, long call", "Put", 90.0),
+        ("Call/Put", "110/90", "sold put, bought call", "Put", 90.0),
+        ("Call/Put", "110/90", "written put / long call", "Put", 90.0),
+        ("Call/Put", "110/90", "collar roll", None, None),
+        ("Call/Put", "110/90", "", None, None),
+    ],
+)
+def test_mixed_leg_option_rows_characterize_current_short_leg_inference(
+    type_value,
+    strike_value,
+    comment,
+    expected_type,
+    expected_strike,
+):
+    inferred_type, inferred_strike = app.infer_mixed_short_leg(
+        {
+            "type": type_value,
+            "strike": strike_value,
+            "comment": comment,
+        }
+    )
+
+    assert inferred_type == expected_type
+    if expected_strike is None:
+        assert pd.isna(inferred_strike)
+    else:
+        assert inferred_strike == expected_strike
+
+
+@pytest.mark.parametrize("comment", ["", "collar roll", "long put hedge"])
+def test_mixed_leg_option_rows_with_ambiguous_comments_are_flagged_not_traded(comment):
+    issues = []
+    df = _make_df(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-01-01"),
+                "ticker": "MIX",
+                "type": "Put/Call",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-02-16"),
+                "strike": "90/110",
+                "qty": 1,
+                "amount": 100.0,
+                "commission": 0.0,
+                "total_pnl": 100.0,
+                "comment": comment,
+            }
+        ]
+    )
+
+    trades = build_option_trades(df, issues)
+
+    assert trades == []
+    assert len(issues) == 1
+    assert "Mixed-leg option row for MIX on 2024-01-01 has ambiguous short leg" in issues[0]
+    assert "short put, sold put, written put, short call, sold call, written call" in issues[0]
+
+
+def test_pipeline_surfaces_ambiguous_mixed_leg_parse_issue(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "MIX",
+                "type": "Put/Call",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-06-21"),
+                "strike": "90/110",
+                "qty": 1,
+                "amount": 100.0,
+                "commission": 0.0,
+                "total_pnl": 100.0,
+                "comment": "collar roll",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: ({}, [], {"requested": len(set(tickers)), "fetched": 0}),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({}, [], {"requested": len(set(tickers)), "fetched": 0}),
+    )
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
+
+    assert any("Mixed-leg option row for MIX on 2024-05-01 has ambiguous short leg" in msg for msg in state["issues"])
+    assert state["lots"] == []
+
+
 def test_realized_option_close_pnl():
     df = _make_df(
         [

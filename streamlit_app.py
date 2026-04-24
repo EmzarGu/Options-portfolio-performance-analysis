@@ -542,7 +542,11 @@ def parse_strike_pair(s: str) -> Tuple[float, float]:
         return math.nan, math.nan
 
 
-def infer_mixed_short_leg(row: pd.Series) -> Tuple[str, float]:
+MIXED_SHORT_PUT_PHRASES = ("short put", "sold put", "written put")
+MIXED_SHORT_CALL_PHRASES = ("short call", "sold call", "written call")
+
+
+def infer_mixed_short_leg(row: pd.Series) -> Tuple[Optional[str], float]:
     t_low = str(row.get("type", "")).lower()
     c_low = str(row.get("comment", "")).lower()
     a, b = parse_strike_pair(row.get("strike", ""))
@@ -551,9 +555,26 @@ def infer_mixed_short_leg(row: pd.Series) -> Tuple[str, float]:
         put_strike, call_strike = a, b
     elif "call/put" in t_low:
         call_strike, put_strike = a, b
-    if ("short call" in c_low) or ("long put" in c_low):
+    put_hint = any(phrase in c_low for phrase in MIXED_SHORT_PUT_PHRASES)
+    call_hint = any(phrase in c_low for phrase in MIXED_SHORT_CALL_PHRASES)
+    if put_hint and not call_hint:
+        return "Put", put_strike
+    if call_hint and not put_hint:
         return "Call", call_strike
-    return "Put", put_strike
+    return None, math.nan
+
+
+def _mixed_leg_parse_issue(row) -> str:
+    row_dict = row._asdict() if hasattr(row, "_asdict") else row
+    ticker = str(row_dict.get("ticker", "")).upper().strip()
+    trans_date = pd.to_datetime(row_dict.get("trans_date", pd.NaT), errors="coerce")
+    date_text = trans_date.date() if pd.notna(trans_date) else "unknown date"
+    comment = row_dict.get("comment", "")
+    return (
+        f"Mixed-leg option row for {ticker or 'unknown ticker'} on {date_text} "
+        f"has ambiguous short leg. Type={row_dict.get('type', '')}, strike={row_dict.get('strike', '')}, "
+        f"comment={comment!r}. Add one of: short put, sold put, written put, short call, sold call, written call."
+    )
 
 
 def _price_per_share(row: pd.Series) -> float:
@@ -575,7 +596,7 @@ def _price_per_share(row: pd.Series) -> float:
     return net_cash / (qty * CONTRACT_MULTIPLIER)
 
 
-def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
+def build_option_trades(df: pd.DataFrame, issues: Optional[List[str]] = None) -> List[OptionTrade]:
     trades: List[OptionTrade] = []
     rows = df.sort_values(["ticker", "trans_date"]).reset_index(drop=True)
     # Pre-count sells per option key to ignore standalone long buys (protective hedges)
@@ -583,15 +604,19 @@ def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
     for r in rows.itertuples(index=False):
         t_raw = str(r.type).strip()
         action = r.action
-        strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
         otype = None
         if t_raw in ("Put", "Call"):
+            strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
             otype = t_raw
         elif ("put/call" in t_raw.lower()) or ("call/put" in t_raw.lower()):
             leg, inferred_strike = infer_mixed_short_leg(r._asdict())
             if pd.notna(inferred_strike):
                 otype = leg
                 strike_val = float(inferred_strike)
+            else:
+                strike_val = math.nan
+        else:
+            strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
         if action == "Sell" and otype is not None and not pd.isna(strike_val):
             key = (str(r.ticker).upper().strip(), otype, strike_val, pd.to_datetime(r.expiration).normalize())
             sell_counts[key] += 1
@@ -609,15 +634,21 @@ def build_option_trades(df: pd.DataFrame) -> List[OptionTrade]:
             except Exception:
                 assigned_flag = False
         assigned = assigned_flag or ("assigned" in cmt.lower())
-        strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
         otype = None
         if t_raw in ("Put", "Call"):
+            strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
             otype = t_raw
         elif ("put/call" in t_raw.lower()) or ("call/put" in t_raw.lower()):
             leg, inferred_strike = infer_mixed_short_leg(r._asdict())
             if pd.notna(inferred_strike):
                 otype = leg
                 strike_val = float(inferred_strike)
+            else:
+                strike_val = math.nan
+                if issues is not None:
+                    issues.append(_mixed_leg_parse_issue(r))
+        else:
+            strike_val = float(r.strike) if pd.notna(r.strike) else math.nan
         if otype is None or pd.isna(strike_val):
             continue
         key = (str(r.ticker).upper().strip(), otype, strike_val, pd.to_datetime(r.expiration).normalize())
@@ -1922,7 +1953,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
 
     df_opts = df_opts[df_opts["trans_date"] <= as_of_ts].copy()
 
-    trades = build_option_trades(df_opts)
+    trades = build_option_trades(df_opts, issues)
     realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
     issues.extend(trade_issues)
     realized_sales, ending_inventory = compute_stock_realized_and_inventory(stock_txns, issues)
