@@ -1273,6 +1273,7 @@ def expectancies(realized_option_events: List[OptionPnLEvent], realized_sales: L
 
 
 def calculate_performance_metrics(ret_series: pd.Series, rf: float = 0.04):
+    ret_series = ret_series.dropna()
     if ret_series.empty:
         return {}
     m = len(ret_series)
@@ -1313,8 +1314,8 @@ def align_benchmarks_monthly(tickers: Dict[str, str], idx: pd.DatetimeIndex):
                 continue
             # resample to month-end to match strategy returns
             monthly_px = px.resample("ME").last()
-            monthly_ret = monthly_px.pct_change().dropna()
-            monthly_ret = monthly_ret.reindex(idx, method="ffill")
+            monthly_ret = monthly_px.pct_change(fill_method=None)
+            monthly_ret = monthly_ret.reindex(idx)
             aligned[name] = monthly_ret
         except Exception:
             continue
@@ -1330,16 +1331,20 @@ def period_returns(ret_series: pd.Series):
     srt = srt[srt.index.notna()].sort_index()
     if srt.empty:
         return out
+    def compound_if_complete(sub):
+        return (1 + sub).prod() - 1 if len(sub) and sub.notna().all() else np.nan
+
     def trailing_n(n):
         sub = srt.tail(n)
-        return (1 + sub).prod() - 1 if len(sub) == n else np.nan
+        return compound_if_complete(sub) if len(sub) == n else np.nan
+
     out["Return 3M"] = trailing_n(3)
     out["Return 6M"] = trailing_n(6)
     out["Return 1Y"] = trailing_n(12)
     latest_year = srt.index.max().year
     ytd = srt[srt.index.year == latest_year]
-    out["Return YTD"] = (1 + ytd).prod() - 1 if not ytd.empty else np.nan
-    out["Return SI"] = (1 + srt).prod() - 1 if len(srt) else np.nan
+    out["Return YTD"] = compound_if_complete(ytd)
+    out["Return SI"] = compound_if_complete(srt)
     return out
 
 
@@ -2101,10 +2106,13 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
             strategy_row[key] = strat_risk[key]
     benchmark_metrics_rows.append(strategy_row)
     for name, rets in aligned_bench_returns.items():
-        rets_clean = rets.dropna()
-        full = calculate_performance_metrics(rets_clean)
-        risk = calculate_performance_metrics(rets_clean.tail(12))
-        row = {"Series": name, **full, **period_returns(rets_clean)}
+        rets = rets.copy()
+        rets.index = pd.to_datetime(rets.index, errors="coerce")
+        rets = rets[rets.index.notna()].sort_index()
+        observed_rets = rets.dropna()
+        full = calculate_performance_metrics(observed_rets)
+        risk = calculate_performance_metrics(rets.tail(12).dropna())
+        row = {"Series": name, **full, **period_returns(rets)}
         for key in ["Volatility", "Sharpe", "Sortino", "Max Drawdown"]:
             if key in risk:
                 row[key] = risk[key]

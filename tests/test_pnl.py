@@ -10,6 +10,7 @@ from streamlit_app import (
     OptionLot,
     OpenLot,
     StockTxn,
+    align_benchmarks_monthly,
     assess_capital_history_coverage,
     build_open_options_frame,
     build_options_cycle_chart_data,
@@ -20,8 +21,10 @@ from streamlit_app import (
     build_yearly_with_dashboard_unrealized,
     build_option_trades,
     build_per_ticker_totals,
+    calculate_performance_metrics,
     calculate_unrealized_positions,
     filter_df_to_range,
+    period_returns,
     process_option_positions,
     resolve_build_version,
 )
@@ -913,6 +916,72 @@ def test_build_covered_return_series_truncates_at_first_incomplete_month():
     assert covered["last_complete_month"] == pd.Timestamp("2024-04-30")
     assert covered["truncated"] is True
     assert list(covered["covered_returns"].index) == [pd.Timestamp("2024-03-31"), pd.Timestamp("2024-04-30")]
+
+
+def test_align_benchmarks_monthly_complete_history_remains_unchanged(monkeypatch):
+    class FakeYF:
+        def download(self, *args, **kwargs):
+            return pd.DataFrame(
+                {"Close": [100.0, 110.0, 121.0, 133.1]},
+                index=pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"]),
+            )
+
+    monkeypatch.setattr(app, "yf", FakeYF())
+    idx = pd.to_datetime(["2024-02-29", "2024-03-31", "2024-04-30"])
+
+    aligned = align_benchmarks_monthly({"Bench": "BENCH"}, idx)
+
+    assert list(aligned["Bench"].index) == list(idx)
+    assert aligned["Bench"].tolist() == pytest.approx([0.10, 0.10, 0.10])
+
+
+def test_align_benchmarks_monthly_internal_missing_month_is_not_forward_filled(monkeypatch):
+    class FakeYF:
+        def download(self, *args, **kwargs):
+            return pd.DataFrame(
+                {"Close": [100.0, 110.0, 133.1]},
+                index=pd.to_datetime(["2024-01-31", "2024-02-29", "2024-04-30"]),
+            )
+
+    monkeypatch.setattr(app, "yf", FakeYF())
+    idx = pd.to_datetime(["2024-02-29", "2024-03-31", "2024-04-30"])
+
+    aligned = align_benchmarks_monthly({"Bench": "BENCH"}, idx)["Bench"]
+
+    assert aligned.loc[pd.Timestamp("2024-02-29")] == pytest.approx(0.10)
+    assert pd.isna(aligned.loc[pd.Timestamp("2024-03-31")])
+    assert pd.isna(aligned.loc[pd.Timestamp("2024-04-30")])
+
+
+def test_benchmark_metrics_do_not_compound_or_trail_through_missing_months():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    gappy_benchmark = pd.Series([0.01, float("nan"), 0.03], index=idx)
+
+    metrics = calculate_performance_metrics(gappy_benchmark)
+    observed_metrics = calculate_performance_metrics(gappy_benchmark.dropna())
+    ffilled_metrics = calculate_performance_metrics(gappy_benchmark.ffill())
+    periods = period_returns(gappy_benchmark)
+
+    assert metrics["CAGR"] == pytest.approx(observed_metrics["CAGR"])
+    assert metrics["Sharpe"] == pytest.approx(observed_metrics["Sharpe"])
+    assert metrics["CAGR"] != pytest.approx(ffilled_metrics["CAGR"])
+    assert metrics["Sharpe"] != pytest.approx(ffilled_metrics["Sharpe"])
+    assert pd.isna(periods["Return 3M"])
+    assert pd.isna(periods["Return YTD"])
+    assert pd.isna(periods["Return SI"])
+
+
+def test_valid_strategy_returns_are_unaffected_by_gap_handling():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    strategy_returns = pd.Series([0.01, 0.02, 0.03], index=idx)
+
+    metrics = calculate_performance_metrics(strategy_returns)
+    periods = period_returns(strategy_returns)
+
+    assert metrics["CAGR"] == pytest.approx((1.01 * 1.02 * 1.03) ** 4 - 1)
+    assert periods["Return 3M"] == pytest.approx((1.01 * 1.02 * 1.03) - 1)
+    assert periods["Return YTD"] == pytest.approx((1.01 * 1.02 * 1.03) - 1)
+    assert periods["Return SI"] == pytest.approx((1.01 * 1.02 * 1.03) - 1)
 
 
 def test_pipeline_truncates_return_series_and_benchmark_metrics_to_last_complete_month(monkeypatch):
