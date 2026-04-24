@@ -2017,6 +2017,17 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
             + capital_history_issue_text
             + ". Denominator-based return metrics are suppressed for affected periods."
         )
+    if not dividend_coverage_complete:
+        if dividend_affected_tickers:
+            issues.append(
+                "Dividend data incomplete for "
+                + ", ".join(dividend_affected_tickers)
+                + ". Realized P&L and return metrics remain visible but may understate dividends."
+            )
+        else:
+            issues.append(
+                "Dividend data incomplete. Realized P&L and return metrics remain visible but may understate dividends."
+            )
     if price_errors:
         issues.extend([f"Price error: {e}" for e in price_errors])
 

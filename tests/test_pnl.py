@@ -1072,7 +1072,84 @@ def test_pipeline_dividend_incomplete_keeps_returns_visible(monkeypatch):
     assert state["dividend_coverage_complete"] is False
     assert state["dividend_affected_tickers"] == ["AAA"]
     assert state["dividend_errors"] == ["AAA: dividend fetch failed"]
+    assert any("Dividend data incomplete for AAA" in msg for msg in state["issues"])
     assert state["monthly_cycles"]["roac"].notna().all()
     assert state["monthly_cycles"]["ropc"].notna().all()
     yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
     assert pd.notna(yearly_row["ann_roac"])
+
+
+def test_pipeline_valid_zero_dividend_history_does_not_create_issue(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-10"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: (
+            {
+                "AAA": pd.Series(
+                    [101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
+                    index=pd.to_datetime(
+                        [
+                            "2024-05-13",
+                            "2024-05-14",
+                            "2024-05-15",
+                            "2024-05-16",
+                            "2024-05-17",
+                            "2024-05-20",
+                        ]
+                    ),
+                )
+            },
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 110.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "collect_dividend_cashflows",
+        lambda stock_txns, as_of: app.DividendFetchResult(
+            cashflows=pd.DataFrame(columns=["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]),
+            coverage_complete=True,
+            attempted_tickers=["AAA"],
+            failed_tickers=[],
+            errors=[],
+        ),
+    )
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
+
+    assert state["dividend_coverage_complete"] is True
+    assert state["dividend_affected_tickers"] == ["AAA"]
+    assert state["dividend_errors"] == []
+    assert not any("Dividend data incomplete" in msg for msg in state["issues"])
+    assert state["monthly_cycles"]["roac"].notna().all()
