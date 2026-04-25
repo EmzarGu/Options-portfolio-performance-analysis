@@ -4,10 +4,10 @@ import math
 import os
 import subprocess
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 try:
     import tomllib  # py311+
 except ModuleNotFoundError:  # py3.9/3.10
@@ -534,6 +534,84 @@ class ChainOutcome:
     option_pnl: float
     stock_pnl: float
     total_pnl: float
+
+
+@dataclass
+class PipelineState:
+    df_opts: pd.DataFrame
+    lots: List[OptionLot]
+    stock_txns: List[StockTxn]
+    realized_sales: List[RealizedSale]
+    ending_inventory: List[OpenLot]
+    capital_daily: pd.DataFrame
+    monthly_cycles: pd.DataFrame
+    monthly_returns_w_div: pd.Series
+    monthly_returns_covered: pd.Series
+    monthly_returns_unrealized_adjusted: pd.Series
+    monthly_returns_active: pd.Series
+    open_options: pd.DataFrame
+    live_prices: Dict[str, float]
+    inv_df: pd.DataFrame
+    total_unreal: float
+    option_unreal: float
+    stock_unreal: float
+    advanced_unreal: pd.Series
+    yearly: pd.DataFrame
+    yearly_with_unreal: pd.DataFrame
+    per_ticker: pd.DataFrame
+    div_df: pd.DataFrame
+    as_of: pd.Timestamp
+    issues: List[str]
+    price_errors: List[str]
+    unrealized_blocked: bool
+    missing_required_price_tickers: List[str]
+    price_summary: Dict[str, int]
+    historical_price_summary: Dict[str, int]
+    historical_price_errors: List[str]
+    dividend_coverage_complete: bool
+    dividend_attempted_tickers: List[str]
+    dividend_failed_tickers: List[str]
+    dividend_affected_tickers: List[str]
+    dividend_errors: List[str]
+    dividend_summary: Dict[str, int]
+    stock_prices: Dict[str, float]
+    benchmark_metrics: pd.DataFrame
+    aligned_bench_returns: Dict[str, pd.Series]
+    per_ticker_totals: pd.DataFrame
+    grand_total: float
+    cumulative_realized: float
+    realized_option_events: List[OptionPnLEvent]
+    chain_outcomes: List[ChainOutcome]
+    sheet_counts: pd.DataFrame
+    capital_history_incomplete: bool
+    capital_history_coverage_issues: List[Dict[str, object]]
+    capital_history_affected_months: List[pd.Timestamp]
+    capital_history_affected_years: List[int]
+    capital_history_affected_tickers: List[str]
+    first_incomplete_return_month: Optional[pd.Timestamp]
+    last_complete_return_month: Optional[pd.Timestamp]
+    return_series_truncated: bool
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {field.name: getattr(self, field.name) for field in fields(self)}
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def get(self, key: str, default=None) -> Any:
+        return getattr(self, key, default)
+
+    def keys(self) -> List[str]:
+        return [field.name for field in fields(self)]
+
+    def items(self):
+        return self.as_dict().items()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.keys()
 
 
 # ------------------------------------------------------------
@@ -2136,61 +2214,61 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         benchmark_metrics_rows.append(row)
     benchmark_metrics_df = pd.DataFrame(benchmark_metrics_rows)
 
-    return {
-        "df_opts": df_opts,
-        "lots": all_option_lots,
-        "stock_txns": stock_txns,
-        "realized_sales": realized_sales,
-        "ending_inventory": ending_inventory,
-        "capital_daily": capital_daily,
-        "monthly_cycles": monthly_summary,
-        "monthly_returns_w_div": monthly_returns,
-        "monthly_returns_covered": monthly_returns_covered,
-        "monthly_returns_unrealized_adjusted": monthly_returns_unrealized_adjusted,
-        "monthly_returns_active": monthly_returns_active,
-        "open_options": open_options_df,
-        "live_prices": live_prices,
-        "inv_df": inv_df,
-        "total_unreal": total_unreal,
-        "option_unreal": option_unreal,
-        "stock_unreal": stock_unreal,
-        "advanced_unreal": per_ticker_unreal,
-        "yearly": yearly,
-        "yearly_with_unreal": yearly_with_unreal,
-        "per_ticker": per_ticker,
-        "div_df": div_df,
-        "as_of": as_of_ts,
-        "issues": issues,
-        "price_errors": price_errors,
-        "unrealized_blocked": unrealized_snapshot["unrealized_blocked"],
-        "missing_required_price_tickers": missing_required_price_tickers,
-        "price_summary": price_summary,
-        "historical_price_summary": historical_price_summary,
-        "historical_price_errors": historical_price_errors,
-        "dividend_coverage_complete": dividend_coverage_complete,
-        "dividend_attempted_tickers": dividend_attempted_tickers,
-        "dividend_failed_tickers": dividend_failed_tickers,
-        "dividend_affected_tickers": dividend_affected_tickers,
-        "dividend_errors": dividend_errors,
-        "dividend_summary": dividend_summary,
-        "stock_prices": live_prices,
-        "benchmark_metrics": benchmark_metrics_df,
-        "aligned_bench_returns": aligned_bench_returns,
-        "per_ticker_totals": per_ticker_totals,
-        "grand_total": grand_total,
-        "cumulative_realized": cumulative_realized,
-        "realized_option_events": realized_option_events,
-        "chain_outcomes": chain_outcomes,
-        "sheet_counts": sheet_counts,
-        "capital_history_incomplete": capital_history_state["capital_history_incomplete"],
-        "capital_history_coverage_issues": capital_history_state["capital_history_coverage_issues"],
-        "capital_history_affected_months": capital_history_state["capital_history_affected_months"],
-        "capital_history_affected_years": capital_history_state["capital_history_affected_years"],
-        "capital_history_affected_tickers": capital_history_state["capital_history_affected_tickers"],
-        "first_incomplete_return_month": covered_return_state["first_incomplete_month"],
-        "last_complete_return_month": covered_return_state["last_complete_month"],
-        "return_series_truncated": covered_return_state["truncated"],
-    }
+    return PipelineState(
+        df_opts=df_opts,
+        lots=all_option_lots,
+        stock_txns=stock_txns,
+        realized_sales=realized_sales,
+        ending_inventory=ending_inventory,
+        capital_daily=capital_daily,
+        monthly_cycles=monthly_summary,
+        monthly_returns_w_div=monthly_returns,
+        monthly_returns_covered=monthly_returns_covered,
+        monthly_returns_unrealized_adjusted=monthly_returns_unrealized_adjusted,
+        monthly_returns_active=monthly_returns_active,
+        open_options=open_options_df,
+        live_prices=live_prices,
+        inv_df=inv_df,
+        total_unreal=total_unreal,
+        option_unreal=option_unreal,
+        stock_unreal=stock_unreal,
+        advanced_unreal=per_ticker_unreal,
+        yearly=yearly,
+        yearly_with_unreal=yearly_with_unreal,
+        per_ticker=per_ticker,
+        div_df=div_df,
+        as_of=as_of_ts,
+        issues=issues,
+        price_errors=price_errors,
+        unrealized_blocked=unrealized_snapshot["unrealized_blocked"],
+        missing_required_price_tickers=missing_required_price_tickers,
+        price_summary=price_summary,
+        historical_price_summary=historical_price_summary,
+        historical_price_errors=historical_price_errors,
+        dividend_coverage_complete=dividend_coverage_complete,
+        dividend_attempted_tickers=dividend_attempted_tickers,
+        dividend_failed_tickers=dividend_failed_tickers,
+        dividend_affected_tickers=dividend_affected_tickers,
+        dividend_errors=dividend_errors,
+        dividend_summary=dividend_summary,
+        stock_prices=live_prices,
+        benchmark_metrics=benchmark_metrics_df,
+        aligned_bench_returns=aligned_bench_returns,
+        per_ticker_totals=per_ticker_totals,
+        grand_total=grand_total,
+        cumulative_realized=cumulative_realized,
+        realized_option_events=realized_option_events,
+        chain_outcomes=chain_outcomes,
+        sheet_counts=sheet_counts,
+        capital_history_incomplete=capital_history_state["capital_history_incomplete"],
+        capital_history_coverage_issues=capital_history_state["capital_history_coverage_issues"],
+        capital_history_affected_months=capital_history_state["capital_history_affected_months"],
+        capital_history_affected_years=capital_history_state["capital_history_affected_years"],
+        capital_history_affected_tickers=capital_history_state["capital_history_affected_tickers"],
+        first_incomplete_return_month=covered_return_state["first_incomplete_month"],
+        last_complete_return_month=covered_return_state["last_complete_month"],
+        return_series_truncated=covered_return_state["truncated"],
+    )
 
 
 def main():
@@ -2258,10 +2336,10 @@ def main():
             f"Details: {e}"
         )
         st.stop()
-    yearly = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
-    monthly_cycles = state["monthly_cycles"]
+    yearly = state.yearly_with_unreal if include_unrealized else state.yearly
+    monthly_cycles = state.monthly_cycles
 
-    as_of_year = state["as_of"].year
+    as_of_year = state.as_of.year
     ytd_row = yearly[yearly["year"] == as_of_year]
     ytd_row = ytd_row.iloc[0] if not ytd_row.empty else pd.Series(
         {
@@ -2271,24 +2349,24 @@ def main():
         }
     )
     realized_total = float(ytd_row.get("total_realized_pnl", 0.0) or 0.0)
-    ytd_total = realized_total + (state["total_unreal"] if include_unrealized else 0.0)
+    ytd_total = realized_total + (state.total_unreal if include_unrealized else 0.0)
     twr_field = "annualized_return_twr_unrealized_adjusted" if include_unrealized else "annualized_return_twr"
     ytd_twr = ytd_row.get(twr_field, pd.NA)
-    issues = state.get("issues", [])
-    price_errors = state.get("price_errors", [])
-    unrealized_blocked = state.get("unrealized_blocked", False)
-    missing_required_price_tickers = state.get("missing_required_price_tickers", [])
-    price_summary = state.get("price_summary", {})
-    capital_history_incomplete = state.get("capital_history_incomplete", False)
-    capital_history_coverage_issues = state.get("capital_history_coverage_issues", [])
-    capital_history_affected_years = set(state.get("capital_history_affected_years", []))
-    dividend_coverage_complete = state.get("dividend_coverage_complete", True)
-    dividend_affected_tickers = state.get("dividend_affected_tickers", [])
-    dividend_errors = state.get("dividend_errors", [])
-    monthly_returns_covered = state.get("monthly_returns_covered", pd.Series(dtype=float))
-    first_incomplete_return_month = state.get("first_incomplete_return_month")
-    last_complete_return_month = state.get("last_complete_return_month")
-    return_series_truncated = state.get("return_series_truncated", False)
+    issues = state.issues
+    price_errors = state.price_errors
+    unrealized_blocked = state.unrealized_blocked
+    missing_required_price_tickers = state.missing_required_price_tickers
+    price_summary = state.price_summary
+    capital_history_incomplete = state.capital_history_incomplete
+    capital_history_coverage_issues = state.capital_history_coverage_issues
+    capital_history_affected_years = set(state.capital_history_affected_years)
+    dividend_coverage_complete = state.dividend_coverage_complete
+    dividend_affected_tickers = state.dividend_affected_tickers
+    dividend_errors = state.dividend_errors
+    monthly_returns_covered = state.monthly_returns_covered
+    first_incomplete_return_month = state.first_incomplete_return_month
+    last_complete_return_month = state.last_complete_return_month
+    return_series_truncated = state.return_series_truncated
     covered_period_note = None
     if return_series_truncated and pd.notna(last_complete_return_month) and pd.notna(first_incomplete_return_month):
         covered_period_note = (
@@ -2326,7 +2404,7 @@ def main():
                 unrealized_snapshot_value = (
                     "incomplete"
                     if unrealized_blocked
-                    else f"${state['total_unreal']:,.0f} (opt ${state.get('option_unreal', 0.0):,.0f} / stk ${state.get('stock_unreal', 0.0):,.0f})"
+                    else f"${state.total_unreal:,.0f} (opt ${state.option_unreal:,.0f} / stk ${state.stock_unreal:,.0f})"
                 )
                 metric_card(
                     CURRENT_UNREALIZED_SNAPSHOT_LABEL,

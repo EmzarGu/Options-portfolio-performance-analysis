@@ -9,6 +9,7 @@ from streamlit_app import (
     HoldSeg,
     OptionLot,
     OpenLot,
+    PipelineState,
     StockTxn,
     align_benchmarks_monthly,
     assess_capital_history_coverage,
@@ -1063,6 +1064,114 @@ def test_pipeline_denominator_returns_remain_when_historical_price_history_is_co
     assert state["monthly_cycles"]["ropc"].notna().all()
     yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
     assert pd.notna(yearly_row["ann_roac"])
+
+
+def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-01-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-02-16"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2024",
+            },
+            {
+                "trans_date": pd.Timestamp("2024-01-10"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Buy",
+                "expiration": pd.Timestamp("2024-02-16"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": -50.0,
+                "commission": 0.0,
+                "total_pnl": -50.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2024",
+            },
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(app, "fetch_price_history_yf", lambda tickers, start, end: ({}, [], {"requested": 0, "fetched": 0}))
+    monkeypatch.setattr(app, "fetch_current_prices_yf", lambda tickers: ({}, [], {"requested": 0, "fetched": 0}))
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-01-31").date(), False, ["Options 2024"])
+
+    expected_keys = [
+        "df_opts",
+        "lots",
+        "stock_txns",
+        "realized_sales",
+        "ending_inventory",
+        "capital_daily",
+        "monthly_cycles",
+        "monthly_returns_w_div",
+        "monthly_returns_covered",
+        "monthly_returns_unrealized_adjusted",
+        "monthly_returns_active",
+        "open_options",
+        "live_prices",
+        "inv_df",
+        "total_unreal",
+        "option_unreal",
+        "stock_unreal",
+        "advanced_unreal",
+        "yearly",
+        "yearly_with_unreal",
+        "per_ticker",
+        "div_df",
+        "as_of",
+        "issues",
+        "price_errors",
+        "unrealized_blocked",
+        "missing_required_price_tickers",
+        "price_summary",
+        "historical_price_summary",
+        "historical_price_errors",
+        "dividend_coverage_complete",
+        "dividend_attempted_tickers",
+        "dividend_failed_tickers",
+        "dividend_affected_tickers",
+        "dividend_errors",
+        "dividend_summary",
+        "stock_prices",
+        "benchmark_metrics",
+        "aligned_bench_returns",
+        "per_ticker_totals",
+        "grand_total",
+        "cumulative_realized",
+        "realized_option_events",
+        "chain_outcomes",
+        "sheet_counts",
+        "capital_history_incomplete",
+        "capital_history_coverage_issues",
+        "capital_history_affected_months",
+        "capital_history_affected_years",
+        "capital_history_affected_tickers",
+        "first_incomplete_return_month",
+        "last_complete_return_month",
+        "return_series_truncated",
+    ]
+    assert isinstance(state, PipelineState)
+    assert state.keys() == expected_keys
+    assert set(state.as_dict()) == set(expected_keys)
+    assert state["yearly"] is state.yearly
+    assert state.get("monthly_cycles") is state.monthly_cycles
+    assert state["grand_total"] == pytest.approx(150.0)
+    assert state.grand_total == pytest.approx(150.0)
 
 
 def test_build_covered_return_series_truncates_at_first_incomplete_month():
