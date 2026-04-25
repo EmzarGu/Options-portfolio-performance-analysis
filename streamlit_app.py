@@ -2271,6 +2271,716 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     )
 
 
+def _render_config_tab(available_sheets: List[str], default_sheets: List[str]) -> None:
+    st.markdown("##### Data sources")
+    col_refresh, col_status = st.columns([1, 2])
+    with col_refresh:
+        if st.button("Reload data from Google Drive", key="reload_drive_data"):
+            _clear_data_caches()
+            _rerun_app()
+        st.caption("Clears cached sheet data and forces a fresh download.")
+    with col_status:
+        _render_data_status(SHEET_ID)
+    selected_sheets = st.multiselect(
+        "Sheets to include (Options YYYY):",
+        options=available_sheets,
+        default=st.session_state.get("selected_sheets", default_sheets),
+        key="selected_sheets",
+    )
+    if not selected_sheets:
+        st.warning("Select at least one sheet to run the dashboard.")
+    st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
+
+
+def _render_snapshot(
+    col_main,
+    state: PipelineState,
+    include_unrealized: bool,
+    unrealized_blocked: bool,
+    ytd_total: float,
+    realized_total: float,
+    as_of_year: int,
+    capital_history_affected_years: set,
+    ytd_twr,
+    missing_required_price_tickers: List[str],
+    capital_history_incomplete: bool,
+    capital_history_coverage_issues: List[Dict[str, Any]],
+    dividend_warning_note: Optional[str],
+    issues: List[str],
+    price_errors: List[str],
+    price_summary: Dict[str, int],
+) -> None:
+    with col_main:
+        st.markdown("#### Portfolio Snapshot")
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        with mc1:
+            total_pnl_value = "n/a" if include_unrealized and unrealized_blocked else f"${ytd_total:,.0f}"
+            metric_card("YTD Total P&L", total_pnl_value, delta=None)
+        with mc2:
+            metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
+        with mc3:
+            unrealized_snapshot_value = (
+                "incomplete"
+                if unrealized_blocked
+                else f"${state.total_unreal:,.0f} (opt ${state.option_unreal:,.0f} / stk ${state.stock_unreal:,.0f})"
+            )
+            metric_card(
+                CURRENT_UNREALIZED_SNAPSHOT_LABEL,
+                unrealized_snapshot_value,
+            )
+        with mc4:
+            unrealized_adjusted_twr_value = (
+                "n/a"
+                if (include_unrealized and unrealized_blocked) or (as_of_year in capital_history_affected_years)
+                else f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a"
+            )
+            metric_card(
+                UNREALIZED_ADJUSTED_TWR_LABEL if include_unrealized else "YTD Annualized TWR",
+                unrealized_adjusted_twr_value,
+            )
+        if unrealized_blocked and missing_required_price_tickers:
+            st.warning(
+                "Current unrealized snapshot is incomplete: missing required prices for "
+                + ", ".join(missing_required_price_tickers)
+                + ". Unrealized-adjusted totals and TWR are suppressed."
+            )
+        if capital_history_incomplete and capital_history_coverage_issues:
+            coverage_summary = "; ".join(
+                f"{item['ticker']} ({pd.to_datetime(item['start_date']).date()} to {pd.to_datetime(item['end_date']).date()})"
+                for item in capital_history_coverage_issues
+            )
+            st.warning(
+                "Historical capital price coverage is incomplete for "
+                + coverage_summary
+                + ". RoAC/RoPC/TWR-based metrics are suppressed for affected periods."
+            )
+        if dividend_warning_note:
+            st.warning(dividend_warning_note)
+    render_issue_status_banner(issues, price_errors, price_summary)
+    st.divider()
+
+
+def _render_yearly_tab(
+    state: PipelineState,
+    yearly: pd.DataFrame,
+    include_unrealized: bool,
+    dividend_warning_note: Optional[str],
+    covered_period_note: Optional[str],
+    capital_history_incomplete: bool,
+    monthly_returns_covered: pd.Series,
+    return_series_truncated: bool,
+) -> None:
+    # Comprehensive Yearly Performance (Realized View)
+    st.markdown("##### Comprehensive Yearly Performance (Realized View)")
+    if dividend_warning_note:
+        st.warning(dividend_warning_note)
+    realized_cols = [
+        "year",
+        "realized_options_pnl",
+        "realized_stock_pnl",
+        "dividends",
+        "total_realized_pnl",
+        "avg_capital",
+        "peak_capital",
+        "roac_year",
+        "ropc_year",
+        "ann_roac",
+        "ann_ropc",
+        "annualized_return_twr",
+        "annualized_return_twr_active",
+    ]
+    realized_map = {
+        "year": "Year",
+        "realized_options_pnl": "Options P&L",
+        "realized_stock_pnl": "Stock P&L",
+        "dividends": "Dividends",
+        "total_realized_pnl": "Realized P&L",
+        "avg_capital": "Avg capital",
+        "peak_capital": "Peak capital",
+        "roac_year": "RoAC",
+        "ropc_year": "RoPC",
+        "ann_roac": "Ann. RoAC",
+        "ann_ropc": "Ann. RoPC",
+        "annualized_return_twr": "Ann. TWR",
+        "annualized_return_twr_active": "Ann. TWR (active)",
+    }
+    realized_display = yearly[[c for c in realized_cols if c in yearly.columns]].rename(columns=realized_map)
+    st.dataframe(
+        _format_df(
+            realized_display.reset_index(drop=True),
+            currency_cols=["Options P&L", "Stock P&L", "Dividends", "Realized P&L", "Avg capital", "Peak capital"],
+            pct_cols=["RoAC", "RoPC", "Ann. RoAC", "Ann. RoPC", "Ann. TWR", "Ann. TWR (active)"],
+            int_cols=["Year"],
+            hide_index=True,
+        ),
+        use_container_width=True,
+    )
+
+    # Comprehensive Yearly Performance (unrealized-adjusted view)
+    st.markdown(UNREALIZED_ADJUSTED_VIEW_LABEL)
+    st.caption(UNREALIZED_ADJUSTED_EXPLANATION)
+    unrealized_adjusted_cols = [
+        "year",
+        "total_realized_pnl",
+        "total_pnl_incl_unreal",
+        "ann_roac",
+        "ann_ropc",
+        "annualized_return_twr",
+        "annualized_return_twr_unrealized_adjusted",
+    ]
+    unrealized_adjusted_map = {
+        "year": "Year",
+        "total_realized_pnl": "Realized P&L",
+        "total_pnl_incl_unreal": UNREALIZED_ADJUSTED_TOTAL_LABEL,
+        "ann_roac": "Ann. return on avg",
+        "ann_ropc": "Ann. return on peak",
+        "annualized_return_twr": "Ann. TWR",
+        "annualized_return_twr_unrealized_adjusted": UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL,
+    }
+    unrealized_adjusted_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
+    unrealized_adjusted_display = unrealized_adjusted_source[
+        [c for c in unrealized_adjusted_cols if c in unrealized_adjusted_source.columns]
+    ].rename(columns=unrealized_adjusted_map)
+    st.dataframe(
+        _format_df(
+            unrealized_adjusted_display.reset_index(drop=True),
+            currency_cols=["Realized P&L", UNREALIZED_ADJUSTED_TOTAL_LABEL],
+            pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR", UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL],
+            int_cols=["Year"],
+            hide_index=True,
+        ),
+        use_container_width=True,
+    )
+
+    # Expectancy Analysis
+    st.markdown("##### Expectancy Analysis")
+    exp_df = expectancies(state.get("realized_option_events", []), state.get("realized_sales", []), state["monthly_cycles"], state.get("chain_outcomes", []))
+    st.dataframe(
+        _format_df(
+            exp_df,
+            currency_cols=["Avg win", "Avg loss", "Expectancy", "Total P&L"],
+            pct_cols=["Win rate"],
+            int_cols=["Count"],
+            hide_index=True,
+        ),
+        use_container_width=True,
+    )
+
+    # Benchmark metrics
+    st.markdown("##### Key Performance Metrics (vs. Benchmarks)")
+    bench_df = state.get("benchmark_metrics", pd.DataFrame())
+    if covered_period_note:
+        st.info(covered_period_note)
+    if capital_history_incomplete and monthly_returns_covered.empty:
+        st.info("Return-based strategy metrics are unavailable because no complete covered comparison period exists.")
+    elif not bench_df.empty:
+        bench_display = bench_df.copy()
+        bench_display = bench_display.rename(columns={
+            "CAGR": "CAGR",
+            "Volatility": "Volatility",
+            "Sharpe": "Sharpe",
+            "Sortino": "Sortino",
+            "Max Drawdown": "Max drawdown",
+            "Return 3M": "Return 3M",
+            "Return 6M": "Return 6M",
+            "Return YTD": "Return YTD",
+            "Return 1Y": "Return 1Y",
+            "Return SI": "Return SI",
+        })
+        st.dataframe(
+            _format_df(
+                bench_display,
+                pct_cols=["CAGR", "Volatility", "Max drawdown", "Return 3M", "Return 6M", "Return YTD", "Return 1Y", "Return SI"],
+                float_cols=["Sharpe", "Sortino"],
+                hide_index=True,
+            ),
+            use_container_width=True,
+        )
+    else:
+        st.info("Benchmark data unavailable (yfinance fetch failed).")
+
+    # Charts
+    st.markdown("##### Charts")
+    range_options = ["3M", "6M", "YTD", "1Y", "Since inception"]
+    range_choice = st.radio("Range", range_options, index=range_options.index("YTD"), key="chart_range", horizontal=True)
+    if return_series_truncated and covered_period_note:
+        st.info(covered_period_note)
+
+    if capital_history_incomplete and monthly_returns_covered.empty:
+        st.info("Return-based charts are unavailable because no complete covered return period exists.")
+    else:
+        aligned_bench = state.get("aligned_bench_returns", {})
+        strat_curve = (1 + monthly_returns_covered).cumprod() if not monthly_returns_covered.empty else pd.Series(dtype=float)
+        if not strat_curve.empty:
+            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
+        curves = []
+        if not strat_curve.empty:
+            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+        for name, series in aligned_bench.items():
+            if not series.empty:
+                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
+        if curves:
+            eq_df = pd.concat(curves, ignore_index=True)
+            eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
+            if not eq_df.empty:
+                eq_df = eq_df.sort_values(["Series", "Date"])
+                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
+                g_min = float(eq_df["Growth"].min())
+                g_max = float(eq_df["Growth"].max())
+                pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
+                y_domain = [g_min - pad, g_max + pad]
+                chart = (
+                    alt.Chart(eq_df)
+                    .mark_line()
+                    .encode(
+                        x=alt.X("Date:T", title="Date"),
+                        y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=y_domain, nice=True)),
+                        color=alt.Color("Series:N", title="Series"),
+                        tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
+                    )
+                    .properties(height=260, title="Cumulative Growth vs Benchmarks")
+                )
+                st.altair_chart(chart, use_container_width=True)
+
+    # P&L by options cycle
+    pnl_df = build_options_cycle_chart_data(state["monthly_cycles"])
+    if not pnl_df.empty:
+        pnl_df = filter_df_to_range(pnl_df, "Date", state["as_of"], range_choice)
+        if not pnl_df.empty:
+            bar = (
+                alt.Chart(pnl_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Date:T", title="Option cycle"),
+                    y=alt.Y("pnl:Q", title="P&L ($)"),
+                    color=alt.Color("color:N", scale=alt.Scale(domain=["Positive", "Negative"], range=["#22c55e", "#ef4444"]), legend=None),
+                    tooltip=["Date:T", alt.Tooltip("pnl:Q", format=",.0f")],
+                )
+                .properties(height=260, title="P&L by Options Cycle")
+            )
+            st.altair_chart(bar, use_container_width=True)
+
+    # Monthly return line (strategy only)
+    if not monthly_returns_covered.empty:
+        ret_df = pd.DataFrame({"Date": monthly_returns_covered.index, "Return": monthly_returns_covered.values})
+        ret_df = filter_df_to_range(ret_df, "Date", state["as_of"], range_choice)
+        if not ret_df.empty:
+            y_min = float(ret_df["Return"].min())
+            y_max = float(ret_df["Return"].max())
+            pad = (y_max - y_min) * 0.1 if y_max > y_min else 0.01
+            y_domain = [y_min - pad, y_max + pad]
+            bands = pd.DataFrame(
+                [
+                    {"band": "negative", "y0": min(y_min, 0.0) - pad, "y1": 0.0},
+                    {"band": "neutral", "y0": 0.0, "y1": 0.015},
+                    {"band": "positive", "y0": 0.015, "y1": max(y_max, 0.02) + pad},
+                ]
+            )
+            band_colors = alt.Color(
+                "band:N",
+                scale=alt.Scale(
+                    domain=["negative", "neutral", "positive"],
+                    range=["#ef444480", "#facc1580", "#22c55e80"],
+                ),
+                legend=None,
+            )
+            x_min = pd.to_datetime(ret_df["Date"]).min()
+            x_max = pd.to_datetime(ret_df["Date"]).max()
+            x_domain = [x_min, x_max]
+            bands_chart = (
+                alt.Chart(bands.assign(Date=x_min, Date2=x_max))
+                .mark_rect()
+                .encode(
+                    x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
+                    x2="Date2:T",
+                    y="y0:Q",
+                    y2="y1:Q",
+                    color=band_colors,
+                )
+            )
+            line_chart = (
+                alt.Chart(ret_df)
+                .mark_line(point=True, color="#60a5fa")
+                .encode(
+                    x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
+                    y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%", grid=True), scale=alt.Scale(domain=y_domain)),
+                    tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
+                )
+            )
+            ret_chart = alt.layer(bands_chart, line_chart).properties(height=220, title="Monthly Returns (RoAC)")
+            st.altair_chart(ret_chart, use_container_width=True)
+    elif capital_history_incomplete:
+        st.info("No complete monthly return segment is available to chart.")
+
+
+def _render_monthly_tab(
+    monthly_cycles: pd.DataFrame,
+    monthly_returns_covered: pd.Series,
+    dividend_warning_note: Optional[str],
+    return_series_truncated: bool,
+    covered_period_note: Optional[str],
+    capital_history_incomplete: bool,
+) -> None:
+    st.markdown("##### Monthly performance (calendar months)")
+    if dividend_warning_note:
+        st.warning(dividend_warning_note)
+    col_map = {
+        "index": "Month",
+        "month": "Month",
+        "realized_options_pnl": "Options P&L",
+        "realized_stock_pnl": "Stock P&L",
+        "dividends": "Dividends",
+        "total_realized_pnl": "Total P&L (w/ div)",
+        "avg_capital": "Avg capital",
+        "peak_capital": "Peak capital",
+        "roac": "Return (RoAC)",
+        "ropc": "Return (RoPC)",
+    }
+    show_cols = ["Month", "Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Peak capital", "Return (RoAC)", "Return (RoPC)"]
+    monthly_table = monthly_cycles.reset_index().rename(columns=col_map)
+    if "Month" in monthly_table.columns:
+        monthly_table["Month"] = pd.to_datetime(monthly_table["Month"]).dt.strftime("%Y-%m-%d")
+    monthly_table = monthly_table[[c for c in show_cols if c in monthly_table.columns]]
+    st.dataframe(
+        _format_df(
+            monthly_table,
+            currency_cols=["Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Peak capital"],
+            pct_cols=["Return (RoAC)", "Return (RoPC)"],
+            hide_index=True,
+        ),
+        use_container_width=True,
+    )
+    if return_series_truncated and covered_period_note:
+        st.info(covered_period_note)
+    if capital_history_incomplete and monthly_returns_covered.empty:
+        st.info("Cumulative return chart is unavailable because no complete covered return period exists.")
+    elif not monthly_returns_covered.empty:
+        equity_curve = (1 + monthly_returns_covered).cumprod()
+        curve_df = pd.DataFrame(
+            {
+                "Month": monthly_returns_covered.index,
+                "Growth": equity_curve.values,
+            }
+        )
+        y_min = float(curve_df["Growth"].min() * 0.98)
+        y_max = float(curve_df["Growth"].max() * 1.02)
+        curve_chart = (
+            alt.Chart(curve_df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("Month:T", title="Month"),
+                y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=[y_min, y_max], nice=True)),
+                tooltip=["Month:T", alt.Tooltip("Growth:Q", format=".3f")],
+            )
+            .properties(height=260, title="Cumulative growth by month")
+        )
+        st.altair_chart(curve_chart, use_container_width=True)
+
+
+def _render_ticker_tab(state: PipelineState, unrealized_blocked: bool) -> None:
+    st.markdown("##### Per-ticker P&L (realized)")
+    realized_map = {
+        "year": "Year",
+        "ticker": "Ticker",
+        "options_pnl": "Options P&L",
+        "stock_realized_pnl": "Stock P&L",
+        "combined_realized": "Total realized P&L",
+    }
+    realized_df = state["per_ticker"].copy()
+    if not realized_df.empty:
+        realized_df = (
+            realized_df.groupby(["year", "ticker"], as_index=False)[["options_pnl", "stock_realized_pnl", "combined_realized"]]
+            .sum()
+            .rename(columns=realized_map)
+        )
+    else:
+        realized_df = realized_df.rename(columns=realized_map)
+    st.dataframe(
+        _format_df(
+            realized_df,
+            currency_cols=["Options P&L", "Stock P&L", "Total realized P&L"],
+            int_cols=["Year"],
+            hide_index=True,
+        ),
+        use_container_width=True,
+    )
+    totals_df = state.get("per_ticker_totals", pd.DataFrame())
+    if unrealized_blocked:
+        st.info("Per-ticker realized + unrealized totals are suppressed because the current unrealized snapshot is incomplete.")
+    elif not totals_df.empty:
+        st.markdown("##### Per-ticker P&L (realized + unrealized)")
+        totals_map = {
+            "ticker": "Ticker",
+            "options_pnl": "Options P&L",
+            "stock_realized_pnl": "Stock P&L",
+            "combined_realized": "Total realized P&L",
+            "unrealized_pnl": "Unrealized P&L",
+            "total_pnl": "Total P&L",
+        }
+        totals_display = totals_df.rename(columns=totals_map)
+        st.dataframe(
+            _format_df(
+                totals_display,
+                currency_cols=["Options P&L", "Stock P&L", "Total realized P&L", "Unrealized P&L", "Total P&L"],
+                hide_index=True,
+            ),
+            use_container_width=True,
+        )
+
+
+def _highlight_short_option_price(row: pd.Series):
+    """Color-code short options by moneyness bands."""
+    styles = [""] * len(row)
+    try:
+        moneyness = pd.to_numeric(row.get("Moneyness %"), errors="coerce")
+        style = ""
+        if pd.notna(moneyness):
+            if moneyness > 0:
+                style = "background-color: rgba(220, 38, 38, 0.50); color: #ffffff;"
+            elif -0.01 <= moneyness <= 0:
+                style = "background-color: rgba(249, 115, 22, 0.45); color: #111827;"
+            elif -0.05 <= moneyness < -0.01:
+                style = "background-color: rgba(250, 204, 21, 0.45); color: #111827;"
+            elif moneyness < -0.10:
+                style = "background-color: rgba(37, 99, 235, 0.40); color: #ffffff;"
+        if style:
+            for col in ("Current price", "Moneyness %"):
+                if col in row.index:
+                    styles[row.index.get_loc(col)] = style
+    except Exception:
+        pass
+    return styles
+
+
+def _render_positions_tab(state: PipelineState) -> None:
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("##### Assigned holdings (inventory)")
+        inv_df = state["inv_df"].copy()
+        if "buy_date" in inv_df.columns:
+            inv_df["buy_date"] = pd.to_datetime(inv_df["buy_date"]).dt.strftime("%Y-%m-%d")
+        inv_df = inv_df.rename(
+            columns={
+                "ticker": "Ticker",
+                "buy_date": "Buy date",
+                "shares": "Shares",
+                "cost_per_share": "Cost/share",
+                "current_price": "Current price",
+                "covered_shares": "Covered shares",
+                "covered_strike": "Covered strike",
+                "unrealized_pnl": "Unrealized P&L",
+                "source": "Source",
+            }
+        )
+        if "Source" in inv_df.columns:
+            inv_df = inv_df[inv_df["Source"].isin(["stock_lot", "put_gap"])]
+        st.dataframe(
+            _format_df(
+                inv_df,
+                currency_cols=["Unrealized P&L"],
+                float_cols=["Cost/share", "Current price", "Covered strike"],
+                int_cols=["Shares", "Covered shares"],
+            ),
+            use_container_width=True,
+        )
+    with c2:
+        st.markdown("##### Open option shorts")
+        if state["open_options"].empty:
+            st.info("No open short options.")
+        else:
+            oo = state["open_options"].copy()
+            stock_prices = state.get("stock_prices") or {}
+            oo["current_price"] = oo["ticker"].map(stock_prices)
+            strike_num = pd.to_numeric(oo["strike"], errors="coerce")
+            current_num = pd.to_numeric(oo["current_price"], errors="coerce")
+            valid_moneyness = strike_num.notna() & current_num.notna() & (strike_num != 0)
+            oo["moneyness_pct"] = np.nan
+            put_mask = (oo["type"] == "Put") & valid_moneyness
+            call_mask = (oo["type"] == "Call") & valid_moneyness
+            oo.loc[put_mask, "moneyness_pct"] = (strike_num[put_mask] - current_num[put_mask]) / strike_num[put_mask]
+            oo.loc[call_mask, "moneyness_pct"] = (current_num[call_mask] - strike_num[call_mask]) / strike_num[call_mask]
+            oo = oo[["ticker", "type", "strike", "current_price", "moneyness_pct", "qty", "expiration", "trans_date", "open_price"]].copy()
+            for dcol in ["expiration", "trans_date"]:
+                if dcol in oo.columns:
+                    oo[dcol] = pd.to_datetime(oo[dcol]).dt.strftime("%Y-%m-%d")
+            oo = oo.rename(
+                columns={
+                    "ticker": "Ticker",
+                    "type": "Type",
+                    "strike": "Strike",
+                    "current_price": "Current price",
+                    "moneyness_pct": "Moneyness %",
+                    "qty": "Qty",
+                    "expiration": "Expiration",
+                    "trans_date": "Opened",
+                    "open_price": "Open price",
+                }
+            )
+            st.caption("Color key (short-option moneyness): red > 0%; orange -1% to 0%; yellow -5% to -1%; none -10% to -5%; blue < -10%.")
+            st.dataframe(
+                _format_df(
+                    oo,
+                    pct_cols=["Moneyness %"],
+                    float_cols=["Strike", "Open price", "Current price"],
+                    int_cols=["Qty"],
+                ).apply(_highlight_short_option_price, axis=1),
+                use_container_width=True,
+            )
+
+
+def _render_logs_tab(
+    state: PipelineState,
+    issues: List[str],
+    price_errors: List[str],
+    price_summary: Dict[str, int],
+    unrealized_blocked: bool,
+    capital_history_incomplete: bool,
+    capital_history_coverage_issues: List[Dict[str, Any]],
+    dividend_coverage_complete: bool,
+    dividend_errors: List[str],
+    dividend_warning_note: Optional[str],
+) -> None:
+    st.markdown("##### Data / connectivity issues")
+    st.write(f"Build version: {APP_BUILD_VERSION}")
+    st.caption(
+        "Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
+        "private sheets need a service account. Offline fallback: set env "
+        "`LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
+    )
+    coverage_problem = price_summary and (
+        price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
+    )
+    if issues or price_errors or coverage_problem or (not dividend_coverage_complete):
+        if issues:
+            st.warning("Issues:")
+            st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
+        if price_summary:
+            st.write("Price fetch coverage:")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "asset": "stocks",
+                            "requested": price_summary.get("stocks_requested", 0),
+                            "fetched": price_summary.get("stocks_fetched", 0),
+                        },
+                    ]
+                ),
+                use_container_width=True,
+            )
+        historical_price_summary = state.get("historical_price_summary", {})
+        if historical_price_summary:
+            st.write("Historical price fetch coverage:")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "asset": "historical_stocks",
+                            "requested": historical_price_summary.get("requested", 0),
+                            "fetched": historical_price_summary.get("fetched", 0),
+                        },
+                    ]
+                ),
+                use_container_width=True,
+            )
+        if price_errors:
+            st.write("Price fetch issues:")
+            st.dataframe(pd.DataFrame({"error": price_errors}), use_container_width=True)
+        historical_price_errors = state.get("historical_price_errors", [])
+        if historical_price_errors:
+            st.write("Historical price fetch issues:")
+            st.dataframe(pd.DataFrame({"error": historical_price_errors}), use_container_width=True)
+        if unrealized_blocked:
+            st.info("Unrealized P&L and related metrics were suppressed due to missing prices.")
+        if capital_history_incomplete and capital_history_coverage_issues:
+            coverage_df = pd.DataFrame(capital_history_coverage_issues).rename(
+                columns={
+                    "ticker": "ticker",
+                    "start_date": "start_date",
+                    "end_date": "end_date",
+                    "reason": "reason",
+                }
+            )
+            st.write("Historical capital price coverage issues:")
+            st.dataframe(coverage_df, use_container_width=True)
+            st.info("RoAC, RoPC, annualized return metrics, and return-based charts were suppressed for affected periods.")
+        dividend_summary = state.get("dividend_summary", {})
+        if dividend_summary:
+            st.write("Dividend fetch coverage:")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "asset": "dividends",
+                            "attempted_tickers": dividend_summary.get("attempted", 0),
+                            "failed_tickers": dividend_summary.get("failed", 0),
+                        }
+                    ]
+                ),
+                use_container_width=True,
+            )
+        if dividend_errors:
+            st.write("Dividend fetch issues:")
+            st.dataframe(pd.DataFrame({"error": dividend_errors}), use_container_width=True)
+        if dividend_warning_note:
+            st.info(dividend_warning_note)
+    else:
+        st.success("No issues detected.")
+    if state.get("stock_prices"):
+        st.write("Stock prices used:")
+        st.dataframe(
+            pd.DataFrame(
+                [{"ticker": k, "price": v} for k, v in state["stock_prices"].items()]
+            ).sort_values("ticker"),
+            use_container_width=True,
+        )
+    if state.get("advanced_unreal") is not None and not getattr(state.get("advanced_unreal"), "empty", True):
+        st.write("Unrealized by ticker (options/stocks):")
+        adv_df = state["advanced_unreal"].reset_index()
+        adv_df.columns = ["ticker", "unrealized_pnl"]
+        st.dataframe(_format_df(adv_df, currency_cols=["unrealized_pnl"]), use_container_width=True)
+    if state.get("sheet_counts") is not None:
+        st.markdown("##### Loaded rows by sheet")
+        st.dataframe(state["sheet_counts"], use_container_width=True)
+    st.markdown("---")
+    st.markdown("##### Debug / raw data")
+    st.write("Options raw", state["df_opts"].head())
+    st.write("Capital daily tail", state["capital_daily"].tail())
+    st.write("Dividends", state["div_df"].head())
+
+
+def _render_methodology_tab() -> None:
+    st.markdown("##### How we compute the numbers")
+    st.markdown(
+        """
+**Scope & sources**
+- Sheets included: whichever `Options YYYY` tabs you pick in Config. Rows outside those sheets are ignored.
+- Actions processed: `Sell/Buy` (plus `Bought` → `Buy`). Blank rows are skipped.
+
+**Capital & P&L**
+- Capital base: short-put reserve at strike*100*contracts; shares marked to latest close if fetched, else cost. Open options are not fully marked to market.
+- Realized P&L: option premia + stock sales + dividends.
+- Current unrealized snapshot: stock unrealized plus the dashboard's current heuristic option treatment. If enabled, that snapshot is added to current-year totals and the unrealized-adjusted TWR summary.
+
+**Returns**
+- Monthly returns (RoAC/RoPC) = monthly realized P&L ÷ monthly avg/peak capital (calendar months).
+- Annualized TWR (realized) = geometric product of monthly returns; “active” drops months with zero option P&L.
+- Unrealized-adjusted TWR applies the current unrealized snapshot to the current month for the current-year summary. Growth charts remain based on realized returns.
+
+**Assignments & inventory**
+- Put rows marked “assigned” create stock lots; covered-call assignments reduce inventory FIFO. If quantities or flags don’t line up, calls/puts can appear unmatched.
+
+**Benchmarks & prices**
+- Benchmarks from yfinance monthly prices; missing prices fall back to last available or cost. Coverage issues surface in Logs.
+
+**Limitations / edge cases**
+- No true option MTM; no external deposit/withdrawal modeling.
+- Date parsing depends on sheet date fields being parseable; bad rows go to Issues.
+- Mixed legs (“Put/Call”, “Call/Put”) infer the short leg via type/comment heuristics.
+            """
+    )
+
+
 def main():
     st.title("Options ROI Dashboard")
     st.caption("Live from Google Sheets with Streamlit")
@@ -2298,24 +3008,7 @@ def main():
         tabs = ["Yearly", "Monthly cycles", "Per ticker", "Positions", "Config", "Logs / data issues", "Methodology"]
         tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
         with tab_config:
-            st.markdown("##### Data sources")
-            col_refresh, col_status = st.columns([1, 2])
-            with col_refresh:
-                if st.button("Reload data from Google Drive", key="reload_drive_data"):
-                    _clear_data_caches()
-                    _rerun_app()
-                st.caption("Clears cached sheet data and forces a fresh download.")
-            with col_status:
-                _render_data_status(SHEET_ID)
-            selected_sheets = st.multiselect(
-                "Sheets to include (Options YYYY):",
-                options=available_sheets,
-                default=st.session_state.get("selected_sheets", default_sheets),
-                key="selected_sheets",
-            )
-            if not selected_sheets:
-                st.warning("Select at least one sheet to run the dashboard.")
-            st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
+            _render_config_tab(available_sheets, default_sheets)
     selected_sheets = st.session_state.get("selected_sheets", default_sheets) or default_sheets
 
     # Persist prefs if changed
@@ -2392,641 +3085,69 @@ def main():
             )
 
     with snapshot_area:
-        with col_main:
-            st.markdown("#### Portfolio Snapshot")
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            with mc1:
-                total_pnl_value = "n/a" if include_unrealized and unrealized_blocked else f"${ytd_total:,.0f}"
-                metric_card("YTD Total P&L", total_pnl_value, delta=None)
-            with mc2:
-                metric_card("YTD Realized P&L (w/ div)", f"${realized_total:,.0f}")
-            with mc3:
-                unrealized_snapshot_value = (
-                    "incomplete"
-                    if unrealized_blocked
-                    else f"${state.total_unreal:,.0f} (opt ${state.option_unreal:,.0f} / stk ${state.stock_unreal:,.0f})"
-                )
-                metric_card(
-                    CURRENT_UNREALIZED_SNAPSHOT_LABEL,
-                    unrealized_snapshot_value,
-                )
-            with mc4:
-                unrealized_adjusted_twr_value = (
-                    "n/a"
-                    if (include_unrealized and unrealized_blocked) or (as_of_year in capital_history_affected_years)
-                    else f"{float(ytd_twr):.1%}" if pd.notna(ytd_twr) else "n/a"
-                )
-                metric_card(
-                    UNREALIZED_ADJUSTED_TWR_LABEL if include_unrealized else "YTD Annualized TWR",
-                    unrealized_adjusted_twr_value,
-                )
-            if unrealized_blocked and missing_required_price_tickers:
-                    st.warning(
-                        "Current unrealized snapshot is incomplete: missing required prices for "
-                        + ", ".join(missing_required_price_tickers)
-                        + ". Unrealized-adjusted totals and TWR are suppressed."
-                    )
-            if capital_history_incomplete and capital_history_coverage_issues:
-                coverage_summary = "; ".join(
-                    f"{item['ticker']} ({pd.to_datetime(item['start_date']).date()} to {pd.to_datetime(item['end_date']).date()})"
-                    for item in capital_history_coverage_issues
-                )
-                st.warning(
-                    "Historical capital price coverage is incomplete for "
-                    + coverage_summary
-                    + ". RoAC/RoPC/TWR-based metrics are suppressed for affected periods."
-                )
-            if dividend_warning_note:
-                st.warning(dividend_warning_note)
-        render_issue_status_banner(issues, price_errors, price_summary)
-        st.divider()
+        _render_snapshot(
+            col_main,
+            state,
+            include_unrealized,
+            unrealized_blocked,
+            ytd_total,
+            realized_total,
+            as_of_year,
+            capital_history_affected_years,
+            ytd_twr,
+            missing_required_price_tickers,
+            capital_history_incomplete,
+            capital_history_coverage_issues,
+            dividend_warning_note,
+            issues,
+            price_errors,
+            price_summary,
+        )
 
     with tab_yearly:
-        # Comprehensive Yearly Performance (Realized View)
-        st.markdown("##### Comprehensive Yearly Performance (Realized View)")
-        if dividend_warning_note:
-            st.warning(dividend_warning_note)
-        realized_cols = [
-            "year",
-            "realized_options_pnl",
-            "realized_stock_pnl",
-            "dividends",
-            "total_realized_pnl",
-            "avg_capital",
-            "peak_capital",
-            "roac_year",
-            "ropc_year",
-            "ann_roac",
-            "ann_ropc",
-            "annualized_return_twr",
-            "annualized_return_twr_active",
-        ]
-        realized_map = {
-            "year": "Year",
-            "realized_options_pnl": "Options P&L",
-            "realized_stock_pnl": "Stock P&L",
-            "dividends": "Dividends",
-            "total_realized_pnl": "Realized P&L",
-            "avg_capital": "Avg capital",
-            "peak_capital": "Peak capital",
-            "roac_year": "RoAC",
-            "ropc_year": "RoPC",
-            "ann_roac": "Ann. RoAC",
-            "ann_ropc": "Ann. RoPC",
-            "annualized_return_twr": "Ann. TWR",
-            "annualized_return_twr_active": "Ann. TWR (active)",
-        }
-        realized_display = yearly[[c for c in realized_cols if c in yearly.columns]].rename(columns=realized_map)
-        st.dataframe(
-            _format_df(
-                realized_display.reset_index(drop=True),
-                currency_cols=["Options P&L", "Stock P&L", "Dividends", "Realized P&L", "Avg capital", "Peak capital"],
-                pct_cols=["RoAC", "RoPC", "Ann. RoAC", "Ann. RoPC", "Ann. TWR", "Ann. TWR (active)"],
-                int_cols=["Year"],
-                hide_index=True,
-            ),
-            use_container_width=True,
+        _render_yearly_tab(
+            state,
+            yearly,
+            include_unrealized,
+            dividend_warning_note,
+            covered_period_note,
+            capital_history_incomplete,
+            monthly_returns_covered,
+            return_series_truncated,
         )
-
-        # Comprehensive Yearly Performance (unrealized-adjusted view)
-        st.markdown(UNREALIZED_ADJUSTED_VIEW_LABEL)
-        st.caption(UNREALIZED_ADJUSTED_EXPLANATION)
-        unrealized_adjusted_cols = [
-            "year",
-            "total_realized_pnl",
-            "total_pnl_incl_unreal",
-            "ann_roac",
-            "ann_ropc",
-            "annualized_return_twr",
-            "annualized_return_twr_unrealized_adjusted",
-        ]
-        unrealized_adjusted_map = {
-            "year": "Year",
-            "total_realized_pnl": "Realized P&L",
-            "total_pnl_incl_unreal": UNREALIZED_ADJUSTED_TOTAL_LABEL,
-            "ann_roac": "Ann. return on avg",
-            "ann_ropc": "Ann. return on peak",
-            "annualized_return_twr": "Ann. TWR",
-            "annualized_return_twr_unrealized_adjusted": UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL,
-        }
-        unrealized_adjusted_source = state["yearly_with_unreal"] if include_unrealized else state["yearly"]
-        unrealized_adjusted_display = unrealized_adjusted_source[
-            [c for c in unrealized_adjusted_cols if c in unrealized_adjusted_source.columns]
-        ].rename(columns=unrealized_adjusted_map)
-        st.dataframe(
-            _format_df(
-                unrealized_adjusted_display.reset_index(drop=True),
-                currency_cols=["Realized P&L", UNREALIZED_ADJUSTED_TOTAL_LABEL],
-                pct_cols=["Ann. return on avg", "Ann. return on peak", "Ann. TWR", UNREALIZED_ADJUSTED_TWR_COLUMN_LABEL],
-                int_cols=["Year"],
-                hide_index=True,
-            ),
-            use_container_width=True,
-        )
-
-        # Expectancy Analysis
-        st.markdown("##### Expectancy Analysis")
-        exp_df = expectancies(state.get("realized_option_events", []), state.get("realized_sales", []), state["monthly_cycles"], state.get("chain_outcomes", []))
-        st.dataframe(
-            _format_df(
-                exp_df,
-                currency_cols=["Avg win", "Avg loss", "Expectancy", "Total P&L"],
-                pct_cols=["Win rate"],
-                int_cols=["Count"],
-                hide_index=True,
-            ),
-            use_container_width=True,
-        )
-
-        # Benchmark metrics
-        st.markdown("##### Key Performance Metrics (vs. Benchmarks)")
-        bench_df = state.get("benchmark_metrics", pd.DataFrame())
-        if covered_period_note:
-            st.info(covered_period_note)
-        if capital_history_incomplete and monthly_returns_covered.empty:
-            st.info("Return-based strategy metrics are unavailable because no complete covered comparison period exists.")
-        elif not bench_df.empty:
-            bench_display = bench_df.copy()
-            bench_display = bench_display.rename(columns={
-                "CAGR": "CAGR",
-                "Volatility": "Volatility",
-                "Sharpe": "Sharpe",
-                "Sortino": "Sortino",
-                "Max Drawdown": "Max drawdown",
-                "Return 3M": "Return 3M",
-                "Return 6M": "Return 6M",
-                "Return YTD": "Return YTD",
-                "Return 1Y": "Return 1Y",
-                "Return SI": "Return SI",
-            })
-            st.dataframe(
-                _format_df(
-                    bench_display,
-                    pct_cols=["CAGR", "Volatility", "Max drawdown", "Return 3M", "Return 6M", "Return YTD", "Return 1Y", "Return SI"],
-                    float_cols=["Sharpe", "Sortino"],
-                    hide_index=True,
-                ),
-                use_container_width=True,
-            )
-        else:
-            st.info("Benchmark data unavailable (yfinance fetch failed).")
-
-        # Charts
-        st.markdown("##### Charts")
-        range_options = ["3M", "6M", "YTD", "1Y", "Since inception"]
-        range_choice = st.radio("Range", range_options, index=range_options.index("YTD"), key="chart_range", horizontal=True)
-        if return_series_truncated and covered_period_note:
-            st.info(covered_period_note)
-
-        if capital_history_incomplete and monthly_returns_covered.empty:
-            st.info("Return-based charts are unavailable because no complete covered return period exists.")
-        else:
-            aligned_bench = state.get("aligned_bench_returns", {})
-            strat_curve = (1 + monthly_returns_covered).cumprod() if not monthly_returns_covered.empty else pd.Series(dtype=float)
-            if not strat_curve.empty:
-                strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
-            curves = []
-            if not strat_curve.empty:
-                curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
-            for name, series in aligned_bench.items():
-                if not series.empty:
-                    curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
-            if curves:
-                eq_df = pd.concat(curves, ignore_index=True)
-                eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
-                if not eq_df.empty:
-                    eq_df = eq_df.sort_values(["Series", "Date"])
-                    eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
-                    g_min = float(eq_df["Growth"].min())
-                    g_max = float(eq_df["Growth"].max())
-                    pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
-                    y_domain = [g_min - pad, g_max + pad]
-                    chart = (
-                        alt.Chart(eq_df)
-                        .mark_line()
-                        .encode(
-                            x=alt.X("Date:T", title="Date"),
-                            y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=y_domain, nice=True)),
-                            color=alt.Color("Series:N", title="Series"),
-                            tooltip=["Date:T", "Series:N", alt.Tooltip("Growth:Q", format=".3f")],
-                        )
-                        .properties(height=260, title="Cumulative Growth vs Benchmarks")
-                    )
-                    st.altair_chart(chart, use_container_width=True)
-
-        # P&L by options cycle
-        pnl_df = build_options_cycle_chart_data(state["monthly_cycles"])
-        if not pnl_df.empty:
-            pnl_df = filter_df_to_range(pnl_df, "Date", state["as_of"], range_choice)
-            if not pnl_df.empty:
-                bar = (
-                    alt.Chart(pnl_df)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("Date:T", title="Option cycle"),
-                        y=alt.Y("pnl:Q", title="P&L ($)"),
-                        color=alt.Color("color:N", scale=alt.Scale(domain=["Positive", "Negative"], range=["#22c55e", "#ef4444"]), legend=None),
-                        tooltip=["Date:T", alt.Tooltip("pnl:Q", format=",.0f")],
-                    )
-                    .properties(height=260, title="P&L by Options Cycle")
-                )
-                st.altair_chart(bar, use_container_width=True)
-
-        # Monthly return line (strategy only)
-        if not monthly_returns_covered.empty:
-            ret_df = pd.DataFrame({"Date": monthly_returns_covered.index, "Return": monthly_returns_covered.values})
-            ret_df = filter_df_to_range(ret_df, "Date", state["as_of"], range_choice)
-            if not ret_df.empty:
-                y_min = float(ret_df["Return"].min())
-                y_max = float(ret_df["Return"].max())
-                pad = (y_max - y_min) * 0.1 if y_max > y_min else 0.01
-                y_domain = [y_min - pad, y_max + pad]
-                bands = pd.DataFrame(
-                    [
-                        {"band": "negative", "y0": min(y_min, 0.0) - pad, "y1": 0.0},
-                        {"band": "neutral", "y0": 0.0, "y1": 0.015},
-                        {"band": "positive", "y0": 0.015, "y1": max(y_max, 0.02) + pad},
-                    ]
-                )
-                band_colors = alt.Color(
-                    "band:N",
-                    scale=alt.Scale(
-                        domain=["negative", "neutral", "positive"],
-                        range=["#ef444480", "#facc1580", "#22c55e80"],
-                    ),
-                    legend=None,
-                )
-                x_min = pd.to_datetime(ret_df["Date"]).min()
-                x_max = pd.to_datetime(ret_df["Date"]).max()
-                x_domain = [x_min, x_max]
-                bands_chart = (
-                    alt.Chart(bands.assign(Date=x_min, Date2=x_max))
-                    .mark_rect()
-                    .encode(
-                        x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
-                        x2="Date2:T",
-                        y="y0:Q",
-                        y2="y1:Q",
-                        color=band_colors,
-                    )
-                )
-                line_chart = (
-                    alt.Chart(ret_df)
-                    .mark_line(point=True, color="#60a5fa")
-                    .encode(
-                        x=alt.X("Date:T", title="Date", scale=alt.Scale(domain=x_domain)),
-                        y=alt.Y("Return:Q", title="Monthly return", axis=alt.Axis(format="%", grid=True), scale=alt.Scale(domain=y_domain)),
-                        tooltip=["Date:T", alt.Tooltip("Return:Q", format=".2%")],
-                    )
-                )
-                ret_chart = alt.layer(bands_chart, line_chart).properties(height=220, title="Monthly Returns (RoAC)")
-                st.altair_chart(ret_chart, use_container_width=True)
-        elif capital_history_incomplete:
-            st.info("No complete monthly return segment is available to chart.")
 
     with tab_monthly:
-        st.markdown("##### Monthly performance (calendar months)")
-        if dividend_warning_note:
-            st.warning(dividend_warning_note)
-        col_map = {
-            "index": "Month",
-            "month": "Month",
-            "realized_options_pnl": "Options P&L",
-            "realized_stock_pnl": "Stock P&L",
-            "dividends": "Dividends",
-            "total_realized_pnl": "Total P&L (w/ div)",
-            "avg_capital": "Avg capital",
-            "peak_capital": "Peak capital",
-            "roac": "Return (RoAC)",
-            "ropc": "Return (RoPC)",
-        }
-        show_cols = ["Month", "Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Peak capital", "Return (RoAC)", "Return (RoPC)"]
-        monthly_table = monthly_cycles.reset_index().rename(columns=col_map)
-        if "Month" in monthly_table.columns:
-            monthly_table["Month"] = pd.to_datetime(monthly_table["Month"]).dt.strftime("%Y-%m-%d")
-        monthly_table = monthly_table[[c for c in show_cols if c in monthly_table.columns]]
-        st.dataframe(
-            _format_df(
-                monthly_table,
-                currency_cols=["Options P&L", "Stock P&L", "Dividends", "Total P&L (w/ div)", "Avg capital", "Peak capital"],
-                pct_cols=["Return (RoAC)", "Return (RoPC)"],
-                hide_index=True,
-            ),
-            use_container_width=True,
+        _render_monthly_tab(
+            monthly_cycles,
+            monthly_returns_covered,
+            dividend_warning_note,
+            return_series_truncated,
+            covered_period_note,
+            capital_history_incomplete,
         )
-        if return_series_truncated and covered_period_note:
-            st.info(covered_period_note)
-        if capital_history_incomplete and monthly_returns_covered.empty:
-            st.info("Cumulative return chart is unavailable because no complete covered return period exists.")
-        elif not monthly_returns_covered.empty:
-            equity_curve = (1 + monthly_returns_covered).cumprod()
-            curve_df = pd.DataFrame(
-                {
-                    "Month": monthly_returns_covered.index,
-                    "Growth": equity_curve.values,
-                }
-            )
-            y_min = float(curve_df["Growth"].min() * 0.98)
-            y_max = float(curve_df["Growth"].max() * 1.02)
-            curve_chart = (
-                alt.Chart(curve_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("Month:T", title="Month"),
-                    y=alt.Y("Growth:Q", title="Cumulative growth of $1", scale=alt.Scale(domain=[y_min, y_max], nice=True)),
-                    tooltip=["Month:T", alt.Tooltip("Growth:Q", format=".3f")],
-                )
-                .properties(height=260, title="Cumulative growth by month")
-            )
-            st.altair_chart(curve_chart, use_container_width=True)
 
     with tab_ticker:
-        st.markdown("##### Per-ticker P&L (realized)")
-        realized_map = {
-            "year": "Year",
-            "ticker": "Ticker",
-            "options_pnl": "Options P&L",
-            "stock_realized_pnl": "Stock P&L",
-            "combined_realized": "Total realized P&L",
-        }
-        realized_df = state["per_ticker"].copy()
-        if not realized_df.empty:
-            realized_df = (
-                realized_df.groupby(["year", "ticker"], as_index=False)[["options_pnl", "stock_realized_pnl", "combined_realized"]]
-                .sum()
-                .rename(columns=realized_map)
-            )
-        else:
-            realized_df = realized_df.rename(columns=realized_map)
-        st.dataframe(
-            _format_df(
-                realized_df,
-                currency_cols=["Options P&L", "Stock P&L", "Total realized P&L"],
-                int_cols=["Year"],
-                hide_index=True,
-            ),
-            use_container_width=True,
-        )
-        totals_df = state.get("per_ticker_totals", pd.DataFrame())
-        if unrealized_blocked:
-            st.info("Per-ticker realized + unrealized totals are suppressed because the current unrealized snapshot is incomplete.")
-        elif not totals_df.empty:
-            st.markdown("##### Per-ticker P&L (realized + unrealized)")
-            totals_map = {
-                "ticker": "Ticker",
-                "options_pnl": "Options P&L",
-                "stock_realized_pnl": "Stock P&L",
-                "combined_realized": "Total realized P&L",
-                "unrealized_pnl": "Unrealized P&L",
-                "total_pnl": "Total P&L",
-            }
-            totals_display = totals_df.rename(columns=totals_map)
-            st.dataframe(
-                _format_df(
-                    totals_display,
-                    currency_cols=["Options P&L", "Stock P&L", "Total realized P&L", "Unrealized P&L", "Total P&L"],
-                    hide_index=True,
-                ),
-                use_container_width=True,
-            )
+        _render_ticker_tab(state, unrealized_blocked)
 
     with tab_positions:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("##### Assigned holdings (inventory)")
-            inv_df = state["inv_df"].copy()
-            if "buy_date" in inv_df.columns:
-                inv_df["buy_date"] = pd.to_datetime(inv_df["buy_date"]).dt.strftime("%Y-%m-%d")
-            inv_df = inv_df.rename(
-                columns={
-                    "ticker": "Ticker",
-                    "buy_date": "Buy date",
-                    "shares": "Shares",
-                    "cost_per_share": "Cost/share",
-                    "current_price": "Current price",
-                    "covered_shares": "Covered shares",
-                    "covered_strike": "Covered strike",
-                    "unrealized_pnl": "Unrealized P&L",
-                    "source": "Source",
-                }
-            )
-            if "Source" in inv_df.columns:
-                inv_df = inv_df[inv_df["Source"].isin(["stock_lot", "put_gap"])]
-            st.dataframe(
-                _format_df(
-                    inv_df,
-                    currency_cols=["Unrealized P&L"],
-                    float_cols=["Cost/share", "Current price", "Covered strike"],
-                    int_cols=["Shares", "Covered shares"],
-                ),
-                use_container_width=True,
-            )
-        with c2:
-            st.markdown("##### Open option shorts")
-            if state["open_options"].empty:
-                st.info("No open short options.")
-            else:
-                oo = state["open_options"].copy()
-                stock_prices = state.get("stock_prices") or {}
-                oo["current_price"] = oo["ticker"].map(stock_prices)
-                strike_num = pd.to_numeric(oo["strike"], errors="coerce")
-                current_num = pd.to_numeric(oo["current_price"], errors="coerce")
-                valid_moneyness = strike_num.notna() & current_num.notna() & (strike_num != 0)
-                oo["moneyness_pct"] = np.nan
-                put_mask = (oo["type"] == "Put") & valid_moneyness
-                call_mask = (oo["type"] == "Call") & valid_moneyness
-                oo.loc[put_mask, "moneyness_pct"] = (strike_num[put_mask] - current_num[put_mask]) / strike_num[put_mask]
-                oo.loc[call_mask, "moneyness_pct"] = (current_num[call_mask] - strike_num[call_mask]) / strike_num[call_mask]
-                oo = oo[["ticker", "type", "strike", "current_price", "moneyness_pct", "qty", "expiration", "trans_date", "open_price"]].copy()
-                for dcol in ["expiration", "trans_date"]:
-                    if dcol in oo.columns:
-                        oo[dcol] = pd.to_datetime(oo[dcol]).dt.strftime("%Y-%m-%d")
-                oo = oo.rename(
-                    columns={
-                        "ticker": "Ticker",
-                        "type": "Type",
-                        "strike": "Strike",
-                        "current_price": "Current price",
-                        "moneyness_pct": "Moneyness %",
-                        "qty": "Qty",
-                        "expiration": "Expiration",
-                        "trans_date": "Opened",
-                        "open_price": "Open price",
-                    }
-                )
-                st.caption("Color key (short-option moneyness): red > 0%; orange -1% to 0%; yellow -5% to -1%; none -10% to -5%; blue < -10%.")
-
-                def _highlight_short_option_price(row: pd.Series):
-                    """Color-code short options by moneyness bands."""
-                    styles = [""] * len(row)
-                    try:
-                        moneyness = pd.to_numeric(row.get("Moneyness %"), errors="coerce")
-                        style = ""
-                        if pd.notna(moneyness):
-                            if moneyness > 0:
-                                style = "background-color: rgba(220, 38, 38, 0.50); color: #ffffff;"
-                            elif -0.01 <= moneyness <= 0:
-                                style = "background-color: rgba(249, 115, 22, 0.45); color: #111827;"
-                            elif -0.05 <= moneyness < -0.01:
-                                style = "background-color: rgba(250, 204, 21, 0.45); color: #111827;"
-                            elif moneyness < -0.10:
-                                style = "background-color: rgba(37, 99, 235, 0.40); color: #ffffff;"
-                        if style:
-                            for col in ("Current price", "Moneyness %"):
-                                if col in row.index:
-                                    styles[row.index.get_loc(col)] = style
-                    except Exception:
-                        pass
-                    return styles
-                st.dataframe(
-                    _format_df(
-                        oo,
-                        pct_cols=["Moneyness %"],
-                        float_cols=["Strike", "Open price", "Current price"],
-                        int_cols=["Qty"],
-                    ).apply(_highlight_short_option_price, axis=1),
-                    use_container_width=True,
-                )
+        _render_positions_tab(state)
 
     with tab_logs:
-        st.markdown("##### Data / connectivity issues")
-        st.write(f"Build version: {APP_BUILD_VERSION}")
-        st.caption(
-            "Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
-            "private sheets need a service account. Offline fallback: set env "
-            "`LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
+        _render_logs_tab(
+            state,
+            issues,
+            price_errors,
+            price_summary,
+            unrealized_blocked,
+            capital_history_incomplete,
+            capital_history_coverage_issues,
+            dividend_coverage_complete,
+            dividend_errors,
+            dividend_warning_note,
         )
-        coverage_problem = price_summary and (
-            price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
-        )
-        if issues or price_errors or coverage_problem or (not dividend_coverage_complete):
-            if issues:
-                st.warning("Issues:")
-                st.dataframe(pd.DataFrame({"message": issues}), use_container_width=True)
-            if price_summary:
-                st.write("Price fetch coverage:")
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "asset": "stocks",
-                                "requested": price_summary.get("stocks_requested", 0),
-                                "fetched": price_summary.get("stocks_fetched", 0),
-                            },
-                        ]
-                    ),
-                    use_container_width=True,
-                )
-            historical_price_summary = state.get("historical_price_summary", {})
-            if historical_price_summary:
-                st.write("Historical price fetch coverage:")
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "asset": "historical_stocks",
-                                "requested": historical_price_summary.get("requested", 0),
-                                "fetched": historical_price_summary.get("fetched", 0),
-                            },
-                        ]
-                    ),
-                    use_container_width=True,
-                )
-            if price_errors:
-                st.write("Price fetch issues:")
-                st.dataframe(pd.DataFrame({"error": price_errors}), use_container_width=True)
-            historical_price_errors = state.get("historical_price_errors", [])
-            if historical_price_errors:
-                st.write("Historical price fetch issues:")
-                st.dataframe(pd.DataFrame({"error": historical_price_errors}), use_container_width=True)
-            if unrealized_blocked:
-                st.info("Unrealized P&L and related metrics were suppressed due to missing prices.")
-            if capital_history_incomplete and capital_history_coverage_issues:
-                coverage_df = pd.DataFrame(capital_history_coverage_issues).rename(
-                    columns={
-                        "ticker": "ticker",
-                        "start_date": "start_date",
-                        "end_date": "end_date",
-                        "reason": "reason",
-                    }
-                )
-                st.write("Historical capital price coverage issues:")
-                st.dataframe(coverage_df, use_container_width=True)
-                st.info("RoAC, RoPC, annualized return metrics, and return-based charts were suppressed for affected periods.")
-            dividend_summary = state.get("dividend_summary", {})
-            if dividend_summary:
-                st.write("Dividend fetch coverage:")
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "asset": "dividends",
-                                "attempted_tickers": dividend_summary.get("attempted", 0),
-                                "failed_tickers": dividend_summary.get("failed", 0),
-                            }
-                        ]
-                    ),
-                    use_container_width=True,
-                )
-            if dividend_errors:
-                st.write("Dividend fetch issues:")
-                st.dataframe(pd.DataFrame({"error": dividend_errors}), use_container_width=True)
-            if dividend_warning_note:
-                st.info(dividend_warning_note)
-        else:
-            st.success("No issues detected.")
-        if state.get("stock_prices"):
-            st.write("Stock prices used:")
-            st.dataframe(
-                pd.DataFrame(
-                    [{"ticker": k, "price": v} for k, v in state["stock_prices"].items()]
-                ).sort_values("ticker"),
-                use_container_width=True,
-            )
-        if state.get("advanced_unreal") is not None and not getattr(state.get("advanced_unreal"), "empty", True):
-            st.write("Unrealized by ticker (options/stocks):")
-            adv_df = state["advanced_unreal"].reset_index()
-            adv_df.columns = ["ticker", "unrealized_pnl"]
-            st.dataframe(_format_df(adv_df, currency_cols=["unrealized_pnl"]), use_container_width=True)
-        if state.get("sheet_counts") is not None:
-            st.markdown("##### Loaded rows by sheet")
-            st.dataframe(state["sheet_counts"], use_container_width=True)
-        st.markdown("---")
-        st.markdown("##### Debug / raw data")
-        st.write("Options raw", state["df_opts"].head())
-        st.write("Capital daily tail", state["capital_daily"].tail())
-        st.write("Dividends", state["div_df"].head())
 
     with tab_method:
-        st.markdown("##### How we compute the numbers")
-        st.markdown(
-            """
-**Scope & sources**
-- Sheets included: whichever `Options YYYY` tabs you pick in Config. Rows outside those sheets are ignored.
-- Actions processed: `Sell/Buy` (plus `Bought` → `Buy`). Blank rows are skipped.
-
-**Capital & P&L**
-- Capital base: short-put reserve at strike*100*contracts; shares marked to latest close if fetched, else cost. Open options are not fully marked to market.
-- Realized P&L: option premia + stock sales + dividends.
-- Current unrealized snapshot: stock unrealized plus the dashboard's current heuristic option treatment. If enabled, that snapshot is added to current-year totals and the unrealized-adjusted TWR summary.
-
-**Returns**
-- Monthly returns (RoAC/RoPC) = monthly realized P&L ÷ monthly avg/peak capital (calendar months).
-- Annualized TWR (realized) = geometric product of monthly returns; “active” drops months with zero option P&L.
-- Unrealized-adjusted TWR applies the current unrealized snapshot to the current month for the current-year summary. Growth charts remain based on realized returns.
-
-**Assignments & inventory**
-- Put rows marked “assigned” create stock lots; covered-call assignments reduce inventory FIFO. If quantities or flags don’t line up, calls/puts can appear unmatched.
-
-**Benchmarks & prices**
-- Benchmarks from yfinance monthly prices; missing prices fall back to last available or cost. Coverage issues surface in Logs.
-
-**Limitations / edge cases**
-- No true option MTM; no external deposit/withdrawal modeling.
-- Date parsing depends on sheet date fields being parseable; bad rows go to Issues.
-- Mixed legs (“Put/Call”, “Call/Put”) infer the short leg via type/comment heuristics.
-            """
-        )
+        _render_methodology_tab()
 
 
 if __name__ == "__main__":
