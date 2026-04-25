@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from data_sources import DividendFetchResult, collect_dividend_cashflows
+from data_sources import DividendFetchResult, YFinanceDividendProvider, collect_dividend_cashflows
 
 
 @dataclass
@@ -27,8 +27,10 @@ class FakeTicker:
 class FakeYF:
     def __init__(self, mapping):
         self._mapping = mapping
+        self.calls = []
 
     def Ticker(self, ticker):
+        self.calls.append(ticker)
         return FakeTicker(self._mapping[ticker])
 
 
@@ -134,3 +136,19 @@ def test_collect_dividend_cashflows_mixed_portfolio_keeps_valid_zero_and_flags_f
     assert any("CCC: fetch failed" in err for err in result.errors)
     assert result.cashflows["ticker"].tolist() == ["AAA"]
     assert result.cashflows["cash"].tolist() == [50.0]
+
+
+def test_yfinance_dividend_provider_caches_repeated_ticker_fetches():
+    yf_module = FakeYF(
+        {
+            "AAA": pd.Series([0.5], index=pd.to_datetime(["2024-01-15"]))
+        }
+    )
+    provider = YFinanceDividendProvider(yf_module)
+
+    first = provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+    second = provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+
+    assert yf_module.calls == ["AAA"]
+    assert first.tolist() == [0.5]
+    assert second.tolist() == [0.5]

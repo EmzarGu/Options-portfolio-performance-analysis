@@ -23,7 +23,7 @@ import streamlit as st
 import altair as alt
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
-from data_sources import DividendFetchResult, collect_dividend_cashflows as _collect_dividend_cashflows
+from data_sources import DividendFetchResult, YFinanceDividendProvider, collect_dividend_cashflows as _collect_dividend_cashflows
 from reporting import build_open_options_frame, filter_df_to_range
 
 # Lazy import to avoid startup delays if not used
@@ -1919,7 +1919,8 @@ def normalize_dividend_fetch_result(result) -> DividendFetchResult:
 
 
 def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) -> DividendFetchResult:
-    return _collect_dividend_cashflows(stock_txns, as_of, build_holding_segments, yf)
+    provider = YFinanceDividendProvider(yf) if yf is not None else None
+    return _collect_dividend_cashflows(stock_txns, as_of, build_holding_segments, provider)
 
 
 def render_issue_status_banner(issues: List[str], price_errors: List[str], price_summary: Dict[str, int]) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -22,15 +22,92 @@ class DividendFetchResult:
     errors: List[str]
 
 
+class DividendProvider:
+    def get_dividend_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
+        raise NotImplementedError
+
+
+class YFinanceDividendProvider(DividendProvider):
+    def __init__(self, yf_module):
+        self.yf_module = yf_module
+        self._cache: Dict[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]], pd.Series] = {}
+
+    def get_dividend_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
+        ticker_key = str(ticker).upper().strip()
+        start_ts = pd.to_datetime(start).normalize() if pd.notna(start) else None
+        end_ts = pd.to_datetime(end).normalize() if pd.notna(end) else None
+        cache_key = (ticker_key, start_ts, end_ts)
+        if cache_key in self._cache:
+            return self._cache[cache_key].copy()
+
+        if self.yf_module is None:
+            raise RuntimeError("yfinance not installed; cannot fetch dividend history.")
+
+        raw_div_hist = self.yf_module.Ticker(ticker_key).dividends
+        div_hist = normalize_dividend_history(raw_div_hist)
+        if not div_hist.empty:
+            if start_ts is not None:
+                div_hist = div_hist[div_hist.index >= start_ts]
+            if end_ts is not None:
+                div_hist = div_hist[div_hist.index < end_ts]
+        self._cache[cache_key] = div_hist.copy()
+        return div_hist.copy()
+
+
+def normalize_dividend_history(raw_div_hist) -> pd.Series:
+    if raw_div_hist is None or raw_div_hist.empty:
+        return pd.Series(dtype=float)
+
+    # yfinance may return dividends as either:
+    # - Series (historical behavior), or
+    # - DataFrame with a "Dividends" column (newer behavior).
+    if isinstance(raw_div_hist, pd.DataFrame):
+        if "Dividends" in raw_div_hist.columns:
+            div_hist = raw_div_hist["Dividends"]
+        else:
+            numeric_cols = raw_div_hist.select_dtypes(include="number").columns
+            if len(numeric_cols) == 0:
+                raise ValueError("dividend history returned no usable numeric dividend column")
+            div_hist = raw_div_hist[numeric_cols[0]]
+    else:
+        div_hist = raw_div_hist
+
+    if div_hist is None:
+        raise ValueError("dividend history returned no usable data")
+    if div_hist.empty:
+        return pd.Series(dtype=float)
+
+    div_hist = div_hist.dropna()
+    if div_hist.empty:
+        raise ValueError("dividend history contained no valid dividend entries")
+
+    dt_index = pd.to_datetime(div_hist.index, errors="coerce", utc=True)
+    dt_index = dt_index.tz_localize(None).normalize()
+    div_hist = div_hist.copy()
+    div_hist.index = dt_index
+    div_hist = div_hist[div_hist.index.notna()]
+    if div_hist.empty:
+        raise ValueError("dividend history dates could not be parsed")
+    return div_hist
+
+
 def _empty_dividend_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=DIVIDEND_COLUMNS)
+
+
+def _ensure_dividend_provider(provider_or_yf_module) -> DividendProvider:
+    if isinstance(provider_or_yf_module, DividendProvider):
+        return provider_or_yf_module
+    if hasattr(provider_or_yf_module, "get_dividend_history"):
+        return provider_or_yf_module
+    return YFinanceDividendProvider(provider_or_yf_module)
 
 
 def collect_dividend_cashflows(
     stock_txns: List["StockTxn"],
     as_of: pd.Timestamp,
     build_holding_segments: Callable[[List["StockTxn"], pd.Timestamp], List["HoldSeg"]],
-    yf_module,
+    dividend_provider,
 ) -> DividendFetchResult:
     try:
         segs = build_holding_segments(stock_txns, as_of)
@@ -48,7 +125,7 @@ def collect_dividend_cashflows(
             )
 
         attempted_tickers = sorted(by_ticker)
-        if yf_module is None:
+        if dividend_provider is None:
             return DividendFetchResult(
                 _empty_dividend_frame(),
                 False,
@@ -56,45 +133,18 @@ def collect_dividend_cashflows(
                 attempted_tickers,
                 ["yfinance not installed; cannot fetch dividend history."],
             )
+        provider = _ensure_dividend_provider(dividend_provider)
 
         div_rows = []
         failed_tickers: List[str] = []
         errors: List[str] = []
         for ticker, seg_list in by_ticker.items():
             try:
-                raw_div_hist = yf_module.Ticker(ticker).dividends
-                if raw_div_hist is None or raw_div_hist.empty:
-                    continue
-
-                # yfinance may return dividends as either:
-                # - Series (historical behavior), or
-                # - DataFrame with a "Dividends" column (newer behavior).
-                if isinstance(raw_div_hist, pd.DataFrame):
-                    if "Dividends" in raw_div_hist.columns:
-                        div_hist = raw_div_hist["Dividends"]
-                    else:
-                        numeric_cols = raw_div_hist.select_dtypes(include="number").columns
-                        if len(numeric_cols) == 0:
-                            raise ValueError("dividend history returned no usable numeric dividend column")
-                        div_hist = raw_div_hist[numeric_cols[0]]
-                else:
-                    div_hist = raw_div_hist
-
-                if div_hist is None:
-                    raise ValueError("dividend history returned no usable data")
+                ticker_start = min(start for start, _, _ in seg_list)
+                ticker_end = max(end for _, end, _ in seg_list)
+                div_hist = provider.get_dividend_history(ticker, ticker_start, ticker_end)
                 if div_hist.empty:
                     continue
-
-                div_hist = div_hist.dropna()
-                if div_hist.empty:
-                    raise ValueError("dividend history contained no valid dividend entries")
-
-                dt_index = pd.to_datetime(div_hist.index, errors="coerce", utc=True)
-                dt_index = dt_index.tz_localize(None).normalize()
-                div_hist.index = dt_index
-                div_hist = div_hist[div_hist.index.notna()]
-                if div_hist.empty:
-                    raise ValueError("dividend history dates could not be parsed")
 
                 for start, end, shares in seg_list:
                     divs_in_period = div_hist[(div_hist.index >= start) & (div_hist.index < end)]
