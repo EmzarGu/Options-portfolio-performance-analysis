@@ -23,7 +23,12 @@ import streamlit as st
 import altair as alt
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
-from data_sources import DividendFetchResult, YFinanceDividendProvider, collect_dividend_cashflows as _collect_dividend_cashflows
+from data_sources import (
+    DividendFetchResult,
+    YFinanceDividendProvider,
+    YFinancePriceHistoryProvider,
+    collect_dividend_cashflows as _collect_dividend_cashflows,
+)
 from reporting import build_open_options_frame, filter_df_to_range
 
 # Lazy import to avoid startup delays if not used
@@ -1511,34 +1516,14 @@ def fetch_price_history_yf(
     summary["requested"] = len(tickers)
     if not tickers or pd.isna(start) or pd.isna(end):
         return history, errors, summary
-    try:
-        data = yf.download(
-            tickers=tickers,
-            start=start,
-            end=end + pd.Timedelta(days=1),
-            progress=False,
-            auto_adjust=False,
-            group_by="ticker",
-        )
-        if isinstance(data.columns, pd.MultiIndex):
-            for t in tickers:
-                try:
-                    series = data[(t, "Adj Close")].dropna() if (t, "Adj Close") in data else data[(t, "Close")].dropna()
-                    if not series.empty:
-                        history[t] = series.tz_localize(None).rename(t)
-                except Exception:
-                    continue
-        else:
-            series = data["Adj Close"].dropna() if "Adj Close" in data else data.get("Close", pd.Series(dtype=float)).dropna()
-            if not series.empty and len(tickers) == 1:
-                history[tickers[0]] = series.tz_localize(None).rename(tickers[0])
-    except Exception as exc:
-        errors.append(f"Historical price download failed: {exc}")
-        return history, errors, summary
-    # normalize date index
-    for t, s in list(history.items()):
-        s.index = pd.to_datetime(s.index).normalize()
-        history[t] = s
+    provider = YFinancePriceHistoryProvider(yf)
+    for ticker in tickers:
+        try:
+            series = provider.get_price_history(ticker, start, end)
+            if not series.empty:
+                history[ticker] = series
+        except Exception as exc:
+            errors.append(f"Historical price download failed: {exc}")
     summary["fetched"] = len(history)
     missing_tickers = [t for t in tickers if t not in history]
     if missing_tickers:

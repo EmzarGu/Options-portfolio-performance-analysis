@@ -2,7 +2,12 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from data_sources import DividendFetchResult, YFinanceDividendProvider, collect_dividend_cashflows
+from data_sources import (
+    DividendFetchResult,
+    YFinanceDividendProvider,
+    YFinancePriceHistoryProvider,
+    collect_dividend_cashflows,
+)
 
 
 @dataclass
@@ -152,3 +157,30 @@ def test_yfinance_dividend_provider_caches_repeated_ticker_fetches():
     assert yf_module.calls == ["AAA"]
     assert first.tolist() == [0.5]
     assert second.tolist() == [0.5]
+
+
+class FakePriceYF:
+    def __init__(self, data):
+        self._data = data
+        self.calls = []
+
+    def download(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._data
+
+
+def test_yfinance_price_history_provider_caches_repeated_ticker_range_fetches():
+    price_data = pd.DataFrame(
+        {"Adj Close": [101.0, 102.0]},
+        index=pd.to_datetime(["2024-05-20", "2024-05-21"]),
+    )
+    yf_module = FakePriceYF(price_data)
+    provider = YFinancePriceHistoryProvider(yf_module)
+
+    first = provider.get_price_history("AAA", pd.Timestamp("2024-05-20"), pd.Timestamp("2024-05-21"))
+    second = provider.get_price_history("AAA", pd.Timestamp("2024-05-20"), pd.Timestamp("2024-05-21"))
+
+    assert len(yf_module.calls) == 1
+    assert yf_module.calls[0]["tickers"] == ["AAA"]
+    assert first.tolist() == [101.0, 102.0]
+    assert second.tolist() == [101.0, 102.0]

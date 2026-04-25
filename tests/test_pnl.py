@@ -946,6 +946,58 @@ def test_pipeline_suppresses_denominator_returns_when_historical_price_fetch_fai
     assert pd.isna(yearly_row["annualized_return_twr_active"])
 
 
+def test_pipeline_denominator_incompleteness_unchanged_when_provider_fetch_fails(monkeypatch):
+    class FailingHistoryYF:
+        def download(self, **kwargs):
+            raise RuntimeError("provider boom")
+
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-10"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "yf", FailingHistoryYF())
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 110.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
+
+    assert state["historical_price_summary"] == {"requested": 1, "fetched": 0}
+    assert state["capital_history_incomplete"] is True
+    assert state["capital_history_affected_tickers"] == ["AAA"]
+    assert any("Historical price download failed: provider boom" in msg for msg in state["issues"])
+    assert state["monthly_cycles"]["roac"].isna().all()
+    assert state["monthly_cycles"]["ropc"].isna().all()
+    yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
+    assert pd.isna(yearly_row["ann_roac"])
+    assert pd.isna(yearly_row["annualized_return_twr"])
+
+
 def test_pipeline_denominator_returns_remain_when_historical_price_history_is_complete(monkeypatch):
     df_opts = pd.DataFrame(
         [
