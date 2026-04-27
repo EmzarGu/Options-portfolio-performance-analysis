@@ -546,6 +546,96 @@ def test_filter_df_to_range_applies_ytd_window():
     assert filtered["value"].tolist() == [2, 3]
 
 
+def test_snapshot_yearly_and_monthly_realized_pnl_reconcile_as_of_current_month(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-03-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-03-20"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 100.0,
+                "commission": 0.0,
+                "total_pnl": 100.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2024",
+            },
+            {
+                "trans_date": pd.Timestamp("2024-04-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-04-20"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2024",
+            },
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-17"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 999.0,
+                "commission": 0.0,
+                "total_pnl": 999.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2024",
+            },
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(app, "fetch_price_history_yf", lambda tickers, start, end: ({}, [], {"requested": 0, "fetched": 0}))
+    monkeypatch.setattr(app, "fetch_current_prices_yf", lambda tickers: ({}, [], {"requested": 0, "fetched": 0}))
+    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    state = app.build_pipeline(pd.Timestamp("2024-04-27").date(), False, ["Options 2024"])
+
+    yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
+    monthly_index = pd.to_datetime(state["monthly_cycles"].index)
+    monthly_ytd_realized = state["monthly_cycles"].loc[
+        monthly_index.year == 2024,
+        "total_realized_pnl",
+    ].sum()
+
+    assert state["monthly_cycles"].index.tolist() == [pd.Timestamp("2024-03-31"), pd.Timestamp("2024-04-30")]
+    assert monthly_ytd_realized == pytest.approx(300.0)
+    assert yearly_row["total_realized_pnl"] == pytest.approx(monthly_ytd_realized)
+    assert state["cumulative_realized"] == pytest.approx(monthly_ytd_realized)
+    assert state["grand_total"] == pytest.approx(monthly_ytd_realized)
+
+
+def test_current_partial_month_options_cycle_chart_filter_drops_month_end_row_characterization():
+    events = [
+        app.OptionPnLEvent(pd.Timestamp("2024-03-20"), "AAA", "Put", 100.0, 1, 100.0, 2.0, 0.0, "expiration"),
+        app.OptionPnLEvent(pd.Timestamp("2024-04-20"), "AAA", "Put", 100.0, 1, 200.0, 2.0, 0.0, "expiration"),
+    ]
+    capital_daily = _make_capital_daily("2024-03-01", periods=58, total=10_000.0)
+    as_of = pd.Timestamp("2024-04-27")
+
+    monthly = app.build_monthly_summary(events, [], capital_daily, pd.DataFrame(), as_of)
+    chart_df = build_options_cycle_chart_data(monthly)
+    filtered_chart_df = filter_df_to_range(chart_df, "Date", as_of, "YTD")
+
+    assert monthly.index.tolist() == [pd.Timestamp("2024-03-31"), pd.Timestamp("2024-04-30")]
+    assert chart_df["pnl"].tolist() == [100.0, 200.0]
+    assert filtered_chart_df["Date"].tolist() == [pd.Timestamp("2024-03-31")]
+
+
 def test_dashboard_unrealized_stock_only_characterization():
     inventory = [
         OpenLot(
@@ -1339,6 +1429,53 @@ def test_benchmark_metrics_do_not_compound_or_trail_through_missing_months():
     assert pd.isna(periods["Return 3M"])
     assert pd.isna(periods["Return YTD"])
     assert pd.isna(periods["Return SI"])
+
+
+def test_benchmark_cagr_and_risk_metrics_are_unavailable_when_window_has_internal_gap():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30", "2024-05-31"])
+    strategy_returns = pd.Series([0.02, -0.01, 0.03, -0.02, 0.01], index=idx)
+    gappy_benchmark = pd.Series([0.01, float("nan"), -0.02, 0.04, -0.01], index=idx)
+
+    strategy_metric_index = strategy_returns.index
+    benchmark_metric_index = gappy_benchmark.index
+    previous_observed_only_index = gappy_benchmark.dropna().index
+    strategy_metrics = calculate_performance_metrics(strategy_returns)
+    benchmark_metrics = app.calculate_performance_metrics_if_complete(gappy_benchmark)
+
+    assert strategy_metric_index.tolist() == idx.tolist()
+    assert benchmark_metric_index.tolist() == [
+        pd.Timestamp("2024-01-31"),
+        pd.Timestamp("2024-02-29"),
+        pd.Timestamp("2024-03-31"),
+        pd.Timestamp("2024-04-30"),
+        pd.Timestamp("2024-05-31"),
+    ]
+    assert previous_observed_only_index.tolist() != strategy_metric_index.tolist()
+    for metric in ("CAGR", "Volatility", "Sharpe", "Sortino", "Max Drawdown"):
+        assert pd.isna(benchmark_metrics[metric])
+        assert metric in strategy_metrics
+
+
+def test_complete_benchmark_cagr_and_risk_metrics_are_unchanged():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30", "2024-05-31"])
+    complete_benchmark = pd.Series([0.01, 0.02, -0.02, 0.04, -0.01], index=idx)
+
+    complete_window_metrics = app.calculate_performance_metrics_if_complete(complete_benchmark)
+    legacy_metrics = calculate_performance_metrics(complete_benchmark)
+
+    for metric in ("CAGR", "Volatility", "Sharpe", "Sortino", "Max Drawdown"):
+        assert complete_window_metrics[metric] == pytest.approx(legacy_metrics[metric])
+
+
+def test_benchmark_risk_metric_window_matches_chart_one_year_window():
+    idx = pd.date_range("2024-01-31", periods=15, freq="ME")
+    strategy_returns = pd.Series([0.01] * 15, index=idx)
+    benchmark_returns = pd.Series([0.02] * 15, index=idx)
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": benchmark_returns}, "1Y")
+    risk_window = benchmark_returns.tail(12)
+
+    assert risk_window.index.tolist() == chart_df.loc[chart_df["Series"] == "Bench", "Date"].tolist()
 
 
 def test_valid_strategy_returns_are_unaffected_by_gap_handling():

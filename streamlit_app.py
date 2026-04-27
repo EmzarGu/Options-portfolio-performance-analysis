@@ -1405,6 +1405,20 @@ def calculate_performance_metrics(ret_series: pd.Series, rf: float = 0.04):
     return {"CAGR": cagr, "Volatility": ann_vol, "Sharpe": sharpe, "Sortino": sortino, "Max Drawdown": max_dd}
 
 
+def calculate_performance_metrics_if_complete(ret_series: pd.Series, rf: float = 0.04):
+    metric_keys = ["CAGR", "Volatility", "Sharpe", "Sortino", "Max Drawdown"]
+    if ret_series is None or ret_series.empty:
+        return {}
+    returns = ret_series.copy()
+    returns.index = pd.to_datetime(returns.index, errors="coerce")
+    returns = returns[returns.index.notna()].sort_index()
+    if returns.empty:
+        return {}
+    if not returns.notna().all():
+        return {key: np.nan for key in metric_keys}
+    return calculate_performance_metrics(returns, rf=rf)
+
+
 def align_benchmarks_monthly(tickers: Dict[str, str], idx: pd.DatetimeIndex):
     """Return dict name->Series of monthly returns aligned to given month-end index."""
     if yf is None or len(idx) == 0:
@@ -2265,9 +2279,9 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         rets = rets.copy()
         rets.index = pd.to_datetime(rets.index, errors="coerce")
         rets = rets[rets.index.notna()].sort_index()
-        observed_rets = rets.dropna()
-        full = calculate_performance_metrics(observed_rets)
-        risk = calculate_performance_metrics(rets.tail(12).dropna())
+        full = calculate_performance_metrics_if_complete(rets)
+        risk_window = rets.tail(12)
+        risk = calculate_performance_metrics_if_complete(risk_window)
         row = {"Series": name, **full, **period_returns(rets)}
         for key in ["Volatility", "Sharpe", "Sortino", "Max Drawdown"]:
             if key in risk:
