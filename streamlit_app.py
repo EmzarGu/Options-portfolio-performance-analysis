@@ -1918,18 +1918,28 @@ def build_benchmark_growth_chart_data(
     range_choice: str,
     as_of: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
+    def growth_curve_frame(returns: pd.Series, series_name: str) -> pd.DataFrame:
+        cumulative = (1 + returns).cumprod()
+        baseline_date = returns.index.min() - pd.offsets.MonthEnd(1)
+        return pd.DataFrame(
+            {
+                "Date": [baseline_date, *cumulative.index.tolist()],
+                "Series": series_name,
+                "Growth": [1.0, *cumulative.values.tolist()],
+            }
+        )
+
     curves = []
     strategy_window = _select_chart_return_window(strategy_returns, range_choice, as_of=as_of)
     if not strategy_window.empty:
-        strat_curve = (1 + strategy_window).cumprod()
-        curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+        curves.append(growth_curve_frame(strategy_window, "My Strategy"))
     else:
         return pd.DataFrame(columns=["Date", "Series", "Growth"])
 
     for name, series in (aligned_bench_returns or {}).items():
         benchmark_returns = _clean_monthly_return_series(series, as_of=as_of).reindex(strategy_window.index)
         if benchmark_returns.notna().all():
-            curves.append(pd.DataFrame({"Date": benchmark_returns.index, "Series": name, "Growth": (1 + benchmark_returns).cumprod().values}))
+            curves.append(growth_curve_frame(benchmark_returns, name))
 
     if not curves:
         return pd.DataFrame(columns=["Date", "Series", "Growth"])
