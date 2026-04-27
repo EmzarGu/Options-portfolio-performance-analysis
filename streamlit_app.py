@@ -2518,13 +2518,19 @@ def _render_yearly_tab(
             curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
         for name, series in aligned_bench.items():
             if not series.empty:
-                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
+                benchmark_growth = (1 + series).cumprod()
+                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": benchmark_growth.values}))
         if curves:
             eq_df = pd.concat(curves, ignore_index=True)
             eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
             if not eq_df.empty:
                 eq_df = eq_df.sort_values(["Series", "Date"])
-                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
+                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(
+                    lambda s: s.dropna().iloc[0] if not s.dropna().empty else np.nan
+                )
+                st.caption(
+                    "Benchmarks require complete monthly returns in each period; missing benchmark months are not imputed as 0%."
+                )
                 g_min = float(eq_df["Growth"].min())
                 g_max = float(eq_df["Growth"].max())
                 pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
