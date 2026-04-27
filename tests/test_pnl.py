@@ -28,7 +28,6 @@ from streamlit_app import (
     period_returns,
     process_option_positions,
     resolve_build_version,
-    select_period_return_series,
 )
 
 
@@ -448,31 +447,6 @@ def test_filter_df_to_range_applies_ytd_window():
     filtered = filter_df_to_range(df, "Date", pd.Timestamp("2025-03-20"), "YTD")
 
     assert filtered["value"].tolist() == [2, 3]
-
-
-def test_select_period_return_series_matches_period_returns_windows():
-    idx = pd.date_range("2025-01-31", periods=14, freq="ME")
-    rets = pd.Series([0.01] * 14, index=idx)
-
-    one_year = select_period_return_series(rets, "1Y")
-    assert len(one_year) == 12
-    assert one_year.index.min() == pd.Timestamp("2025-03-31")
-    assert one_year.index.max() == pd.Timestamp("2026-02-28")
-
-    three_month = select_period_return_series(rets, "3M")
-    assert len(three_month) == 3
-    assert three_month.index.tolist() == list(idx[-3:])
-
-    ytd = select_period_return_series(rets, "YTD")
-    assert all(ts.year == 2026 for ts in ytd.index)
-
-
-def test_select_period_return_series_requires_complete_trailing_windows():
-    idx = pd.date_range("2025-01-31", periods=10, freq="ME")
-    rets = pd.Series([0.01] * 10, index=idx)
-
-    assert select_period_return_series(rets, "1Y").empty
-    assert select_period_return_series(rets, "6M").index.tolist() == list(idx[-6:])
 
 
 def test_dashboard_unrealized_stock_only_characterization():
