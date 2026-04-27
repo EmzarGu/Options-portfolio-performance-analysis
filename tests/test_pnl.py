@@ -380,35 +380,79 @@ def test_build_options_cycle_chart_data_uses_total_realized_pnl():
     assert chart_df["color"].tolist() == ["Positive", "Negative"]
 
 
-def test_benchmark_growth_chart_stops_before_internal_missing_month():
-    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"])
-    strategy_returns = pd.Series([0.01, 0.02, 0.03, 0.04], index=idx)
-    bench_returns = pd.Series([0.10, 0.20, float("nan"), 0.40], index=idx)
+@pytest.mark.parametrize(
+    "range_choice,metric_name,expected_periods",
+    [
+        ("3M", "Return 3M", 3),
+        ("6M", "Return 6M", 6),
+        ("YTD", "Return YTD", 2),
+        ("1Y", "Return 1Y", 12),
+        ("Since inception", "Return SI", 15),
+    ],
+)
+def test_benchmark_growth_chart_reconciles_to_table_returns_for_all_ranges(range_choice, metric_name, expected_periods):
+    idx = pd.date_range("2024-12-31", periods=15, freq="ME")
+    strategy_returns = pd.Series([0.035, -0.01, 0.022, 0.015, 0.018, -0.005, 0.012, 0.011, 0.02, -0.004, 0.016, 0.009, 0.10, 0.008, 0.008], index=idx)
+    bench_returns = pd.Series([0.012, 0.018, -0.006, 0.011, 0.009, 0.014, -0.004, 0.008, 0.010, 0.006, 0.013, -0.002, 0.000, 0.010, 0.010], index=idx)
 
-    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns})
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns}, range_choice)
 
-    bench_chart = chart_df[chart_df["Series"] == "Bench"]
     strategy_chart = chart_df[chart_df["Series"] == "My Strategy"]
-
-    assert bench_chart["Date"].tolist() == [pd.Timestamp("2024-01-31"), pd.Timestamp("2024-02-29")]
-    assert bench_chart["Growth"].tolist() == pytest.approx([1.10, 1.32])
-    assert pd.Timestamp("2024-03-31") not in bench_chart["Date"].tolist()
-    assert pd.Timestamp("2024-04-30") not in bench_chart["Date"].tolist()
-    assert strategy_chart["Date"].tolist() == idx.tolist()
-    assert strategy_chart["Growth"].tolist() == pytest.approx((1 + strategy_returns).cumprod().tolist())
-
-
-def test_benchmark_growth_chart_matches_complete_return_compounding():
-    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
-    strategy_returns = pd.Series([0.01, -0.02, 0.03], index=idx)
-    bench_returns = pd.Series([0.04, 0.05, -0.01], index=idx)
-
-    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns})
-
     bench_chart = chart_df[chart_df["Series"] == "Bench"]
+    strategy_table_return = period_returns(strategy_returns)[metric_name]
+    bench_table_return = period_returns(bench_returns)[metric_name]
 
-    assert bench_chart["Date"].tolist() == idx.tolist()
-    assert bench_chart["Growth"].tolist() == pytest.approx((1 + bench_returns).cumprod().tolist())
+    assert len(strategy_chart) == expected_periods
+    assert len(bench_chart) == expected_periods
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + strategy_table_return)
+    assert bench_chart["Growth"].iloc[-1] == pytest.approx(1 + bench_table_return)
+
+
+@pytest.mark.parametrize(
+    "range_choice,metric_name,missing_position",
+    [
+        ("3M", "Return 3M", -2),
+        ("6M", "Return 6M", -4),
+        ("YTD", "Return YTD", -1),
+        ("1Y", "Return 1Y", -8),
+        ("Since inception", "Return SI", 3),
+    ],
+)
+def test_benchmark_growth_chart_omits_incomplete_benchmark_windows_for_all_ranges(range_choice, metric_name, missing_position):
+    idx = pd.date_range("2024-12-31", periods=15, freq="ME")
+    strategy_returns = pd.Series([0.01] * 15, index=idx)
+    bench_returns = pd.Series([0.01] * 15, index=idx)
+    bench_returns.iloc[missing_position] = float("nan")
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns}, range_choice)
+
+    assert pd.isna(period_returns(bench_returns)[metric_name])
+    assert chart_df[chart_df["Series"] == "Bench"].empty
+    assert not chart_df[chart_df["Series"] == "My Strategy"].empty
+
+
+def test_benchmark_growth_chart_order_matches_table_returns_across_ranges():
+    idx = pd.date_range("2024-12-31", periods=15, freq="ME")
+    strategy_returns = pd.Series([0.03] * 12 + [0.10, 0.02, 0.02], index=idx)
+    schd_returns = pd.Series([0.01] * 15, index=idx)
+
+    for range_choice, metric_name in [
+        ("3M", "Return 3M"),
+        ("6M", "Return 6M"),
+        ("YTD", "Return YTD"),
+        ("1Y", "Return 1Y"),
+        ("Since inception", "Return SI"),
+    ]:
+        chart_df = build_benchmark_growth_chart_data(strategy_returns, {"SCHD ETF": schd_returns}, range_choice)
+        strategy_table_return = period_returns(strategy_returns)[metric_name]
+        schd_table_return = period_returns(schd_returns)[metric_name]
+        strategy_endpoint = chart_df.loc[chart_df["Series"] == "My Strategy", "Growth"].iloc[-1]
+        schd_endpoint = chart_df.loc[chart_df["Series"] == "SCHD ETF", "Growth"].iloc[-1]
+
+        assert strategy_table_return > schd_table_return
+        assert strategy_endpoint == pytest.approx(1 + strategy_table_return)
+        assert schd_endpoint == pytest.approx(1 + schd_table_return)
+        assert strategy_endpoint > schd_endpoint
 
 
 def test_resolve_build_version_prefers_env(monkeypatch):

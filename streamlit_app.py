@@ -1861,7 +1861,7 @@ def build_options_cycle_chart_data(monthly_summary: pd.DataFrame) -> pd.DataFram
     return pnl_df
 
 
-def _contiguous_valid_return_prefix(ret_series: pd.Series) -> pd.Series:
+def _clean_monthly_return_series(ret_series: pd.Series) -> pd.Series:
     if ret_series is None or ret_series.empty:
         return pd.Series(dtype=float)
     returns = ret_series.copy()
@@ -1869,27 +1869,48 @@ def _contiguous_valid_return_prefix(ret_series: pd.Series) -> pd.Series:
     returns = returns[returns.index.notna()].sort_index()
     if returns.empty:
         return pd.Series(dtype=float)
-    first_missing_positions = np.flatnonzero(returns.isna().to_numpy())
-    if len(first_missing_positions):
-        returns = returns.iloc[: first_missing_positions[0]]
-    return returns.dropna()
+    returns.index = returns.index.to_period("M").to_timestamp("M")
+    return returns
+
+
+def _select_chart_return_window(ret_series: pd.Series, range_choice: str) -> pd.Series:
+    returns = _clean_monthly_return_series(ret_series)
+    if returns.empty:
+        return returns
+    required_periods = {"3M": 3, "6M": 6, "1Y": 12}
+    if range_choice in required_periods:
+        n = required_periods[range_choice]
+        window = returns.tail(n)
+        if len(window) != n or not window.notna().all():
+            return pd.Series(dtype=float)
+        return window
+    if range_choice == "YTD":
+        latest_year = returns.index.max().year
+        window = returns[returns.index.year == latest_year]
+        if window.empty or not window.notna().all():
+            return pd.Series(dtype=float)
+        return window
+    window = returns
+    if window.empty or not window.notna().all():
+        return pd.Series(dtype=float)
+    return window
 
 
 def build_benchmark_growth_chart_data(
     strategy_returns: pd.Series,
     aligned_bench_returns: Dict[str, pd.Series],
+    range_choice: str,
 ) -> pd.DataFrame:
     curves = []
-    if strategy_returns is not None and not strategy_returns.empty:
-        strat_curve = (1 + strategy_returns).cumprod()
-        if not strat_curve.empty:
-            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
-            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+    strategy_window = _select_chart_return_window(strategy_returns, range_choice)
+    if not strategy_window.empty:
+        strat_curve = (1 + strategy_window).cumprod()
+        curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
 
     for name, series in (aligned_bench_returns or {}).items():
-        valid_returns = _contiguous_valid_return_prefix(series)
-        if not valid_returns.empty:
-            curves.append(pd.DataFrame({"Date": valid_returns.index, "Series": name, "Growth": (1 + valid_returns).cumprod().values}))
+        benchmark_window = _select_chart_return_window(series, range_choice)
+        if not benchmark_window.empty:
+            curves.append(pd.DataFrame({"Date": benchmark_window.index, "Series": name, "Growth": (1 + benchmark_window).cumprod().values}))
 
     if not curves:
         return pd.DataFrame(columns=["Date", "Series", "Growth"])
@@ -2547,12 +2568,11 @@ def _render_yearly_tab(
         eq_df = build_benchmark_growth_chart_data(
             monthly_returns_covered,
             state.get("aligned_bench_returns", {}),
+            range_choice,
         )
         if not eq_df.empty:
-            eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
+            eq_df = eq_df.sort_values(["Series", "Date"])
             if not eq_df.empty:
-                eq_df = eq_df.sort_values(["Series", "Date"])
-                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
                 g_min = float(eq_df["Growth"].min())
                 g_max = float(eq_df["Growth"].max())
                 pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
