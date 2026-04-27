@@ -404,6 +404,7 @@ def test_benchmark_growth_chart_reconciles_to_table_returns_for_all_ranges(range
 
     assert len(strategy_chart) == expected_periods
     assert len(bench_chart) == expected_periods
+    assert strategy_chart["Date"].tolist() == bench_chart["Date"].tolist()
     assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + strategy_table_return)
     assert bench_chart["Growth"].iloc[-1] == pytest.approx(1 + bench_table_return)
 
@@ -429,6 +430,26 @@ def test_benchmark_growth_chart_omits_incomplete_benchmark_windows_for_all_range
     assert pd.isna(period_returns(bench_returns)[metric_name])
     assert chart_df[chart_df["Series"] == "Bench"].empty
     assert not chart_df[chart_df["Series"] == "My Strategy"].empty
+
+
+def test_benchmark_growth_chart_clips_strategy_window_to_table_as_of():
+    idx = pd.date_range("2025-04-30", periods=13, freq="ME")
+    strategy_returns = pd.Series([0.10] + [0.008] * 11 + [-0.004], index=idx)
+    bench_returns = pd.Series([0.00] + [0.01] * 11, index=idx[:-1])
+    as_of = pd.Timestamp("2026-04-27")
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns}, "1Y", as_of)
+
+    strategy_chart = chart_df[chart_df["Series"] == "My Strategy"]
+    bench_chart = chart_df[chart_df["Series"] == "Bench"]
+    table_strategy_returns = strategy_returns[strategy_returns.index <= as_of.normalize()]
+    table_benchmark_returns = bench_returns[bench_returns.index <= as_of.normalize()]
+
+    assert strategy_chart["Date"].iloc[0] == pd.Timestamp("2025-04-30")
+    assert strategy_chart["Date"].iloc[-1] == pd.Timestamp("2026-03-31")
+    assert strategy_chart["Date"].tolist() == bench_chart["Date"].tolist()
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(table_strategy_returns)["Return 1Y"])
+    assert bench_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(table_benchmark_returns)["Return 1Y"])
 
 
 def test_benchmark_growth_chart_order_matches_table_returns_across_ranges():

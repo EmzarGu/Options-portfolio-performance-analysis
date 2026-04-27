@@ -1861,7 +1861,7 @@ def build_options_cycle_chart_data(monthly_summary: pd.DataFrame) -> pd.DataFram
     return pnl_df
 
 
-def _clean_monthly_return_series(ret_series: pd.Series) -> pd.Series:
+def _clean_monthly_return_series(ret_series: pd.Series, as_of: Optional[pd.Timestamp] = None) -> pd.Series:
     if ret_series is None or ret_series.empty:
         return pd.Series(dtype=float)
     returns = ret_series.copy()
@@ -1870,11 +1870,13 @@ def _clean_monthly_return_series(ret_series: pd.Series) -> pd.Series:
     if returns.empty:
         return pd.Series(dtype=float)
     returns.index = returns.index.to_period("M").to_timestamp("M")
+    if as_of is not None and pd.notna(as_of):
+        returns = returns[returns.index <= pd.to_datetime(as_of).normalize()]
     return returns
 
 
-def _select_chart_return_window(ret_series: pd.Series, range_choice: str) -> pd.Series:
-    returns = _clean_monthly_return_series(ret_series)
+def _select_chart_return_window(ret_series: pd.Series, range_choice: str, as_of: Optional[pd.Timestamp] = None) -> pd.Series:
+    returns = _clean_monthly_return_series(ret_series, as_of=as_of)
     if returns.empty:
         return returns
     required_periods = {"3M": 3, "6M": 6, "1Y": 12}
@@ -1900,17 +1902,20 @@ def build_benchmark_growth_chart_data(
     strategy_returns: pd.Series,
     aligned_bench_returns: Dict[str, pd.Series],
     range_choice: str,
+    as_of: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     curves = []
-    strategy_window = _select_chart_return_window(strategy_returns, range_choice)
+    strategy_window = _select_chart_return_window(strategy_returns, range_choice, as_of=as_of)
     if not strategy_window.empty:
         strat_curve = (1 + strategy_window).cumprod()
         curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+    else:
+        return pd.DataFrame(columns=["Date", "Series", "Growth"])
 
     for name, series in (aligned_bench_returns or {}).items():
-        benchmark_window = _select_chart_return_window(series, range_choice)
-        if not benchmark_window.empty:
-            curves.append(pd.DataFrame({"Date": benchmark_window.index, "Series": name, "Growth": (1 + benchmark_window).cumprod().values}))
+        benchmark_returns = _clean_monthly_return_series(series, as_of=as_of).reindex(strategy_window.index)
+        if benchmark_returns.notna().all():
+            curves.append(pd.DataFrame({"Date": benchmark_returns.index, "Series": name, "Growth": (1 + benchmark_returns).cumprod().values}))
 
     if not curves:
         return pd.DataFrame(columns=["Date", "Series", "Growth"])
@@ -2569,6 +2574,7 @@ def _render_yearly_tab(
             monthly_returns_covered,
             state.get("aligned_bench_returns", {}),
             range_choice,
+            state["as_of"],
         )
         if not eq_df.empty:
             eq_df = eq_df.sort_values(["Series", "Date"])
