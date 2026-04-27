@@ -1462,6 +1462,29 @@ def period_returns(ret_series: pd.Series):
     return out
 
 
+def select_period_return_series(ret_series: pd.Series, range_choice: str) -> pd.Series:
+    if ret_series.empty or not hasattr(ret_series.index, "year"):
+        return pd.Series(dtype=float)
+    srt = ret_series.copy()
+    srt.index = pd.to_datetime(srt.index, errors="coerce")
+    srt = srt[srt.index.notna()].sort_index()
+    if srt.empty:
+        return pd.Series(dtype=float)
+    if range_choice == "3M":
+        sub = srt.tail(3)
+        return sub if len(sub) == 3 else pd.Series(dtype=float)
+    if range_choice == "6M":
+        sub = srt.tail(6)
+        return sub if len(sub) == 6 else pd.Series(dtype=float)
+    if range_choice == "1Y":
+        sub = srt.tail(12)
+        return sub if len(sub) == 12 else pd.Series(dtype=float)
+    if range_choice == "YTD":
+        latest_year = srt.index.max().year
+        return srt[srt.index.year == latest_year]
+    return srt
+
+
 def capital_stats_by_year(capital_daily: pd.DataFrame) -> pd.DataFrame:
     df = capital_daily.reset_index()
     df["year"] = df["date"].dt.year
@@ -2510,21 +2533,35 @@ def _render_yearly_tab(
         st.info("Return-based charts are unavailable because no complete covered return period exists.")
     else:
         aligned_bench = state.get("aligned_bench_returns", {})
-        strat_curve = (1 + monthly_returns_covered).cumprod() if not monthly_returns_covered.empty else pd.Series(dtype=float)
-        if not strat_curve.empty:
-            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
         curves = []
-        if not strat_curve.empty:
-            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+
+        def build_curve_from_returns(series_name: str, returns: pd.Series) -> Optional[pd.DataFrame]:
+            if returns is None or returns.empty:
+                return None
+            period_returns_series = select_period_return_series(returns, range_choice)
+            returns_df = pd.DataFrame({"Date": pd.to_datetime(period_returns_series.index), "Return": period_returns_series.values})
+            if returns_df.empty or returns_df["Return"].isna().any():
+                return None
+            growth = (1 + returns_df["Return"]).cumprod()
+            return pd.DataFrame({"Date": returns_df["Date"].values, "Series": series_name, "Growth": growth.values})
+
+        strat_returns = monthly_returns_covered.copy()
+        if not strat_returns.empty:
+            strat_returns.index = pd.to_datetime(strat_returns.index).to_period("M").to_timestamp("M")
+        strat_curve_df = build_curve_from_returns("My Strategy", strat_returns)
+        if strat_curve_df is not None and not strat_curve_df.empty:
+            curves.append(strat_curve_df)
         for name, series in aligned_bench.items():
-            if not series.empty:
-                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
+            curve_df = build_curve_from_returns(name, series)
+            if curve_df is not None and not curve_df.empty:
+                curves.append(curve_df)
         if curves:
             eq_df = pd.concat(curves, ignore_index=True)
-            eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
             if not eq_df.empty:
                 eq_df = eq_df.sort_values(["Series", "Date"])
-                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(lambda s: s.iloc[0] if len(s) else np.nan)
+                st.caption(
+                    "Curves require complete monthly returns in the selected range; missing months are not imputed as 0%."
+                )
                 g_min = float(eq_df["Growth"].min())
                 g_max = float(eq_df["Growth"].max())
                 pad = (g_max - g_min) * 0.1 if g_max > g_min else 0.05
