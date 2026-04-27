@@ -1861,6 +1861,41 @@ def build_options_cycle_chart_data(monthly_summary: pd.DataFrame) -> pd.DataFram
     return pnl_df
 
 
+def _contiguous_valid_return_prefix(ret_series: pd.Series) -> pd.Series:
+    if ret_series is None or ret_series.empty:
+        return pd.Series(dtype=float)
+    returns = ret_series.copy()
+    returns.index = pd.to_datetime(returns.index, errors="coerce")
+    returns = returns[returns.index.notna()].sort_index()
+    if returns.empty:
+        return pd.Series(dtype=float)
+    first_missing_positions = np.flatnonzero(returns.isna().to_numpy())
+    if len(first_missing_positions):
+        returns = returns.iloc[: first_missing_positions[0]]
+    return returns.dropna()
+
+
+def build_benchmark_growth_chart_data(
+    strategy_returns: pd.Series,
+    aligned_bench_returns: Dict[str, pd.Series],
+) -> pd.DataFrame:
+    curves = []
+    if strategy_returns is not None and not strategy_returns.empty:
+        strat_curve = (1 + strategy_returns).cumprod()
+        if not strat_curve.empty:
+            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
+            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
+
+    for name, series in (aligned_bench_returns or {}).items():
+        valid_returns = _contiguous_valid_return_prefix(series)
+        if not valid_returns.empty:
+            curves.append(pd.DataFrame({"Date": valid_returns.index, "Series": name, "Growth": (1 + valid_returns).cumprod().values}))
+
+    if not curves:
+        return pd.DataFrame(columns=["Date", "Series", "Growth"])
+    return pd.concat(curves, ignore_index=True)
+
+
 def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False):
     df = df.copy()
     numeric_cols = set(currency_cols or []).union(pct_cols or [], int_cols or [], float_cols or [])
@@ -2509,18 +2544,11 @@ def _render_yearly_tab(
     if capital_history_incomplete and monthly_returns_covered.empty:
         st.info("Return-based charts are unavailable because no complete covered return period exists.")
     else:
-        aligned_bench = state.get("aligned_bench_returns", {})
-        strat_curve = (1 + monthly_returns_covered).cumprod() if not monthly_returns_covered.empty else pd.Series(dtype=float)
-        if not strat_curve.empty:
-            strat_curve.index = pd.to_datetime(strat_curve.index).to_period("M").to_timestamp("M")
-        curves = []
-        if not strat_curve.empty:
-            curves.append(pd.DataFrame({"Date": strat_curve.index, "Series": "My Strategy", "Growth": strat_curve.values}))
-        for name, series in aligned_bench.items():
-            if not series.empty:
-                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": (1 + series.fillna(0)).cumprod().values}))
-        if curves:
-            eq_df = pd.concat(curves, ignore_index=True)
+        eq_df = build_benchmark_growth_chart_data(
+            monthly_returns_covered,
+            state.get("aligned_bench_returns", {}),
+        )
+        if not eq_df.empty:
             eq_df = filter_df_to_range(eq_df, "Date", state["as_of"], range_choice)
             if not eq_df.empty:
                 eq_df = eq_df.sort_values(["Series", "Date"])

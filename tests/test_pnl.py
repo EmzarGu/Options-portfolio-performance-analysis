@@ -13,6 +13,7 @@ from streamlit_app import (
     StockTxn,
     align_benchmarks_monthly,
     assess_capital_history_coverage,
+    build_benchmark_growth_chart_data,
     build_open_options_frame,
     build_options_cycle_chart_data,
     build_capital_timeline,
@@ -377,6 +378,37 @@ def test_build_options_cycle_chart_data_uses_total_realized_pnl():
     assert list(chart_df.columns) == ["Date", "pnl", "color"]
     assert chart_df["pnl"].tolist() == [120.0, -40.0]
     assert chart_df["color"].tolist() == ["Positive", "Negative"]
+
+
+def test_benchmark_growth_chart_stops_before_internal_missing_month():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"])
+    strategy_returns = pd.Series([0.01, 0.02, 0.03, 0.04], index=idx)
+    bench_returns = pd.Series([0.10, 0.20, float("nan"), 0.40], index=idx)
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns})
+
+    bench_chart = chart_df[chart_df["Series"] == "Bench"]
+    strategy_chart = chart_df[chart_df["Series"] == "My Strategy"]
+
+    assert bench_chart["Date"].tolist() == [pd.Timestamp("2024-01-31"), pd.Timestamp("2024-02-29")]
+    assert bench_chart["Growth"].tolist() == pytest.approx([1.10, 1.32])
+    assert pd.Timestamp("2024-03-31") not in bench_chart["Date"].tolist()
+    assert pd.Timestamp("2024-04-30") not in bench_chart["Date"].tolist()
+    assert strategy_chart["Date"].tolist() == idx.tolist()
+    assert strategy_chart["Growth"].tolist() == pytest.approx((1 + strategy_returns).cumprod().tolist())
+
+
+def test_benchmark_growth_chart_matches_complete_return_compounding():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    strategy_returns = pd.Series([0.01, -0.02, 0.03], index=idx)
+    bench_returns = pd.Series([0.04, 0.05, -0.01], index=idx)
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": bench_returns})
+
+    bench_chart = chart_df[chart_df["Series"] == "Bench"]
+
+    assert bench_chart["Date"].tolist() == idx.tolist()
+    assert bench_chart["Growth"].tolist() == pytest.approx((1 + bench_returns).cumprod().tolist())
 
 
 def test_resolve_build_version_prefers_env(monkeypatch):
