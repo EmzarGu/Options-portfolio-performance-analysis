@@ -618,7 +618,12 @@ def test_pipeline_current_period_paths_exclude_future_month_end(monkeypatch):
     assert state["monthly_returns_covered"].index.tolist() == [pd.Timestamp("2024-03-31")]
     yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
     assert yearly_row["total_realized_pnl"] == pytest.approx(100.0)
+    assert state["ytd_realized_pnl"] == pytest.approx(300.0)
+    assert state["cumulative_realized"] == pytest.approx(300.0)
+    assert state["grand_total"] == pytest.approx(300.0)
     assert benchmark_chart[benchmark_chart["Series"] == "My Strategy"]["Date"].tolist() == [pd.Timestamp("2024-03-31")]
+    strategy_row = state["benchmark_metrics"].loc[state["benchmark_metrics"]["Series"] == "My Strategy"].iloc[0]
+    assert strategy_row["Return YTD"] == pytest.approx(state["monthly_returns_covered"].iloc[0])
 
 
 def test_unrealized_adjusted_returns_do_not_create_future_month_end_mid_month():
@@ -1332,6 +1337,7 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
         "per_ticker_totals",
         "grand_total",
         "cumulative_realized",
+        "ytd_realized_pnl",
         "realized_option_events",
         "chain_outcomes",
         "sheet_counts",
@@ -1351,6 +1357,7 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
     assert state.get("monthly_cycles") is state.monthly_cycles
     assert state["grand_total"] == pytest.approx(150.0)
     assert state.grand_total == pytest.approx(150.0)
+    assert state.ytd_realized_pnl == pytest.approx(150.0)
 
 
 def test_build_covered_return_series_truncates_at_first_incomplete_month():
