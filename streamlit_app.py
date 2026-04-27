@@ -1936,7 +1936,7 @@ def build_benchmark_growth_chart_data(
     return pd.concat(curves, ignore_index=True)
 
 
-def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False):
+def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False, na_rep=None):
     df = df.copy()
     numeric_cols = set(currency_cols or []).union(pct_cols or [], int_cols or [], float_cols or [])
     for col in numeric_cols:
@@ -1951,7 +1951,7 @@ def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=Non
         formatter.update({c: "{:.0f}".format for c in int_cols if c in df.columns})
     if float_cols:
         formatter.update({c: "{:.2f}".format for c in float_cols if c in df.columns})
-    styler = df.style.format(formatter).set_properties(**{"text-align": "right"})
+    styler = df.style.format(formatter, na_rep=na_rep).set_properties(**{"text-align": "right"})
     if hide_index:
         try:
             styler = styler.hide(axis="index")
@@ -2543,6 +2543,7 @@ def _render_yearly_tab(
 
     # Benchmark metrics
     st.markdown("##### Key Performance Metrics (vs. Benchmarks)")
+    st.caption("Sortino is unavailable when there are no downside months versus the monthly risk-free hurdle.")
     bench_df = state.get("benchmark_metrics", pd.DataFrame())
     if covered_period_note:
         st.info(covered_period_note)
@@ -2568,6 +2569,7 @@ def _render_yearly_tab(
                 pct_cols=["CAGR", "Volatility", "Max drawdown", "Return 3M", "Return 6M", "Return YTD", "Return 1Y", "Return SI"],
                 float_cols=["Sharpe", "Sortino"],
                 hide_index=True,
+                na_rep="n/a",
             ),
             use_container_width=True,
         )

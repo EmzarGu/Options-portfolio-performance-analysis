@@ -1478,6 +1478,54 @@ def test_benchmark_risk_metric_window_matches_chart_one_year_window():
     assert risk_window.index.tolist() == chart_df.loc[chart_df["Series"] == "Bench", "Date"].tolist()
 
 
+def test_sortino_is_unavailable_when_all_returns_exceed_monthly_risk_free_rate():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    all_positive_returns = pd.Series([0.01, 0.02, 0.015], index=idx)
+
+    metrics = calculate_performance_metrics(all_positive_returns)
+
+    assert pd.isna(metrics["Sortino"])
+
+
+def test_sortino_is_calculated_when_returns_include_downside_vs_risk_free_rate():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    mixed_returns = pd.Series([0.02, -0.01, 0.015], index=idx)
+
+    metrics = calculate_performance_metrics(mixed_returns)
+
+    assert pd.notna(metrics["Sortino"])
+
+
+def test_sortino_uses_monthly_risk_free_rate_not_zero_return_as_downside_threshold():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    positive_but_below_rf_returns = pd.Series([0.001, 0.002, 0.0015], index=idx)
+
+    metrics = calculate_performance_metrics(positive_but_below_rf_returns)
+
+    assert pd.notna(metrics["Sortino"])
+    assert metrics["Sortino"] < 0
+
+
+def test_sortino_single_observation_depends_on_downside_presence():
+    downside_month = pd.Series([-0.01], index=pd.to_datetime(["2024-01-31"]))
+    no_downside_month = pd.Series([0.01], index=pd.to_datetime(["2024-01-31"]))
+
+    downside_metrics = calculate_performance_metrics(downside_month)
+    no_downside_metrics = calculate_performance_metrics(no_downside_month)
+
+    assert pd.notna(downside_metrics["Sortino"])
+    assert pd.isna(no_downside_metrics["Sortino"])
+
+
+def test_benchmark_table_formatting_renders_unavailable_sortino_as_na():
+    df = pd.DataFrame({"Series": ["My Strategy"], "Sortino": [float("nan")]})
+
+    html = app._format_df(df, float_cols=["Sortino"], hide_index=True, na_rep="n/a").to_html()
+
+    assert "n/a" in html
+    assert "None" not in html
+
+
 def test_valid_strategy_returns_are_unaffected_by_gap_handling():
     idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
     strategy_returns = pd.Series([0.01, 0.02, 0.03], index=idx)
