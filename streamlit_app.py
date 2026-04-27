@@ -2555,12 +2555,20 @@ def _render_yearly_tab(
             curve_df = build_curve_from_returns(name, series)
             if curve_df is not None and not curve_df.empty:
                 curves.append(curve_df)
+            if not series.empty:
+                benchmark_growth = (1 + series).cumprod()
+                curves.append(pd.DataFrame({"Date": series.index, "Series": name, "Growth": benchmark_growth.values}))
         if curves:
             eq_df = pd.concat(curves, ignore_index=True)
             if not eq_df.empty:
                 eq_df = eq_df.sort_values(["Series", "Date"])
                 st.caption(
                     "Curves require complete monthly returns in the selected range; missing months are not imputed as 0%."
+                eq_df["Growth"] = eq_df["Growth"] / eq_df.groupby("Series")["Growth"].transform(
+                    lambda s: s.dropna().iloc[0] if not s.dropna().empty else np.nan
+                )
+                st.caption(
+                    "Benchmarks require complete monthly returns in each period; missing benchmark months are not imputed as 0%."
                 )
                 g_min = float(eq_df["Growth"].min())
                 g_max = float(eq_df["Growth"].max())
