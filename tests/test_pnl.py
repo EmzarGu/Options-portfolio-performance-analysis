@@ -485,6 +485,123 @@ def test_benchmark_growth_chart_order_matches_table_returns_across_ranges():
         assert strategy_endpoint > schd_endpoint
 
 
+@pytest.mark.parametrize(
+    "range_choice,metric_name",
+    [
+        ("3M", "Return 3M"),
+        ("6M", "Return 6M"),
+        ("YTD", "Return YTD"),
+        ("1Y", "Return 1Y"),
+        ("Since inception", "Return SI"),
+    ],
+)
+def test_e2e_chart_table_reconciliation_for_strategy_and_benchmark_all_ranges(range_choice, metric_name):
+    idx = pd.date_range("2024-12-31", periods=15, freq="ME")
+    strategy_returns = pd.Series(
+        [0.025, -0.006, 0.018, 0.011, 0.013, -0.004, 0.016, 0.007, 0.019, -0.003, 0.012, 0.010, 0.040, 0.014, 0.009],
+        index=idx,
+    )
+    benchmark_returns = pd.Series(
+        [0.010, 0.012, -0.004, 0.008, 0.011, 0.006, -0.002, 0.007, 0.009, 0.004, 0.010, 0.005, 0.015, 0.008, 0.006],
+        index=idx,
+    )
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": benchmark_returns}, range_choice)
+    strategy_chart = chart_df.loc[chart_df["Series"] == "My Strategy"].reset_index(drop=True)
+    benchmark_chart = chart_df.loc[chart_df["Series"] == "Bench"].reset_index(drop=True)
+    strategy_window = app._select_chart_return_window(strategy_returns, range_choice)
+    benchmark_window = app._select_chart_return_window(benchmark_returns, range_choice)
+    strategy_table_return = period_returns(strategy_returns)[metric_name]
+    benchmark_table_return = period_returns(benchmark_returns)[metric_name]
+
+    assert strategy_chart["Growth"].iloc[0] == pytest.approx(1.0)
+    assert benchmark_chart["Growth"].iloc[0] == pytest.approx(1.0)
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + strategy_table_return)
+    assert benchmark_chart["Growth"].iloc[-1] == pytest.approx(1 + benchmark_table_return)
+    assert strategy_chart["Growth"].iloc[-1] / strategy_chart["Growth"].iloc[0] - 1 == pytest.approx(strategy_table_return)
+    assert benchmark_chart["Growth"].iloc[-1] / benchmark_chart["Growth"].iloc[0] - 1 == pytest.approx(benchmark_table_return)
+    assert strategy_chart["Date"].iloc[1:].tolist() == strategy_window.index.tolist()
+    assert benchmark_chart["Date"].iloc[1:].tolist() == benchmark_window.index.tolist()
+    assert strategy_chart["Date"].tolist() == benchmark_chart["Date"].tolist()
+
+
+def test_e2e_benchmark_gap_omits_line_without_forward_fill():
+    idx = pd.date_range("2025-01-31", periods=6, freq="ME")
+    strategy_returns = pd.Series([0.01, 0.02, 0.015, -0.005, 0.012, 0.011], index=idx)
+    benchmark_returns = pd.Series([0.008, 0.009, float("nan"), 0.010, 0.011, 0.012], index=idx)
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": benchmark_returns}, "6M")
+
+    assert pd.isna(period_returns(benchmark_returns)["Return 6M"])
+    assert chart_df.loc[chart_df["Series"] == "Bench"].empty
+    assert chart_df.loc[chart_df["Series"] == "My Strategy", "Growth"].iloc[0] == pytest.approx(1.0)
+    assert chart_df.loc[chart_df["Series"] == "My Strategy", "Growth"].iloc[-1] == pytest.approx(
+        1 + period_returns(strategy_returns)["Return 6M"]
+    )
+    assert benchmark_returns.ffill().iloc[2] == pytest.approx(benchmark_returns.iloc[1])
+
+
+@pytest.mark.parametrize(
+    "range_choice,metric_name",
+    [
+        ("3M", "Return 3M"),
+        ("6M", "Return 6M"),
+        ("YTD", "Return YTD"),
+        ("1Y", "Return 1Y"),
+        ("Since inception", "Return SI"),
+    ],
+)
+def test_e2e_partial_month_as_of_excludes_future_return_periods_and_reconciles(range_choice, metric_name):
+    idx = pd.date_range("2025-01-31", periods=16, freq="ME")
+    strategy_returns = pd.Series([0.012, 0.008, -0.006, 0.015, 0.011, 0.009, -0.004, 0.013, 0.010, 0.007, 0.014, 0.006, 0.020, 0.011, 0.009, 0.050], index=idx)
+    benchmark_returns = pd.Series([0.007, 0.006, -0.003, 0.010, 0.008, 0.006, -0.002, 0.009, 0.007, 0.005, 0.010, 0.004, 0.012, 0.008, 0.006, 0.040], index=idx)
+    as_of = pd.Timestamp("2026-04-27")
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": benchmark_returns}, range_choice, as_of)
+    strategy_chart = chart_df.loc[chart_df["Series"] == "My Strategy"].reset_index(drop=True)
+    benchmark_chart = chart_df.loc[chart_df["Series"] == "Bench"].reset_index(drop=True)
+    clipped_strategy = strategy_returns[strategy_returns.index <= as_of.normalize()]
+    clipped_benchmark = benchmark_returns[benchmark_returns.index <= as_of.normalize()]
+    strategy_window = app._select_chart_return_window(strategy_returns, range_choice, as_of)
+    benchmark_window = app._select_chart_return_window(benchmark_returns, range_choice, as_of)
+
+    assert pd.Timestamp("2026-04-30") not in strategy_chart["Date"].tolist()
+    assert pd.Timestamp("2026-04-30") not in benchmark_chart["Date"].tolist()
+    assert all(pd.to_datetime(strategy_chart["Date"].iloc[1:]) <= as_of.normalize())
+    assert all(pd.to_datetime(benchmark_chart["Date"].iloc[1:]) <= as_of.normalize())
+    assert strategy_chart["Date"].iloc[1:].tolist() == strategy_window.index.tolist()
+    assert benchmark_chart["Date"].iloc[1:].tolist() == benchmark_window.index.tolist()
+    assert strategy_chart["Growth"].iloc[0] == pytest.approx(1.0)
+    assert benchmark_chart["Growth"].iloc[0] == pytest.approx(1.0)
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(clipped_strategy)[metric_name])
+    assert benchmark_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(clipped_benchmark)[metric_name])
+
+
+@pytest.mark.parametrize(
+    "range_choice,metric_name",
+    [
+        ("3M", "Return 3M"),
+        ("6M", "Return 6M"),
+        ("YTD", "Return YTD"),
+        ("1Y", "Return 1Y"),
+        ("Since inception", "Return SI"),
+    ],
+)
+def test_e2e_chart_endpoint_ranking_matches_table_ranking_all_ranges(range_choice, metric_name):
+    idx = pd.date_range("2024-12-31", periods=15, freq="ME")
+    strategy_returns = pd.Series([0.02] * 12 + [0.04, 0.03, 0.03], index=idx)
+    benchmark_returns = pd.Series([0.01] * 15, index=idx)
+
+    chart_df = build_benchmark_growth_chart_data(strategy_returns, {"Bench": benchmark_returns}, range_choice)
+    strategy_table_return = period_returns(strategy_returns)[metric_name]
+    benchmark_table_return = period_returns(benchmark_returns)[metric_name]
+    strategy_endpoint = chart_df.loc[chart_df["Series"] == "My Strategy", "Growth"].iloc[-1]
+    benchmark_endpoint = chart_df.loc[chart_df["Series"] == "Bench", "Growth"].iloc[-1]
+
+    assert strategy_table_return > benchmark_table_return
+    assert strategy_endpoint > benchmark_endpoint
+
+
 def test_resolve_build_version_prefers_env(monkeypatch):
     monkeypatch.setenv("APP_BUILD_VERSION", "deploy-123")
     monkeypatch.setenv("BUILD_VERSION", "ignored")
