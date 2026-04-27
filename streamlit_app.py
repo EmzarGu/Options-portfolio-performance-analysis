@@ -1182,8 +1182,7 @@ def build_monthly_summary(
     combined["roac"] = np.where(combined["avg_capital"] > 0, combined["total_realized_pnl"] / combined["avg_capital"], np.nan)
     combined["ropc"] = np.where(combined["peak_capital"] > 0, combined["total_realized_pnl"] / combined["peak_capital"], np.nan)
     combined.index.name = "month"
-    as_of_month_end = pd.to_datetime(as_of).to_period("M").to_timestamp("M")
-    combined = combined[combined.index <= as_of_month_end].sort_index()
+    combined = combined[combined.index <= pd.to_datetime(as_of).normalize()].sort_index()
     return combined
 
 
@@ -1744,6 +1743,8 @@ def build_dashboard_unrealized_adjusted_return_series(
         if pd.notna(cap_basis) and cap_basis > 0:
             unrealized_return_component = total_unreal / cap_basis
             month_end = pd.to_datetime(as_of_ts).to_period("M").to_timestamp("M")
+            if month_end > pd.to_datetime(as_of_ts).normalize():
+                return monthly_returns_unrealized_adjusted
             base_ret = (
                 monthly_returns_unrealized_adjusted.loc[month_end]
                 if month_end in monthly_returns_unrealized_adjusted.index
