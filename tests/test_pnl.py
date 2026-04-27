@@ -147,7 +147,7 @@ def test_pipeline_surfaces_ambiguous_mixed_leg_parse_issue(monkeypatch):
     monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
     monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
 
-    state = app.build_pipeline(pd.Timestamp("2024-05-31").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
 
     assert any("Mixed-leg option row for MIX on 2024-05-01 has ambiguous short leg" in msg for msg in state["issues"])
     assert state["lots"] == []
@@ -546,102 +546,6 @@ def test_filter_df_to_range_applies_ytd_window():
     assert filtered["value"].tolist() == [2, 3]
 
 
-def test_monthly_summary_excludes_future_month_end_when_as_of_is_mid_month():
-    events = [
-        app.OptionPnLEvent(pd.Timestamp("2024-03-20"), "AAA", "Put", 100.0, 1, 100.0, 2.0, 0.0, "expiration"),
-        app.OptionPnLEvent(pd.Timestamp("2024-04-20"), "AAA", "Put", 100.0, 1, 200.0, 2.0, 0.0, "expiration"),
-    ]
-    capital_daily = _make_capital_daily("2024-03-01", periods=58, total=10_000.0)
-
-    monthly = app.build_monthly_summary(events, [], capital_daily, pd.DataFrame(), pd.Timestamp("2024-04-27"))
-
-    assert monthly.index.tolist() == [pd.Timestamp("2024-03-31")]
-    assert monthly.loc[pd.Timestamp("2024-03-31"), "total_realized_pnl"] == pytest.approx(100.0)
-    assert monthly.loc[pd.Timestamp("2024-03-31"), "roac"] == pytest.approx(0.01)
-
-
-def test_pipeline_current_period_paths_exclude_future_month_end(monkeypatch):
-    df_opts = pd.DataFrame(
-        [
-            {
-                "trans_date": pd.Timestamp("2024-03-01"),
-                "ticker": "AAA",
-                "type": "Put",
-                "action": "Sell",
-                "expiration": pd.Timestamp("2024-03-20"),
-                "strike": 100.0,
-                "qty": 1,
-                "amount": 100.0,
-                "commission": 0.0,
-                "total_pnl": 100.0,
-                "assigned_flag": 0.0,
-                "comment": "",
-                "source_sheet": "Options 2024",
-            },
-            {
-                "trans_date": pd.Timestamp("2024-04-01"),
-                "ticker": "AAA",
-                "type": "Put",
-                "action": "Sell",
-                "expiration": pd.Timestamp("2024-04-20"),
-                "strike": 100.0,
-                "qty": 1,
-                "amount": 200.0,
-                "commission": 0.0,
-                "total_pnl": 200.0,
-                "assigned_flag": 0.0,
-                "comment": "",
-                "source_sheet": "Options 2024",
-            },
-        ]
-    )
-
-    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
-    monkeypatch.setattr(app, "fetch_price_history_yf", lambda tickers, start, end: ({}, [], {"requested": 0, "fetched": 0}))
-    monkeypatch.setattr(app, "fetch_current_prices_yf", lambda tickers: ({}, [], {"requested": 0, "fetched": 0}))
-    monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
-    monkeypatch.setattr(
-        app,
-        "align_benchmarks_monthly",
-        lambda tickers, idx: {"Bench": pd.Series([0.02] * len(idx), index=idx)} if len(idx) else {},
-    )
-
-    state = app.build_pipeline(pd.Timestamp("2024-04-27").date(), False, ["Options 2024"])
-    benchmark_chart = build_benchmark_growth_chart_data(
-        state["monthly_returns_covered"],
-        state["aligned_bench_returns"],
-        "Since inception",
-        state["as_of"],
-    )
-
-    assert state["monthly_cycles"].index.tolist() == [pd.Timestamp("2024-03-31")]
-    assert state["monthly_returns_covered"].index.tolist() == [pd.Timestamp("2024-03-31")]
-    yearly_row = state["yearly"].loc[state["yearly"]["year"] == 2024].iloc[0]
-    assert yearly_row["total_realized_pnl"] == pytest.approx(100.0)
-    assert state["ytd_realized_pnl"] == pytest.approx(300.0)
-    assert state["cumulative_realized"] == pytest.approx(300.0)
-    assert state["grand_total"] == pytest.approx(300.0)
-    assert benchmark_chart[benchmark_chart["Series"] == "My Strategy"]["Date"].tolist() == [pd.Timestamp("2024-03-31")]
-    strategy_row = state["benchmark_metrics"].loc[state["benchmark_metrics"]["Series"] == "My Strategy"].iloc[0]
-    assert strategy_row["Return YTD"] == pytest.approx(state["monthly_returns_covered"].iloc[0])
-
-
-def test_unrealized_adjusted_returns_do_not_create_future_month_end_mid_month():
-    monthly_returns = pd.Series([0.0], index=pd.to_datetime(["2025-03-31"]))
-    capital_daily = _make_capital_daily("2025-03-01", periods=15, total=1_000.0)
-
-    unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
-        monthly_returns,
-        capital_daily,
-        pd.Timestamp("2025-03-15"),
-        True,
-        250.0,
-        False,
-    )
-
-    assert unrealized_adjusted_returns.loc[pd.Timestamp("2025-03-31")] == pytest.approx(0.0)
-
-
 def test_dashboard_unrealized_stock_only_characterization():
     inventory = [
         OpenLot(
@@ -665,7 +569,7 @@ def test_dashboard_unrealized_stock_only_characterization():
     unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
         monthly_returns,
         capital_daily,
-        pd.Timestamp("2025-03-31"),
+        pd.Timestamp("2025-03-15"),
         True,
         snapshot["total_unreal"],
     )
@@ -706,7 +610,7 @@ def test_dashboard_unrealized_option_only_characterization():
     unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
         monthly_returns,
         capital_daily,
-        pd.Timestamp("2025-03-31"),
+        pd.Timestamp("2025-03-15"),
         True,
         snapshot["total_unreal"],
     )
@@ -771,7 +675,7 @@ def test_dashboard_unrealized_mixed_portfolio_characterization():
     unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
         monthly_returns,
         capital_daily,
-        pd.Timestamp("2025-03-31"),
+        pd.Timestamp("2025-03-15"),
         True,
         snapshot["total_unreal"],
     )
@@ -866,7 +770,7 @@ def test_dashboard_unrealized_adjusted_returns_still_change_when_snapshot_comple
     unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
         monthly_returns,
         capital_daily,
-        pd.Timestamp("2025-03-31"),
+        pd.Timestamp("2025-03-15"),
         True,
         250.0,
         False,
@@ -894,7 +798,7 @@ def test_complete_price_unrealized_adjusted_snapshot_unchanged_by_capital_fix():
     unrealized_adjusted_returns = build_dashboard_unrealized_adjusted_return_series(
         monthly_returns,
         capital_daily,
-        pd.Timestamp("2025-03-31"),
+        pd.Timestamp("2025-03-15"),
         True,
         snapshot["total_unreal"],
         snapshot["unrealized_blocked"],
@@ -1125,7 +1029,7 @@ def test_pipeline_suppresses_denominator_returns_when_historical_price_fetch_fai
     monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
     monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
 
-    state = app.build_pipeline(pd.Timestamp("2024-05-31").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
 
     assert state["capital_history_incomplete"] is True
     assert state["capital_history_affected_tickers"] == ["AAA"]
@@ -1179,7 +1083,7 @@ def test_pipeline_denominator_incompleteness_unchanged_when_provider_fetch_fails
     monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
     monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
 
-    state = app.build_pipeline(pd.Timestamp("2024-05-31").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
 
     assert state["historical_price_summary"] == {"requested": 1, "fetched": 0}
     assert state["capital_history_incomplete"] is True
@@ -1220,8 +1124,17 @@ def test_pipeline_denominator_returns_remain_when_historical_price_history_is_co
         lambda tickers, start, end: (
             {
                 "AAA": pd.Series(
-                    range(101, 116),
-                    index=pd.bdate_range("2024-05-13", "2024-05-31"),
+                    [101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
+                    index=pd.to_datetime(
+                        [
+                            "2024-05-13",
+                            "2024-05-14",
+                            "2024-05-15",
+                            "2024-05-16",
+                            "2024-05-17",
+                            "2024-05-20",
+                        ]
+                    ),
                 )
             },
             [],
@@ -1240,7 +1153,7 @@ def test_pipeline_denominator_returns_remain_when_historical_price_history_is_co
     monkeypatch.setattr(app, "collect_dividend_cashflows", lambda stock_txns, as_of: pd.DataFrame())
     monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
 
-    state = app.build_pipeline(pd.Timestamp("2024-05-31").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
 
     assert state["capital_history_incomplete"] is False
     assert state["capital_history_coverage_issues"] == []
@@ -1337,7 +1250,6 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
         "per_ticker_totals",
         "grand_total",
         "cumulative_realized",
-        "ytd_realized_pnl",
         "realized_option_events",
         "chain_outcomes",
         "sheet_counts",
@@ -1357,7 +1269,6 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
     assert state.get("monthly_cycles") is state.monthly_cycles
     assert state["grand_total"] == pytest.approx(150.0)
     assert state.grand_total == pytest.approx(150.0)
-    assert state.ytd_realized_pnl == pytest.approx(150.0)
 
 
 def test_build_covered_return_series_truncates_at_first_incomplete_month():
@@ -1507,7 +1418,7 @@ def test_pipeline_truncates_return_series_and_benchmark_metrics_to_last_complete
         lambda tickers, idx: {"Bench": pd.Series([0.02] * len(idx), index=idx)} if len(idx) else {},
     )
 
-    state = app.build_pipeline(pd.Timestamp("2024-06-30").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-06-20").date(), False, ["Options 2024"])
 
     may = pd.Timestamp("2024-05-31")
     june = pd.Timestamp("2024-06-30")
@@ -1556,8 +1467,17 @@ def test_pipeline_dividend_incomplete_keeps_returns_visible(monkeypatch):
         lambda tickers, start, end: (
             {
                 "AAA": pd.Series(
-                    range(101, 116),
-                    index=pd.bdate_range("2024-05-13", "2024-05-31"),
+                    [101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
+                    index=pd.to_datetime(
+                        [
+                            "2024-05-13",
+                            "2024-05-14",
+                            "2024-05-15",
+                            "2024-05-16",
+                            "2024-05-17",
+                            "2024-05-20",
+                        ]
+                    ),
                 )
             },
             [],
@@ -1586,7 +1506,7 @@ def test_pipeline_dividend_incomplete_keeps_returns_visible(monkeypatch):
     )
     monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
 
-    state = app.build_pipeline(pd.Timestamp("2024-05-31").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
 
     assert state["dividend_coverage_complete"] is False
     assert state["dividend_affected_tickers"] == ["AAA"]
@@ -1626,8 +1546,17 @@ def test_pipeline_valid_zero_dividend_history_does_not_create_issue(monkeypatch)
         lambda tickers, start, end: (
             {
                 "AAA": pd.Series(
-                    range(101, 116),
-                    index=pd.bdate_range("2024-05-13", "2024-05-31"),
+                    [101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
+                    index=pd.to_datetime(
+                        [
+                            "2024-05-13",
+                            "2024-05-14",
+                            "2024-05-15",
+                            "2024-05-16",
+                            "2024-05-17",
+                            "2024-05-20",
+                        ]
+                    ),
                 )
             },
             [],
@@ -1656,7 +1585,7 @@ def test_pipeline_valid_zero_dividend_history_does_not_create_issue(monkeypatch)
     )
     monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
 
-    state = app.build_pipeline(pd.Timestamp("2024-05-31").date(), False, ["Options 2024"])
+    state = app.build_pipeline(pd.Timestamp("2024-05-20").date(), False, ["Options 2024"])
 
     assert state["dividend_coverage_complete"] is True
     assert state["dividend_affected_tickers"] == ["AAA"]

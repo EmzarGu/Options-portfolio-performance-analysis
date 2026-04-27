@@ -580,7 +580,6 @@ class PipelineState:
     per_ticker_totals: pd.DataFrame
     grand_total: float
     cumulative_realized: float
-    ytd_realized_pnl: float
     realized_option_events: List[OptionPnLEvent]
     chain_outcomes: List[ChainOutcome]
     sheet_counts: pd.DataFrame
@@ -1183,7 +1182,8 @@ def build_monthly_summary(
     combined["roac"] = np.where(combined["avg_capital"] > 0, combined["total_realized_pnl"] / combined["avg_capital"], np.nan)
     combined["ropc"] = np.where(combined["peak_capital"] > 0, combined["total_realized_pnl"] / combined["peak_capital"], np.nan)
     combined.index.name = "month"
-    combined = combined[combined.index <= pd.to_datetime(as_of).normalize()].sort_index()
+    as_of_month_end = pd.to_datetime(as_of).to_period("M").to_timestamp("M")
+    combined = combined[combined.index <= as_of_month_end].sort_index()
     return combined
 
 
@@ -1260,40 +1260,6 @@ def yearly_summary_from_monthly(monthly_df: pd.DataFrame, capital_daily: pd.Data
             agg.at[idx, "ann_ropc"] = (1 + row["ropc_year"]) ** (365.0 / days) - 1
     agg = agg.sort_values("year")
     return agg
-
-
-def realized_pnl_as_of(
-    realized_option_events: List[OptionPnLEvent],
-    realized_sales: List[RealizedSale],
-    dividends_df: pd.DataFrame,
-    as_of: pd.Timestamp,
-    year: Optional[int] = None,
-) -> float:
-    as_of_ts = pd.to_datetime(as_of).normalize()
-    start_ts = pd.Timestamp(year=year, month=1, day=1) if year is not None else None
-
-    def in_window(value) -> bool:
-        ts = pd.to_datetime(value).normalize()
-        if pd.isna(ts):
-            return False
-        if ts > as_of_ts:
-            return False
-        if start_ts is not None and ts < start_ts:
-            return False
-        return True
-
-    option_total = sum(float(e.pnl) for e in realized_option_events if in_window(e.date))
-    stock_total = sum(float(r.pnl) for r in realized_sales if in_window(r.date))
-    dividend_total = 0.0
-    if dividends_df is not None and not dividends_df.empty:
-        date_col = "pay_date" if "pay_date" in dividends_df.columns else "ex_date"
-        if date_col in dividends_df.columns and "cash" in dividends_df.columns:
-            div_dates = pd.to_datetime(dividends_df[date_col], errors="coerce").dt.normalize()
-            mask = div_dates.notna() & div_dates.le(as_of_ts)
-            if start_ts is not None:
-                mask &= div_dates.ge(start_ts)
-            dividend_total = float(pd.to_numeric(dividends_df.loc[mask, "cash"], errors="coerce").fillna(0.0).sum())
-    return float(option_total + stock_total + dividend_total)
 
 
 def realized_option_pnl_by_year(realized_option_events: List[OptionPnLEvent]) -> pd.DataFrame:
@@ -1778,8 +1744,6 @@ def build_dashboard_unrealized_adjusted_return_series(
         if pd.notna(cap_basis) and cap_basis > 0:
             unrealized_return_component = total_unreal / cap_basis
             month_end = pd.to_datetime(as_of_ts).to_period("M").to_timestamp("M")
-            if month_end > pd.to_datetime(as_of_ts).normalize():
-                return monthly_returns_unrealized_adjusted
             base_ret = (
                 monthly_returns_unrealized_adjusted.loc[month_end]
                 if month_end in monthly_returns_unrealized_adjusted.index
@@ -2276,8 +2240,7 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
     per_ticker_totals = build_per_ticker_totals(per_ticker, per_ticker_unreal)
 
-    cumulative_realized = realized_pnl_as_of(realized_option_events, realized_sales, div_df, as_of_ts)
-    ytd_realized_pnl = realized_pnl_as_of(realized_option_events, realized_sales, div_df, as_of_ts, as_of_ts.year)
+    cumulative_realized = float(monthly_summary["total_realized_pnl"].sum()) if not monthly_summary.empty else 0.0
     grand_total = cumulative_realized + total_unreal
 
     # Benchmarks using monthly returns alignment (clip to as_of)
@@ -2355,7 +2318,6 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
         per_ticker_totals=per_ticker_totals,
         grand_total=grand_total,
         cumulative_realized=cumulative_realized,
-        ytd_realized_pnl=ytd_realized_pnl,
         realized_option_events=realized_option_events,
         chain_outcomes=chain_outcomes,
         sheet_counts=sheet_counts,
@@ -3133,7 +3095,7 @@ def main():
             "annualized_return_twr": pd.NA,
         }
     )
-    realized_total = float(state.ytd_realized_pnl)
+    realized_total = float(ytd_row.get("total_realized_pnl", 0.0) or 0.0)
     ytd_total = realized_total + (state.total_unreal if include_unrealized else 0.0)
     twr_field = "annualized_return_twr_unrealized_adjusted" if include_unrealized else "annualized_return_twr"
     ytd_twr = ytd_row.get(twr_field, pd.NA)
