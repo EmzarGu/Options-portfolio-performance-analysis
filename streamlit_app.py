@@ -63,6 +63,7 @@ CONTRACT_MULTIPLIER = 100
 # Keep the original on-disk prefs path for local runs; add a home-dir fallback for rebuilds.
 PREFS_PATH = Path(".streamlit_user_prefs.json")
 PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
+PIPELINE_RELOAD_TOKEN_KEY = "pipeline_reload_token"
 UNREALIZED_ADJUSTED_TOGGLE_LABEL = "Add heuristic unrealized to current-year totals and TWR"
 UNREALIZED_ADJUSTED_EXPLANATION = (
     "Uses the current unrealized snapshot to adjust current-year totals and TWR. "
@@ -440,6 +441,10 @@ def _clear_data_caches() -> None:
     list_option_sheets.clear()
     load_options.clear()
     get_drive_file_metadata.clear()
+    try:
+        get_cached_pipeline.clear()
+    except NameError:
+        pass
 
 
 # ------------------------------------------------------------
@@ -2356,14 +2361,56 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     )
 
 
+def build_pipeline_cache_key(
+    as_of: date,
+    include_unrealized_current_year: bool,
+    selected_sheets: List[str],
+    reload_token: int,
+) -> Tuple[str, bool, Tuple[str, ...], int]:
+    as_of_key = pd.to_datetime(as_of).date().isoformat()
+    selected_sheets_key = tuple(str(sheet) for sheet in (selected_sheets or []))
+    return (
+        as_of_key,
+        bool(include_unrealized_current_year),
+        selected_sheets_key,
+        int(reload_token or 0),
+    )
+
+
+@st.cache_data(show_spinner="Building portfolio pipeline...")
+def get_cached_pipeline(
+    as_of_key: str,
+    include_unrealized_current_year: bool,
+    selected_sheets_key: Tuple[str, ...],
+    reload_token: int,
+) -> PipelineState:
+    return build_pipeline(
+        date.fromisoformat(as_of_key),
+        include_unrealized_current_year,
+        list(selected_sheets_key),
+        cache_bust=reload_token,
+    )
+
+
+def _get_pipeline_reload_token() -> int:
+    return int(st.session_state.get(PIPELINE_RELOAD_TOKEN_KEY, 0) or 0)
+
+
+def _increment_pipeline_reload_token() -> int:
+    token = _get_pipeline_reload_token() + 1
+    st.session_state[PIPELINE_RELOAD_TOKEN_KEY] = token
+    return token
+
+
 def _render_config_tab(available_sheets: List[str], default_sheets: List[str]) -> None:
     st.markdown("##### Data sources")
     col_refresh, col_status = st.columns([1, 2])
     with col_refresh:
-        if st.button("Reload data from Google Drive", key="reload_drive_data"):
+        if st.button("Refresh data / Rebuild pipeline", key="refresh_rebuild_pipeline"):
+            _increment_pipeline_reload_token()
             _clear_data_caches()
             _rerun_app()
-        st.caption("Clears cached sheet data and forces a fresh download.")
+        st.caption("Clears cached sheet and pipeline data. Press after workbook edits to fetch fresh data and rebuild.")
     with col_status:
         _render_data_status(SHEET_ID)
     selected_sheets = st.multiselect(
@@ -3099,9 +3146,10 @@ def main():
     if new_prefs != prefs:
         save_prefs(new_prefs)
 
-    # cache_bust is kept for API compatibility; build_pipeline no longer cached
+    reload_token = _get_pipeline_reload_token()
+    pipeline_cache_key = build_pipeline_cache_key(as_of_input, include_unrealized, selected_sheets, reload_token)
     try:
-        state = build_pipeline(as_of_input, include_unrealized, selected_sheets, cache_bust=4)
+        state = get_cached_pipeline(*pipeline_cache_key)
     except Exception as e:
         st.error(
             "Could not load data. If the sheet is private, set `GOOGLE_SERVICE_ACCOUNT_JSON` (or `LOCAL_SECRETS_PATH`); "

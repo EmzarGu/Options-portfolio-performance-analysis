@@ -1487,6 +1487,40 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
     assert state.grand_total == pytest.approx(150.0)
 
 
+def test_pipeline_cache_key_excludes_chart_period():
+    selected_sheets = ["Options 2024", "Options 2025"]
+
+    key_before_chart_change = app.build_pipeline_cache_key(
+        pd.Timestamp("2026-04-27").date(),
+        True,
+        selected_sheets,
+        3,
+    )
+    chart_period = "1Y"
+    key_after_chart_change = app.build_pipeline_cache_key(
+        pd.Timestamp("2026-04-27").date(),
+        True,
+        selected_sheets,
+        3,
+    )
+
+    assert key_before_chart_change == key_after_chart_change
+    assert chart_period not in key_after_chart_change
+    assert key_after_chart_change == ("2026-04-27", True, ("Options 2024", "Options 2025"), 3)
+
+
+def test_pipeline_cache_key_changes_when_reload_token_changes():
+    selected_sheets = ["Options 2024", "Options 2025"]
+
+    first_key = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), False, selected_sheets, 3)
+    refreshed_key = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), False, selected_sheets, 4)
+
+    assert first_key != refreshed_key
+    assert first_key[:3] == refreshed_key[:3]
+    assert first_key[3] == 3
+    assert refreshed_key[3] == 4
+
+
 def test_build_covered_return_series_truncates_at_first_incomplete_month():
     monthly_returns = pd.Series(
         [0.05, 0.04, 0.03],
