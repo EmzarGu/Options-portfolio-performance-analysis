@@ -27,6 +27,7 @@ from data_sources import (
     DividendFetchResult,
     YFinanceDividendProvider,
     YFinancePriceHistoryProvider,
+    clear_dividend_history_cache,
     collect_dividend_cashflows as _collect_dividend_cashflows,
 )
 from reporting import build_open_options_frame, filter_df_to_range
@@ -441,6 +442,7 @@ def _clear_data_caches() -> None:
     list_option_sheets.clear()
     load_options.clear()
     get_drive_file_metadata.clear()
+    clear_dividend_history_cache()
     try:
         get_cached_pipeline.clear()
     except NameError:

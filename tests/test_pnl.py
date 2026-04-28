@@ -1531,6 +1531,34 @@ def test_pipeline_cache_key_changes_when_reload_token_changes():
     assert refreshed_key[2] == 4
 
 
+def test_refresh_data_caches_clears_persistent_dividend_history_cache():
+    class FakeTicker:
+        def __init__(self, dividends):
+            self._dividends = dividends
+
+        @property
+        def dividends(self):
+            return self._dividends
+
+    class FakeYF:
+        def __init__(self):
+            self.calls = []
+
+        def Ticker(self, ticker):
+            self.calls.append(ticker)
+            return FakeTicker(pd.Series([0.5], index=pd.to_datetime(["2024-01-15"])))
+
+    app.clear_dividend_history_cache()
+    yf_module = FakeYF()
+    provider = app.YFinanceDividendProvider(yf_module)
+
+    provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+    app._clear_data_caches()
+    provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+
+    assert yf_module.calls == ["AAA", "AAA"]
+
+
 def test_unrealized_adjusted_display_step_matches_previous_pipeline_behavior(monkeypatch):
     df_opts = pd.DataFrame(
         [

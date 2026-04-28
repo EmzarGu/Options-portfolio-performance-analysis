@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 
 DIVIDEND_COLUMNS = ["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]
+DIVIDEND_HISTORY_CACHE: Dict[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]], pd.Series] = {}
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class DividendProvider:
 class YFinanceDividendProvider(DividendProvider):
     def __init__(self, yf_module):
         self.yf_module = yf_module
-        self._cache: Dict[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]], pd.Series] = {}
+        self._cache = DIVIDEND_HISTORY_CACHE
 
     def get_dividend_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
         ticker_key = str(ticker).upper().strip()
@@ -52,6 +53,10 @@ class YFinanceDividendProvider(DividendProvider):
                 div_hist = div_hist[div_hist.index < end_ts]
         self._cache[cache_key] = div_hist.copy()
         return div_hist.copy()
+
+
+def clear_dividend_history_cache() -> None:
+    DIVIDEND_HISTORY_CACHE.clear()
 
 
 class PriceHistoryProvider:

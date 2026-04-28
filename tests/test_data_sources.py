@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 
 import pandas as pd
+import pytest
 
 from data_sources import (
     DividendFetchResult,
     YFinanceDividendProvider,
     YFinancePriceHistoryProvider,
+    clear_dividend_history_cache,
     collect_dividend_cashflows,
 )
 
@@ -37,6 +39,13 @@ class FakeYF:
     def Ticker(self, ticker):
         self.calls.append(ticker)
         return FakeTicker(self._mapping[ticker])
+
+
+@pytest.fixture(autouse=True)
+def clear_shared_dividend_cache():
+    clear_dividend_history_cache()
+    yield
+    clear_dividend_history_cache()
 
 
 def _segments_builder(segments):
@@ -157,6 +166,71 @@ def test_yfinance_dividend_provider_caches_repeated_ticker_fetches():
     assert yf_module.calls == ["AAA"]
     assert first.tolist() == [0.5]
     assert second.tolist() == [0.5]
+
+
+def test_yfinance_dividend_provider_cache_persists_across_provider_instances():
+    yf_module = FakeYF(
+        {
+            "AAA": pd.Series([0.5], index=pd.to_datetime(["2024-01-15"]))
+        }
+    )
+
+    first_provider = YFinanceDividendProvider(yf_module)
+    second_provider = YFinanceDividendProvider(yf_module)
+
+    first = first_provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+    second = second_provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+
+    assert yf_module.calls == ["AAA"]
+    assert first.tolist() == [0.5]
+    assert second.tolist() == [0.5]
+
+
+def test_dividend_history_cache_clear_invalidates_reload_cache_bust():
+    yf_module = FakeYF(
+        {
+            "AAA": pd.Series([0.5], index=pd.to_datetime(["2024-01-15"]))
+        }
+    )
+
+    provider = YFinanceDividendProvider(yf_module)
+    provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+    clear_dividend_history_cache()
+    provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+
+    assert yf_module.calls == ["AAA", "AAA"]
+
+
+def test_dividend_cache_preserves_zero_dividend_and_failure_semantics():
+    segments = [
+        FakeHoldSeg("ZERO", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"), 100),
+        FakeHoldSeg("FAIL", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"), 50),
+    ]
+    yf_module = FakeYF(
+        {
+            "ZERO": pd.Series(dtype=float),
+            "FAIL": RuntimeError("temporary fetch failure"),
+        }
+    )
+    provider = YFinanceDividendProvider(yf_module)
+
+    first = collect_dividend_cashflows([], pd.Timestamp("2024-02-01"), _segments_builder(segments), provider)
+
+    assert first.coverage_complete is False
+    assert first.attempted_tickers == ["FAIL", "ZERO"]
+    assert first.failed_tickers == ["FAIL"]
+    assert first.cashflows.empty
+    assert any("FAIL: temporary fetch failure" in err for err in first.errors)
+
+    yf_module._mapping["FAIL"] = pd.Series([0.25], index=pd.to_datetime(["2024-01-15"]))
+    second = collect_dividend_cashflows([], pd.Timestamp("2024-02-01"), _segments_builder(segments), provider)
+
+    assert yf_module.calls == ["ZERO", "FAIL", "FAIL"]
+    assert second.coverage_complete is True
+    assert second.failed_tickers == []
+    assert second.errors == []
+    assert second.cashflows["ticker"].tolist() == ["FAIL"]
+    assert second.cashflows["cash"].tolist() == [12.5]
 
 
 class FakePriceYF:
