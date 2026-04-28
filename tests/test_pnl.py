@@ -1506,7 +1506,17 @@ def test_pipeline_cache_key_excludes_chart_period():
 
     assert key_before_chart_change == key_after_chart_change
     assert chart_period not in key_after_chart_change
-    assert key_after_chart_change == ("2026-04-27", True, ("Options 2024", "Options 2025"), 3)
+    assert key_after_chart_change == ("2026-04-27", ("Options 2024", "Options 2025"), 3)
+
+
+def test_pipeline_cache_key_excludes_unrealized_adjusted_toggle():
+    selected_sheets = ["Options 2024", "Options 2025"]
+
+    key_toggle_off = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), False, selected_sheets, 3)
+    key_toggle_on = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), True, selected_sheets, 3)
+
+    assert key_toggle_off == key_toggle_on
+    assert key_toggle_on == ("2026-04-27", ("Options 2024", "Options 2025"), 3)
 
 
 def test_pipeline_cache_key_changes_when_reload_token_changes():
@@ -1516,9 +1526,97 @@ def test_pipeline_cache_key_changes_when_reload_token_changes():
     refreshed_key = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), False, selected_sheets, 4)
 
     assert first_key != refreshed_key
-    assert first_key[:3] == refreshed_key[:3]
-    assert first_key[3] == 3
-    assert refreshed_key[3] == 4
+    assert first_key[:2] == refreshed_key[:2]
+    assert first_key[2] == 3
+    assert refreshed_key[2] == 4
+
+
+def test_unrealized_adjusted_display_step_matches_previous_pipeline_behavior(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-05-01"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-05-10"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            }
+        ]
+    )
+
+    history = pd.Series(
+        [101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0],
+        index=pd.to_datetime(
+            [
+                "2024-05-10",
+                "2024-05-13",
+                "2024-05-14",
+                "2024-05-15",
+                "2024-05-16",
+                "2024-05-17",
+                "2024-05-20",
+            ]
+        ),
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: (
+            {"AAA": history.copy()},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 110.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "collect_dividend_cashflows",
+        lambda stock_txns, as_of: app.DividendFetchResult(
+            cashflows=pd.DataFrame(columns=["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]),
+            coverage_complete=True,
+            attempted_tickers=["AAA"],
+            failed_tickers=[],
+            errors=[],
+        ),
+    )
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+
+    base_state = app.build_base_pipeline(pd.Timestamp("2024-05-20").date(), ["Options 2024"])
+
+    for include_unrealized in (False, True):
+        previous_state = app._build_pipeline_uncached(
+            pd.Timestamp("2024-05-20").date(),
+            include_unrealized,
+            ["Options 2024"],
+        )
+        split_state = app.apply_unrealized_adjusted_display(base_state, include_unrealized)
+
+        pd.testing.assert_series_equal(
+            split_state.monthly_returns_unrealized_adjusted,
+            previous_state.monthly_returns_unrealized_adjusted,
+        )
+        pd.testing.assert_frame_equal(split_state.yearly, previous_state.yearly)
+        pd.testing.assert_frame_equal(split_state.yearly_with_unreal, previous_state.yearly_with_unreal)
+        assert split_state.grand_total == pytest.approx(previous_state.grand_total)
+        assert split_state.issues == previous_state.issues
 
 
 def test_build_covered_return_series_truncates_at_first_incomplete_month():

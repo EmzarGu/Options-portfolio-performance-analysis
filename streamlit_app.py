@@ -4,7 +4,7 @@ import math
 import os
 import subprocess
 from collections import defaultdict
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -2096,7 +2096,7 @@ def render_issue_status_banner(issues: List[str], price_errors: List[str], price
     st.markdown(f"<div style='font-weight:600; color:{color}; margin: 4px 0;'>{msg}</div>", unsafe_allow_html=True)
 
 
-def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
+def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
     df_opts = load_options(SHEET_ID, selected_sheets)
     sheet_counts = df_opts.groupby("source_sheet").size().rename("rows").reset_index()
     today_norm = pd.Timestamp.today().normalize()
@@ -2361,17 +2361,88 @@ def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_
     )
 
 
+def build_base_pipeline(as_of: date, selected_sheets: List[str], cache_bust: int = 1) -> PipelineState:
+    return _build_pipeline_uncached(as_of, False, selected_sheets, cache_bust=cache_bust)
+
+
+def apply_unrealized_adjusted_display(
+    base_state: PipelineState,
+    include_unrealized_current_year: bool,
+) -> PipelineState:
+    monthly_returns_unrealized_adjusted = build_dashboard_unrealized_adjusted_return_series(
+        base_state.monthly_returns_w_div,
+        base_state.capital_daily,
+        base_state.as_of,
+        include_unrealized_current_year,
+        base_state.total_unreal,
+        base_state.unrealized_blocked,
+    )
+
+    yearly = base_state.yearly.drop(columns=["annualized_return_twr_unrealized_adjusted"], errors="ignore").copy()
+    twr_annualized_unrealized_adjusted = (
+        twr_annualized_by_year(monthly_returns_unrealized_adjusted.dropna())
+        if hasattr(monthly_returns_unrealized_adjusted.index, "year")
+        else pd.Series(dtype=float)
+    )
+    if not base_state.unrealized_blocked and not twr_annualized_unrealized_adjusted.empty:
+        yearly["annualized_return_twr_unrealized_adjusted"] = yearly["year"].map(twr_annualized_unrealized_adjusted)
+    elif include_unrealized_current_year:
+        yearly["annualized_return_twr_unrealized_adjusted"] = np.nan
+
+    adjusted_col = "annualized_return_twr_unrealized_adjusted"
+    active_col = "annualized_return_twr_active"
+    if adjusted_col in yearly.columns and active_col in yearly.columns:
+        cols = [c for c in yearly.columns if c != adjusted_col]
+        cols.insert(cols.index(active_col), adjusted_col)
+        yearly = yearly[cols]
+
+    if base_state.capital_history_incomplete and not yearly.empty:
+        affected_years = set(base_state.capital_history_affected_years)
+        affected_year_mask = yearly["year"].isin(affected_years)
+        for col in (
+            "roac_year",
+            "ropc_year",
+            "ann_roac",
+            "ann_ropc",
+            "annualized_return_twr",
+            "annualized_return_twr_active",
+            "annualized_return_twr_unrealized_adjusted",
+        ):
+            if col not in yearly.columns:
+                yearly[col] = np.nan
+            yearly.loc[affected_year_mask, col] = np.nan
+
+    yearly_with_unreal = build_yearly_with_dashboard_unrealized(
+        yearly,
+        include_unrealized_current_year,
+        base_state.total_unreal,
+        base_state.as_of,
+        base_state.unrealized_blocked,
+    )
+
+    return replace(
+        base_state,
+        monthly_returns_unrealized_adjusted=monthly_returns_unrealized_adjusted,
+        yearly=yearly,
+        yearly_with_unreal=yearly_with_unreal,
+    )
+
+
+def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
+    base_state = build_base_pipeline(as_of, selected_sheets, cache_bust=cache_bust)
+    return apply_unrealized_adjusted_display(base_state, include_unrealized_current_year)
+
+
 def build_pipeline_cache_key(
     as_of: date,
     include_unrealized_current_year: bool,
     selected_sheets: List[str],
     reload_token: int,
-) -> Tuple[str, bool, Tuple[str, ...], int]:
+) -> Tuple[str, Tuple[str, ...], int]:
     as_of_key = pd.to_datetime(as_of).date().isoformat()
     selected_sheets_key = tuple(str(sheet) for sheet in (selected_sheets or []))
     return (
         as_of_key,
-        bool(include_unrealized_current_year),
         selected_sheets_key,
         int(reload_token or 0),
     )
@@ -2380,13 +2451,11 @@ def build_pipeline_cache_key(
 @st.cache_data(show_spinner="Building portfolio pipeline...")
 def get_cached_pipeline(
     as_of_key: str,
-    include_unrealized_current_year: bool,
     selected_sheets_key: Tuple[str, ...],
     reload_token: int,
 ) -> PipelineState:
-    return build_pipeline(
+    return build_base_pipeline(
         date.fromisoformat(as_of_key),
-        include_unrealized_current_year,
         list(selected_sheets_key),
         cache_bust=reload_token,
     )
@@ -3149,7 +3218,8 @@ def main():
     reload_token = _get_pipeline_reload_token()
     pipeline_cache_key = build_pipeline_cache_key(as_of_input, include_unrealized, selected_sheets, reload_token)
     try:
-        state = get_cached_pipeline(*pipeline_cache_key)
+        base_state = get_cached_pipeline(*pipeline_cache_key)
+        state = apply_unrealized_adjusted_display(base_state, include_unrealized)
     except Exception as e:
         st.error(
             "Could not load data. If the sheet is private, set `GOOGLE_SERVICE_ACCOUNT_JSON` (or `LOCAL_SECRETS_PATH`); "
