@@ -65,6 +65,9 @@ CONTRACT_MULTIPLIER = 100
 PREFS_PATH = Path(".streamlit_user_prefs.json")
 PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
 PIPELINE_RELOAD_TOKEN_KEY = "pipeline_reload_token"
+PRICE_REFRESH_TOKEN_KEY = "price_refresh_token"
+PRICE_IMPLICIT_REFRESH_TOKEN_KEY = "price_implicit_refresh_token"
+PRICE_REFRESH_SIGNATURE_KEY = "price_refresh_signature"
 UNREALIZED_ADJUSTED_TOGGLE_LABEL = "Add heuristic unrealized to current-year totals and TWR"
 UNREALIZED_ADJUSTED_EXPLANATION = (
     "Uses the current unrealized snapshot to adjust current-year totals and TWR. "
@@ -447,6 +450,10 @@ def _clear_data_caches() -> None:
         get_cached_pipeline.clear()
     except NameError:
         pass
+    try:
+        get_cached_current_prices.clear()
+    except NameError:
+        pass
 
 
 # ------------------------------------------------------------
@@ -572,7 +579,8 @@ class PipelineState:
     price_errors: List[str]
     unrealized_blocked: bool
     missing_required_price_tickers: List[str]
-    price_summary: Dict[str, int]
+    price_summary: Dict[str, Any]
+    price_updated_at: Optional[str]
     historical_price_summary: Dict[str, int]
     historical_price_errors: List[str]
     dividend_coverage_complete: bool
@@ -2163,40 +2171,27 @@ def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool,
 
     open_options_df = build_open_options_frame(open_option_lots)
 
-    tickers_to_price = sorted({lot.ticker for lot in ending_inventory}.union({lot.ticker for lot in open_option_lots}))
-    live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(tickers_to_price)
-    price_errors.extend(stock_price_errors)
-    price_summary = {
-        "stocks_requested": stock_summary.get("requested", 0),
-        "stocks_fetched": stock_summary.get("fetched", 0),
-    }
-
-    unrealized_snapshot = build_dashboard_unrealized_snapshot(open_option_lots, ending_inventory, live_prices)
-    inv_df = unrealized_snapshot["inv_df"]
-    per_ticker_unreal = unrealized_snapshot["per_ticker_unreal"]
-    total_unreal = unrealized_snapshot["total_unreal"]
-    stock_unreal = unrealized_snapshot["stock_unreal"]
-    option_unreal = unrealized_snapshot["option_unreal"]
-    missing_required_price_tickers = unrealized_snapshot["missing_required_price_tickers"]
+    live_prices: Dict[str, float] = {}
+    price_summary = {"stocks_requested": 0, "stocks_fetched": 0}
+    inv_df = pd.DataFrame()
+    per_ticker_unreal = pd.Series(dtype=float)
+    total_unreal = 0.0
+    stock_unreal = 0.0
+    option_unreal = 0.0
+    missing_required_price_tickers: List[str] = []
+    unrealized_blocked = False
     monthly_returns_unrealized_adjusted = build_dashboard_unrealized_adjusted_return_series(
         monthly_returns,
         capital_daily,
         as_of_ts,
         include_unrealized_current_year,
         total_unreal,
-        unrealized_snapshot["unrealized_blocked"],
+        unrealized_blocked,
     )
 
     coverage_gaps = []
-    if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
-        coverage_gaps.append(f"Stocks priced: {price_summary['stocks_fetched']}/{price_summary['stocks_requested']}")
     if coverage_gaps:
         issues.append("Price coverage incomplete: " + "; ".join(coverage_gaps))
-    if missing_required_price_tickers:
-        issues.append(
-            "Current unrealized snapshot incomplete: missing required prices for "
-            + ", ".join(missing_required_price_tickers)
-        )
     if historical_price_errors:
         issues.extend([f"Historical price error: {e}" for e in historical_price_errors])
     if capital_history_state["capital_history_incomplete"]:
@@ -2232,7 +2227,7 @@ def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool,
         if hasattr(monthly_returns_unrealized_adjusted.index, "year")
         else pd.Series(dtype=float)
     )
-    if not unrealized_snapshot["unrealized_blocked"] and not twr_annualized_unrealized_adjusted.empty:
+    if not unrealized_blocked and not twr_annualized_unrealized_adjusted.empty:
         yearly = yearly.merge(
             twr_annualized_unrealized_adjusted.rename("annualized_return_twr_unrealized_adjusted"),
             left_on="year",
@@ -2265,7 +2260,7 @@ def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool,
         include_unrealized_current_year,
         total_unreal,
         as_of_ts,
-        unrealized_snapshot["unrealized_blocked"],
+        unrealized_blocked,
     )
 
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
@@ -2332,9 +2327,10 @@ def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool,
         as_of=as_of_ts,
         issues=issues,
         price_errors=price_errors,
-        unrealized_blocked=unrealized_snapshot["unrealized_blocked"],
+        unrealized_blocked=unrealized_blocked,
         missing_required_price_tickers=missing_required_price_tickers,
         price_summary=price_summary,
+        price_updated_at=None,
         historical_price_summary=historical_price_summary,
         historical_price_errors=historical_price_errors,
         dividend_coverage_complete=dividend_coverage_complete,
@@ -2430,9 +2426,16 @@ def apply_unrealized_adjusted_display(
     )
 
 
-def build_pipeline(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
+def build_pipeline(
+    as_of: date,
+    include_unrealized_current_year: bool,
+    selected_sheets: List[str],
+    cache_bust: int = 1,
+    price_refresh_token=0,
+):
     base_state = build_base_pipeline(as_of, selected_sheets, cache_bust=cache_bust)
-    return apply_unrealized_adjusted_display(base_state, include_unrealized_current_year)
+    priced_state = apply_live_price_overlay(base_state, price_refresh_token)
+    return apply_unrealized_adjusted_display(priced_state, include_unrealized_current_year)
 
 
 def build_pipeline_cache_key(
@@ -2463,6 +2466,96 @@ def get_cached_pipeline(
     )
 
 
+def _open_option_lots_for_state(state: PipelineState) -> List[OptionLot]:
+    return [lot for lot in state.lots if lot.close_date is None]
+
+
+def _current_price_tickers_for_state(state: PipelineState) -> Tuple[str, ...]:
+    open_option_lots = _open_option_lots_for_state(state)
+    tickers = {lot.ticker for lot in state.ending_inventory}
+    tickers.update(lot.ticker for lot in open_option_lots)
+    return tuple(sorted(tickers))
+
+
+@st.cache_data(show_spinner=False)
+def get_cached_current_prices(
+    tickers_key: Tuple[str, ...],
+    price_refresh_token,
+) -> Tuple[Dict[str, float], List[str], Dict[str, int], str]:
+    live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(list(tickers_key))
+    price_updated_at = datetime.now().strftime("%H:%M:%S")
+    return live_prices, stock_price_errors, stock_summary, price_updated_at
+
+
+def _issues_without_current_price_messages(issues: List[str]) -> List[str]:
+    current_price_prefixes = (
+        "Price coverage incomplete:",
+        "Current unrealized snapshot incomplete:",
+        "Price error:",
+    )
+    return [issue for issue in issues if not str(issue).startswith(current_price_prefixes)]
+
+
+def apply_live_price_overlay(base_state: PipelineState, price_refresh_token=0) -> PipelineState:
+    tickers_key = _current_price_tickers_for_state(base_state)
+    live_prices, stock_price_errors, stock_summary, price_updated_at = get_cached_current_prices(
+        tickers_key,
+        price_refresh_token,
+    )
+    price_errors = list(stock_price_errors)
+    price_summary = {
+        "stocks_requested": stock_summary.get("requested", 0),
+        "stocks_fetched": stock_summary.get("fetched", 0),
+    }
+
+    open_option_lots = _open_option_lots_for_state(base_state)
+    unrealized_snapshot = build_dashboard_unrealized_snapshot(
+        open_option_lots,
+        base_state.ending_inventory,
+        live_prices,
+    )
+    inv_df = unrealized_snapshot["inv_df"]
+    per_ticker_unreal = unrealized_snapshot["per_ticker_unreal"]
+    total_unreal = unrealized_snapshot["total_unreal"]
+    stock_unreal = unrealized_snapshot["stock_unreal"]
+    option_unreal = unrealized_snapshot["option_unreal"]
+    missing_required_price_tickers = unrealized_snapshot["missing_required_price_tickers"]
+    per_ticker_totals = build_per_ticker_totals(base_state.per_ticker, per_ticker_unreal)
+    grand_total = base_state.cumulative_realized + total_unreal
+
+    issues = _issues_without_current_price_messages(base_state.issues)
+    if price_summary["stocks_fetched"] < price_summary["stocks_requested"]:
+        issues.append(
+            f"Price coverage incomplete: Stocks priced: {price_summary['stocks_fetched']}/{price_summary['stocks_requested']}"
+        )
+    if missing_required_price_tickers:
+        issues.append(
+            "Current unrealized snapshot incomplete: missing required prices for "
+            + ", ".join(missing_required_price_tickers)
+        )
+    if price_errors:
+        issues.extend([f"Price error: {e}" for e in price_errors])
+
+    return replace(
+        base_state,
+        live_prices=live_prices,
+        inv_df=inv_df,
+        total_unreal=total_unreal,
+        option_unreal=option_unreal,
+        stock_unreal=stock_unreal,
+        advanced_unreal=per_ticker_unreal,
+        issues=issues,
+        price_errors=price_errors,
+        unrealized_blocked=unrealized_snapshot["unrealized_blocked"],
+        missing_required_price_tickers=missing_required_price_tickers,
+        price_summary=price_summary,
+        price_updated_at=price_updated_at,
+        stock_prices=live_prices,
+        per_ticker_totals=per_ticker_totals,
+        grand_total=grand_total,
+    )
+
+
 def _get_pipeline_reload_token() -> int:
     return int(st.session_state.get(PIPELINE_RELOAD_TOKEN_KEY, 0) or 0)
 
@@ -2471,6 +2564,62 @@ def _increment_pipeline_reload_token() -> int:
     token = _get_pipeline_reload_token() + 1
     st.session_state[PIPELINE_RELOAD_TOKEN_KEY] = token
     return token
+
+
+def _get_explicit_price_refresh_token() -> int:
+    return int(st.session_state.get(PRICE_REFRESH_TOKEN_KEY, 0) or 0)
+
+
+def _increment_price_refresh_token() -> int:
+    token = _get_explicit_price_refresh_token() + 1
+    st.session_state[PRICE_REFRESH_TOKEN_KEY] = token
+    return token
+
+
+def _price_refresh_signature(
+    as_of: date,
+    include_unrealized_current_year: bool,
+    selected_sheets: List[str],
+) -> str:
+    chart_range = st.session_state.get("chart_range")
+    return json.dumps(
+        {
+            "as_of": pd.to_datetime(as_of).date().isoformat(),
+            "include_unrealized": bool(include_unrealized_current_year),
+            "selected_sheets": [str(sheet) for sheet in (selected_sheets or [])],
+            "chart_range": chart_range,
+        },
+        sort_keys=True,
+    )
+
+
+def _get_price_refresh_cache_token(
+    as_of: date,
+    include_unrealized_current_year: bool,
+    selected_sheets: List[str],
+) -> str:
+    signature = _price_refresh_signature(as_of, include_unrealized_current_year, selected_sheets)
+    previous_signature = st.session_state.get(PRICE_REFRESH_SIGNATURE_KEY)
+    implicit_token = int(st.session_state.get(PRICE_IMPLICIT_REFRESH_TOKEN_KEY, 0) or 0)
+    if previous_signature is not None and previous_signature == signature:
+        implicit_token += 1
+        st.session_state[PRICE_IMPLICIT_REFRESH_TOKEN_KEY] = implicit_token
+    st.session_state[PRICE_REFRESH_SIGNATURE_KEY] = signature
+    return f"{_get_explicit_price_refresh_token()}:{implicit_token}"
+
+
+def _format_price_status(state: PipelineState) -> str:
+    summary = state.price_summary or {}
+    requested = int(summary.get("stocks_requested", 0) or 0)
+    fetched = int(summary.get("stocks_fetched", 0) or 0)
+    updated_at = state.price_updated_at or "n/a"
+    return f"Prices updated: {updated_at} · {fetched}/{requested} tickers priced"
+
+
+def _render_price_refresh_button(key: str) -> None:
+    if st.button("Refresh prices", key=key):
+        _increment_price_refresh_token()
+        _rerun_app()
 
 
 def _render_config_tab(available_sheets: List[str], default_sheets: List[str]) -> None:
@@ -2515,6 +2664,11 @@ def _render_snapshot(
 ) -> None:
     with col_main:
         st.markdown("#### Portfolio Snapshot")
+        price_col, price_status_col = st.columns([1, 4])
+        with price_col:
+            _render_price_refresh_button("refresh_prices_snapshot")
+        with price_status_col:
+            st.caption(_format_price_status(state))
         mc1, mc2, mc3, mc4 = st.columns(4)
         with mc1:
             total_pnl_value = "n/a" if include_unrealized and unrealized_blocked else f"${ytd_total:,.0f}"
@@ -2950,7 +3104,28 @@ def _highlight_short_option_price(row: pd.Series):
     return styles
 
 
+def build_open_options_positions_frame(open_options: pd.DataFrame, stock_prices: Dict[str, float]) -> pd.DataFrame:
+    if open_options.empty:
+        return open_options.copy()
+    oo = open_options.copy()
+    oo["current_price"] = oo["ticker"].map(stock_prices or {})
+    strike_num = pd.to_numeric(oo["strike"], errors="coerce")
+    current_num = pd.to_numeric(oo["current_price"], errors="coerce")
+    valid_moneyness = strike_num.notna() & current_num.notna() & (strike_num != 0)
+    oo["moneyness_pct"] = np.nan
+    put_mask = (oo["type"] == "Put") & valid_moneyness
+    call_mask = (oo["type"] == "Call") & valid_moneyness
+    oo.loc[put_mask, "moneyness_pct"] = (strike_num[put_mask] - current_num[put_mask]) / strike_num[put_mask]
+    oo.loc[call_mask, "moneyness_pct"] = (current_num[call_mask] - strike_num[call_mask]) / strike_num[call_mask]
+    return oo
+
+
 def _render_positions_tab(state: PipelineState) -> None:
+    col_refresh, col_status = st.columns([1, 4])
+    with col_refresh:
+        _render_price_refresh_button("refresh_prices_positions")
+    with col_status:
+        st.caption(_format_price_status(state))
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("##### Assigned holdings (inventory)")
@@ -2986,17 +3161,7 @@ def _render_positions_tab(state: PipelineState) -> None:
         if state["open_options"].empty:
             st.info("No open short options.")
         else:
-            oo = state["open_options"].copy()
-            stock_prices = state.get("stock_prices") or {}
-            oo["current_price"] = oo["ticker"].map(stock_prices)
-            strike_num = pd.to_numeric(oo["strike"], errors="coerce")
-            current_num = pd.to_numeric(oo["current_price"], errors="coerce")
-            valid_moneyness = strike_num.notna() & current_num.notna() & (strike_num != 0)
-            oo["moneyness_pct"] = np.nan
-            put_mask = (oo["type"] == "Put") & valid_moneyness
-            call_mask = (oo["type"] == "Call") & valid_moneyness
-            oo.loc[put_mask, "moneyness_pct"] = (strike_num[put_mask] - current_num[put_mask]) / strike_num[put_mask]
-            oo.loc[call_mask, "moneyness_pct"] = (current_num[call_mask] - strike_num[call_mask]) / strike_num[call_mask]
+            oo = build_open_options_positions_frame(state["open_options"], state.get("stock_prices") or {})
             oo = oo[["ticker", "type", "strike", "current_price", "moneyness_pct", "qty", "expiration", "trans_date", "open_price"]].copy()
             for dcol in ["expiration", "trans_date"]:
                 if dcol in oo.columns:
@@ -3219,9 +3384,11 @@ def main():
 
     reload_token = _get_pipeline_reload_token()
     pipeline_cache_key = build_pipeline_cache_key(as_of_input, include_unrealized, selected_sheets, reload_token)
+    price_refresh_token = _get_price_refresh_cache_token(as_of_input, include_unrealized, selected_sheets)
     try:
         base_state = get_cached_pipeline(*pipeline_cache_key)
-        state = apply_unrealized_adjusted_display(base_state, include_unrealized)
+        priced_state = apply_live_price_overlay(base_state, price_refresh_token)
+        state = apply_unrealized_adjusted_display(priced_state, include_unrealized)
     except Exception as e:
         st.error(
             "Could not load data. If the sheet is private, set `GOOGLE_SERVICE_ACCOUNT_JSON` (or `LOCAL_SECRETS_PATH`); "

@@ -1452,6 +1452,7 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
         "unrealized_blocked",
         "missing_required_price_tickers",
         "price_summary",
+        "price_updated_at",
         "historical_price_summary",
         "historical_price_errors",
         "dividend_coverage_complete",
@@ -1531,6 +1532,187 @@ def test_pipeline_cache_key_changes_when_reload_token_changes():
     assert refreshed_key[2] == 4
 
 
+def test_pipeline_cache_key_excludes_price_refresh_token():
+    selected_sheets = ["Options 2024", "Options 2025"]
+
+    key_before_price_refresh = app.build_pipeline_cache_key(
+        pd.Timestamp("2026-04-27").date(),
+        False,
+        selected_sheets,
+        3,
+    )
+    price_refresh_token = "7:12"
+    key_after_price_refresh = app.build_pipeline_cache_key(
+        pd.Timestamp("2026-04-27").date(),
+        False,
+        selected_sheets,
+        3,
+    )
+
+    assert key_before_price_refresh == key_after_price_refresh
+    assert price_refresh_token not in key_after_price_refresh
+
+
+def _make_live_overlay_base_state() -> PipelineState:
+    open_put = OptionLot(
+        ticker="AAA",
+        otype="Put",
+        strike=100.0,
+        qty=1,
+        open_date=pd.Timestamp("2026-04-01"),
+        expiration=pd.Timestamp("2026-05-17"),
+        open_price=2.0,
+        comment="",
+        assigned=False,
+    )
+    monthly_cycles = pd.DataFrame(
+        {"total_realized_pnl": [150.0], "roac": [0.03]},
+        index=pd.to_datetime(["2026-04-30"]),
+    )
+    yearly = pd.DataFrame({"year": [2026], "total_realized_pnl": [150.0], "annualized_return_twr": [0.12]})
+    benchmark_metrics = pd.DataFrame({"Series": ["My Strategy"], "CAGR": [0.12]})
+    return PipelineState(
+        df_opts=pd.DataFrame(),
+        lots=[open_put],
+        stock_txns=[],
+        realized_sales=[],
+        ending_inventory=[OpenLot("AAA", pd.Timestamp("2026-04-01"), 100, 100.0)],
+        capital_daily=pd.DataFrame({"total": [10000.0]}, index=pd.to_datetime(["2026-04-29"])),
+        monthly_cycles=monthly_cycles,
+        monthly_returns_w_div=pd.Series([0.03], index=pd.to_datetime(["2026-04-30"])),
+        monthly_returns_covered=pd.Series([0.03], index=pd.to_datetime(["2026-04-30"])),
+        monthly_returns_unrealized_adjusted=pd.Series([0.03], index=pd.to_datetime(["2026-04-30"])),
+        monthly_returns_active=pd.Series([0.03], index=pd.to_datetime(["2026-04-30"])),
+        open_options=build_open_options_frame([open_put]),
+        live_prices={"AAA": 50.0},
+        inv_df=pd.DataFrame(
+            [
+                {
+                    "ticker": "AAA",
+                    "buy_date": pd.Timestamp("2026-04-01"),
+                    "shares": 100,
+                    "cost_per_share": 100.0,
+                    "current_price": 50.0,
+                    "covered_shares": 0,
+                    "covered_strike": None,
+                    "unrealized_pnl": -5000.0,
+                    "source": "stock_lot",
+                }
+            ]
+        ),
+        total_unreal=-5000.0,
+        option_unreal=0.0,
+        stock_unreal=-5000.0,
+        advanced_unreal=pd.Series({"AAA": -5000.0}),
+        yearly=yearly.copy(),
+        yearly_with_unreal=yearly.copy(),
+        per_ticker=pd.DataFrame(
+            [
+                {
+                    "year": 2026,
+                    "ticker": "AAA",
+                    "options_pnl": 150.0,
+                    "stock_realized_pnl": 0.0,
+                    "combined_realized": 150.0,
+                }
+            ]
+        ),
+        div_df=pd.DataFrame(),
+        as_of=pd.Timestamp("2026-04-29"),
+        issues=["Historical capital price coverage incomplete: old issue"],
+        price_errors=["stale price error"],
+        unrealized_blocked=True,
+        missing_required_price_tickers=["AAA"],
+        price_summary={"stocks_requested": 1, "stocks_fetched": 0},
+        price_updated_at="09:00:00",
+        historical_price_summary={"requested": 0, "fetched": 0},
+        historical_price_errors=[],
+        dividend_coverage_complete=True,
+        dividend_attempted_tickers=[],
+        dividend_failed_tickers=[],
+        dividend_affected_tickers=[],
+        dividend_errors=[],
+        dividend_summary={"attempted": 0, "failed": 0},
+        stock_prices={"AAA": 50.0},
+        benchmark_metrics=benchmark_metrics,
+        aligned_bench_returns={"Cboe BXM": pd.Series([0.01], index=pd.to_datetime(["2026-04-30"]))},
+        per_ticker_totals=pd.DataFrame(),
+        grand_total=-4850.0,
+        cumulative_realized=150.0,
+        realized_option_events=[],
+        chain_outcomes=[],
+        sheet_counts=pd.DataFrame({"source_sheet": ["Options 2026"], "rows": [1]}),
+        capital_history_incomplete=False,
+        capital_history_coverage_issues=[],
+        capital_history_affected_months=[],
+        capital_history_affected_years=[],
+        capital_history_affected_tickers=[],
+        first_incomplete_return_month=None,
+        last_complete_return_month=None,
+        return_series_truncated=False,
+    )
+
+
+def test_price_refresh_token_updates_current_price_overlay(monkeypatch):
+    app.get_cached_current_prices.clear()
+    calls = []
+
+    def fake_fetch(tickers):
+        calls.append(tuple(tickers))
+        price = 90.0 if len(calls) == 1 else 80.0
+        return {"AAA": price}, [], {"requested": len(tickers), "fetched": len(tickers)}
+
+    monkeypatch.setattr(app, "fetch_current_prices_yf", fake_fetch)
+    base_state = _make_live_overlay_base_state()
+
+    first = app.apply_live_price_overlay(base_state, price_refresh_token="0:0")
+    cached = app.apply_live_price_overlay(base_state, price_refresh_token="0:0")
+    refreshed = app.apply_live_price_overlay(base_state, price_refresh_token="1:0")
+
+    assert calls == [("AAA",), ("AAA",)]
+    assert first.stock_prices["AAA"] == pytest.approx(90.0)
+    assert cached.stock_prices["AAA"] == pytest.approx(90.0)
+    assert refreshed.stock_prices["AAA"] == pytest.approx(80.0)
+    assert refreshed.total_unreal != pytest.approx(first.total_unreal)
+
+
+def test_live_price_overlay_preserves_accounting_and_benchmark_outputs(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token="overlay-regression")
+
+    pd.testing.assert_frame_equal(priced_state.monthly_cycles, base_state.monthly_cycles)
+    pd.testing.assert_frame_equal(priced_state.yearly, base_state.yearly)
+    pd.testing.assert_frame_equal(priced_state.yearly_with_unreal, base_state.yearly_with_unreal)
+    pd.testing.assert_frame_equal(priced_state.benchmark_metrics, base_state.benchmark_metrics)
+    assert priced_state.realized_option_events == base_state.realized_option_events
+    assert priced_state.stock_txns == base_state.stock_txns
+
+
+def test_positions_tab_data_uses_overlay_prices_not_stale_base_prices(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token="positions-overlay")
+    open_options = app.build_open_options_positions_frame(priced_state.open_options, priced_state.stock_prices)
+
+    assert priced_state.stock_prices["AAA"] == pytest.approx(120.0)
+    assert priced_state.inv_df.loc[priced_state.inv_df["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(120.0)
+    assert open_options.loc[open_options["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(120.0)
+    assert open_options.loc[open_options["ticker"] == "AAA", "moneyness_pct"].iloc[0] == pytest.approx(-0.20)
+
+
 def test_refresh_data_caches_clears_persistent_dividend_history_cache():
     class FakeTicker:
         def __init__(self, dividends):
@@ -1557,6 +1739,27 @@ def test_refresh_data_caches_clears_persistent_dividend_history_cache():
     provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
 
     assert yf_module.calls == ["AAA", "AAA"]
+
+
+def test_refresh_data_caches_clears_current_price_cache(monkeypatch):
+    app.get_cached_current_prices.clear()
+    calls = []
+
+    def fake_fetch(tickers):
+        calls.append(tuple(tickers))
+        return {"AAA": float(len(calls))}, [], {"requested": len(tickers), "fetched": len(tickers)}
+
+    monkeypatch.setattr(app, "fetch_current_prices_yf", fake_fetch)
+
+    first_prices, _, _, _ = app.get_cached_current_prices(("AAA",), "same-token")
+    cached_prices, _, _, _ = app.get_cached_current_prices(("AAA",), "same-token")
+    app._clear_data_caches()
+    refreshed_prices, _, _, _ = app.get_cached_current_prices(("AAA",), "same-token")
+
+    assert first_prices["AAA"] == pytest.approx(1.0)
+    assert cached_prices["AAA"] == pytest.approx(1.0)
+    assert refreshed_prices["AAA"] == pytest.approx(2.0)
+    assert calls == [("AAA",), ("AAA",)]
 
 
 def test_unrealized_adjusted_display_step_matches_previous_pipeline_behavior(monkeypatch):
