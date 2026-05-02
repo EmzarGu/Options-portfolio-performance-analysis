@@ -1665,15 +1665,71 @@ def test_price_refresh_token_updates_current_price_overlay(monkeypatch):
     monkeypatch.setattr(app, "fetch_current_prices_yf", fake_fetch)
     base_state = _make_live_overlay_base_state()
 
-    first = app.apply_live_price_overlay(base_state, price_refresh_token="0:0")
-    cached = app.apply_live_price_overlay(base_state, price_refresh_token="0:0")
-    refreshed = app.apply_live_price_overlay(base_state, price_refresh_token="1:0")
+    first = app.apply_live_price_overlay(base_state, price_refresh_token=("session-a", 0))
+    cached = app.apply_live_price_overlay(base_state, price_refresh_token=("session-a", 0))
+    refreshed = app.apply_live_price_overlay(base_state, price_refresh_token=("session-a", 1))
 
     assert calls == [("AAA",), ("AAA",)]
     assert first.stock_prices["AAA"] == pytest.approx(90.0)
     assert cached.stock_prices["AAA"] == pytest.approx(90.0)
     assert refreshed.stock_prices["AAA"] == pytest.approx(80.0)
     assert refreshed.total_unreal != pytest.approx(first.total_unreal)
+
+
+def test_fresh_price_sessions_do_not_reuse_current_price_cache(monkeypatch):
+    app.get_cached_current_prices.clear()
+    calls = []
+
+    def fake_fetch(tickers):
+        calls.append(tuple(tickers))
+        return {"AAA": float(len(calls))}, [], {"requested": len(tickers), "fetched": len(tickers)}
+
+    monkeypatch.setattr(app, "fetch_current_prices_yf", fake_fetch)
+
+    first_prices, _, _, _ = app.get_cached_current_prices("session-a", ("AAA",), 0)
+    second_prices, _, _, _ = app.get_cached_current_prices("session-b", ("AAA",), 0)
+
+    assert first_prices["AAA"] == pytest.approx(1.0)
+    assert second_prices["AAA"] == pytest.approx(2.0)
+    assert calls == [("AAA",), ("AAA",)]
+
+
+def test_normal_reruns_keep_same_current_price_snapshot(monkeypatch):
+    class FakeSessionState(dict):
+        pass
+
+    fake_st = type("FakeSt", (), {"session_state": FakeSessionState()})()
+    monkeypatch.setattr(app, "st", fake_st)
+
+    args = (pd.Timestamp("2026-04-27").date(), False, ["Options 2024", "Options 2025"])
+    first_token = app._get_price_refresh_cache_token(*args)
+    second_token = app._get_price_refresh_cache_token(*args)
+    fake_st.session_state["chart_range"] = "1Y"
+    chart_rerun_token = app._get_price_refresh_cache_token(*args)
+
+    assert first_token == second_token == chart_rerun_token
+    assert fake_st.session_state.get(app.PRICE_REFRESH_TOKEN_KEY, 0) == 0
+
+
+def test_refresh_buttons_share_explicit_current_price_refresh_counter(monkeypatch):
+    class FakeSessionState(dict):
+        pass
+
+    class FakeSt:
+        session_state = FakeSessionState()
+
+        @staticmethod
+        def button(label, key):
+            return key in {"refresh_prices_snapshot", "refresh_prices_positions"}
+
+    monkeypatch.setattr(app, "st", FakeSt)
+    monkeypatch.setattr(app, "_rerun_app", lambda: None)
+
+    app._render_price_refresh_button("refresh_prices_snapshot")
+    assert FakeSt.session_state[app.PRICE_REFRESH_TOKEN_KEY] == 1
+
+    app._render_price_refresh_button("refresh_prices_positions")
+    assert FakeSt.session_state[app.PRICE_REFRESH_TOKEN_KEY] == 2
 
 
 def test_live_price_overlay_preserves_accounting_and_benchmark_outputs(monkeypatch):
@@ -1711,6 +1767,24 @@ def test_positions_tab_data_uses_overlay_prices_not_stale_base_prices(monkeypatc
     assert priced_state.inv_df.loc[priced_state.inv_df["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(120.0)
     assert open_options.loc[open_options["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(120.0)
     assert open_options.loc[open_options["ticker"] == "AAA", "moneyness_pct"].iloc[0] == pytest.approx(-0.20)
+
+
+def test_snapshot_and_positions_share_same_current_price_snapshot(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 125.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token=("session-a", 0))
+    open_options = app.build_open_options_positions_frame(priced_state.open_options, priced_state.stock_prices)
+
+    assert priced_state.live_prices is priced_state.stock_prices
+    assert priced_state.stock_prices["AAA"] == pytest.approx(125.0)
+    assert priced_state.inv_df.loc[priced_state.inv_df["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(125.0)
+    assert open_options.loc[open_options["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(125.0)
 
 
 def test_refresh_data_caches_clears_persistent_dividend_history_cache():
@@ -1751,15 +1825,40 @@ def test_refresh_data_caches_clears_current_price_cache(monkeypatch):
 
     monkeypatch.setattr(app, "fetch_current_prices_yf", fake_fetch)
 
-    first_prices, _, _, _ = app.get_cached_current_prices(("AAA",), "same-token")
-    cached_prices, _, _, _ = app.get_cached_current_prices(("AAA",), "same-token")
+    first_prices, _, _, _ = app.get_cached_current_prices("session-a", ("AAA",), 0)
+    cached_prices, _, _, _ = app.get_cached_current_prices("session-a", ("AAA",), 0)
     app._clear_data_caches()
-    refreshed_prices, _, _, _ = app.get_cached_current_prices(("AAA",), "same-token")
+    refreshed_prices, _, _, _ = app.get_cached_current_prices("session-a", ("AAA",), 0)
 
     assert first_prices["AAA"] == pytest.approx(1.0)
     assert cached_prices["AAA"] == pytest.approx(1.0)
     assert refreshed_prices["AAA"] == pytest.approx(2.0)
     assert calls == [("AAA",), ("AAA",)]
+
+
+def test_price_refresh_counter_does_not_change_pipeline_cache_key(monkeypatch):
+    class FakeSessionState(dict):
+        pass
+
+    fake_st = type("FakeSt", (), {"session_state": FakeSessionState()})()
+    monkeypatch.setattr(app, "st", fake_st)
+    selected_sheets = ["Options 2024", "Options 2025"]
+
+    before_key = app.build_pipeline_cache_key(
+        pd.Timestamp("2026-04-27").date(),
+        False,
+        selected_sheets,
+        app._get_pipeline_reload_token(),
+    )
+    app._increment_price_refresh_token()
+    after_key = app.build_pipeline_cache_key(
+        pd.Timestamp("2026-04-27").date(),
+        False,
+        selected_sheets,
+        app._get_pipeline_reload_token(),
+    )
+
+    assert before_key == after_key
 
 
 def test_unrealized_adjusted_display_step_matches_previous_pipeline_behavior(monkeypatch):

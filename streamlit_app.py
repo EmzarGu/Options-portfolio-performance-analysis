@@ -3,6 +3,7 @@ import json
 import math
 import os
 import subprocess
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, fields, replace
 from datetime import date, datetime, timezone
@@ -65,9 +66,8 @@ CONTRACT_MULTIPLIER = 100
 PREFS_PATH = Path(".streamlit_user_prefs.json")
 PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
 PIPELINE_RELOAD_TOKEN_KEY = "pipeline_reload_token"
+PRICE_SESSION_ID_KEY = "price_session_id"
 PRICE_REFRESH_TOKEN_KEY = "price_refresh_token"
-PRICE_IMPLICIT_REFRESH_TOKEN_KEY = "price_implicit_refresh_token"
-PRICE_REFRESH_SIGNATURE_KEY = "price_refresh_signature"
 UNREALIZED_ADJUSTED_TOGGLE_LABEL = "Add heuristic unrealized to current-year totals and TWR"
 UNREALIZED_ADJUSTED_EXPLANATION = (
     "Uses the current unrealized snapshot to adjust current-year totals and TWR. "
@@ -2479,8 +2479,9 @@ def _current_price_tickers_for_state(state: PipelineState) -> Tuple[str, ...]:
 
 @st.cache_data(show_spinner=False)
 def get_cached_current_prices(
+    price_session_id: str,
     tickers_key: Tuple[str, ...],
-    price_refresh_token,
+    price_refresh_counter: Any,
 ) -> Tuple[Dict[str, float], List[str], Dict[str, int], str]:
     live_prices, stock_price_errors, stock_summary = fetch_current_prices_yf(list(tickers_key))
     price_updated_at = datetime.now().strftime("%H:%M:%S")
@@ -2498,9 +2499,14 @@ def _issues_without_current_price_messages(issues: List[str]) -> List[str]:
 
 def apply_live_price_overlay(base_state: PipelineState, price_refresh_token=0) -> PipelineState:
     tickers_key = _current_price_tickers_for_state(base_state)
+    if isinstance(price_refresh_token, tuple) and len(price_refresh_token) == 2:
+        price_session_id, price_refresh_counter = price_refresh_token
+    else:
+        price_session_id, price_refresh_counter = "legacy", price_refresh_token
     live_prices, stock_price_errors, stock_summary, price_updated_at = get_cached_current_prices(
+        str(price_session_id),
         tickers_key,
-        price_refresh_token,
+        price_refresh_counter,
     )
     price_errors = list(stock_price_errors)
     price_summary = {
@@ -2566,6 +2572,14 @@ def _increment_pipeline_reload_token() -> int:
     return token
 
 
+def _get_price_session_id() -> str:
+    session_id = st.session_state.get(PRICE_SESSION_ID_KEY)
+    if not session_id:
+        session_id = uuid.uuid4().hex
+        st.session_state[PRICE_SESSION_ID_KEY] = session_id
+    return str(session_id)
+
+
 def _get_explicit_price_refresh_token() -> int:
     return int(st.session_state.get(PRICE_REFRESH_TOKEN_KEY, 0) or 0)
 
@@ -2576,36 +2590,12 @@ def _increment_price_refresh_token() -> int:
     return token
 
 
-def _price_refresh_signature(
-    as_of: date,
-    include_unrealized_current_year: bool,
-    selected_sheets: List[str],
-) -> str:
-    chart_range = st.session_state.get("chart_range")
-    return json.dumps(
-        {
-            "as_of": pd.to_datetime(as_of).date().isoformat(),
-            "include_unrealized": bool(include_unrealized_current_year),
-            "selected_sheets": [str(sheet) for sheet in (selected_sheets or [])],
-            "chart_range": chart_range,
-        },
-        sort_keys=True,
-    )
-
-
 def _get_price_refresh_cache_token(
     as_of: date,
     include_unrealized_current_year: bool,
     selected_sheets: List[str],
-) -> str:
-    signature = _price_refresh_signature(as_of, include_unrealized_current_year, selected_sheets)
-    previous_signature = st.session_state.get(PRICE_REFRESH_SIGNATURE_KEY)
-    implicit_token = int(st.session_state.get(PRICE_IMPLICIT_REFRESH_TOKEN_KEY, 0) or 0)
-    if previous_signature is not None and previous_signature == signature:
-        implicit_token += 1
-        st.session_state[PRICE_IMPLICIT_REFRESH_TOKEN_KEY] = implicit_token
-    st.session_state[PRICE_REFRESH_SIGNATURE_KEY] = signature
-    return f"{_get_explicit_price_refresh_token()}:{implicit_token}"
+) -> Tuple[str, int]:
+    return (_get_price_session_id(), _get_explicit_price_refresh_token())
 
 
 def _format_price_status(state: PipelineState) -> str:
