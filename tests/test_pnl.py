@@ -1,35 +1,47 @@
+import io
+import json
 import subprocess
+import sys
 
 import pandas as pd
 import pytest
+from data_sources import (
+    align_benchmarks_monthly as data_source_align_benchmarks_monthly,
+    download_excel_workbook,
+    load_options_from_excel_bytes,
+    option_sheet_names_from_excel_bytes,
+)
 import streamlit_app as app
-
-from streamlit_app import (
-    CONTRACT_MULTIPLIER,
-    HoldSeg,
-    OptionLot,
-    OpenLot,
-    PipelineState,
-    StockTxn,
-    align_benchmarks_monthly,
+from portfolio_backend.api_payloads import PORTFOLIO_PAYLOAD_VERSION, build_portfolio_payload
+from portfolio_backend.api_service import (
+    PortfolioPayloadRequest,
+    PortfolioServiceDependencies,
+    build_payload_for_request,
+)
+from portfolio_backend.calculations import (
     assess_capital_history_coverage,
-    build_benchmark_growth_chart_data,
-    build_open_options_frame,
-    build_options_cycle_chart_data,
     build_capital_timeline,
+    build_option_trades,
+    process_option_positions,
+)
+from portfolio_backend.charts import build_benchmark_growth_chart_data, build_options_cycle_chart_data
+from portfolio_backend.constants import CONTRACT_MULTIPLIER
+from portfolio_backend.models import HoldSeg, OpenLot, OptionLot, PipelineState, StockTxn
+from portfolio_backend.performance import (
     build_covered_return_series,
     build_dashboard_unrealized_adjusted_return_series,
     build_dashboard_unrealized_snapshot,
-    build_yearly_with_dashboard_unrealized,
-    build_option_trades,
     build_per_ticker_totals,
+    build_yearly_with_dashboard_unrealized,
     calculate_performance_metrics,
     calculate_unrealized_positions,
-    filter_df_to_range,
     period_returns,
-    process_option_positions,
-    resolve_build_version,
 )
+from portfolio_backend.serializers import serialize_portfolio_state, serialize_snapshot
+from portfolio_backend.tables import build_open_options_frame, filter_df_to_range
+from portfolio_backend.view_models import build_dashboard_view_model
+
+resolve_build_version = app.resolve_build_version
 
 
 def _make_df(rows):
@@ -39,6 +51,135 @@ def _make_df(rows):
 def _make_capital_daily(start: str, periods: int, total: float) -> pd.DataFrame:
     idx = pd.date_range(start, periods=periods, freq="D", name="date")
     return pd.DataFrame({"total": [total] * periods}, index=idx)
+
+
+def test_load_options_from_excel_bytes_normalizes_option_sheets():
+    raw_2026 = pd.DataFrame(
+        [
+            {
+                "Trans date": "25/08/2025",
+                "Tiker": " abc ",
+                "Type": "put",
+                "Action": "Bought",
+                "Expiration": "19/09/2025",
+                "Strike": "100.5",
+                "Qty": "2",
+                "Amount": "300.0",
+                "Comission": "1.5",
+                "Total P&L": "298.5",
+                "Assigned": "1",
+                "Comment": " assigned ",
+            },
+            {
+                "Trans date": "2025-08-26",
+                "Tiker": "skip",
+                "Type": "stock",
+                "Action": "Dividend",
+                "Expiration": "2025-09-19",
+                "Strike": "0",
+                "Qty": "0",
+                "Amount": "10.0",
+                "Comission": "0",
+                "Total P&L": "10.0",
+                "Assigned": "",
+                "Comment": "",
+            },
+        ]
+    )
+    raw_2025 = pd.DataFrame(
+        [
+            {
+                "Trans date": "2025-01-02",
+                "Tiker": "xyz",
+                "Type": "Call",
+                "Action": "Sell",
+                "Expiration": "2025-02-21",
+                "Strike": "50",
+                "Qty": "1",
+                "Amount": "100",
+                "Comission": "0",
+                "Total P&L": "100",
+                "Assigned": "0",
+                "Comment": "",
+            }
+        ]
+    )
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        raw_2026.to_excel(writer, sheet_name="Options 2026", index=False, startrow=1)
+        raw_2025.to_excel(writer, sheet_name="Options 2025", index=False, startrow=1)
+        pd.DataFrame({"A": [1]}).to_excel(writer, sheet_name="Notes", index=False)
+
+    excel_bytes = buffer.getvalue()
+
+    assert option_sheet_names_from_excel_bytes(excel_bytes) == ["Options 2025", "Options 2026"]
+    loaded = load_options_from_excel_bytes(excel_bytes, ["Options 2026", "Options 2025"])
+
+    assert loaded["source_sheet"].tolist() == ["Options 2026", "Options 2025"]
+    first = loaded.iloc[0]
+    assert first["ticker"] == "ABC"
+    assert first["action"] == "Buy"
+    assert first["type"] == "Put"
+    assert first["strike"] == pytest.approx(100.5)
+    assert first["assigned_flag"] == pytest.approx(1.0)
+    assert first["trans_date"] == pd.Timestamp("2025-08-25")
+    assert first["expiration"] == pd.Timestamp("2025-09-19")
+
+
+def test_download_excel_workbook_uses_local_override(tmp_path):
+    workbook = tmp_path / "portfolio.xlsx"
+    workbook.write_bytes(b"PK-local-workbook")
+
+    download = download_excel_workbook("ignored", local_excel_path=str(workbook))
+
+    assert download.content == b"PK-local-workbook"
+    assert download.source == "local"
+    assert download.file_name == "portfolio.xlsx"
+    assert download.file_modified_at is not None
+    assert download.downloaded_at is not None
+
+
+def test_download_excel_workbook_public_download(monkeypatch):
+    class FakeResponse:
+        content = b"PK-public-workbook"
+
+        def raise_for_status(self):
+            return None
+
+    calls = []
+
+    def fake_get(url, timeout):
+        calls.append((url, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("data_sources.requests.get", fake_get)
+
+    download = download_excel_workbook("sheet-123")
+
+    assert calls == [("https://docs.google.com/spreadsheets/d/sheet-123/export?format=xlsx", 15)]
+    assert download.content == b"PK-public-workbook"
+    assert download.source == "public"
+    assert download.downloaded_at is not None
+
+
+def test_backend_accounting_imports_without_streamlit():
+    code = """
+import sys
+import data_sources
+import portfolio_backend.charts
+import portfolio_backend.calculations
+import portfolio_backend.models
+import portfolio_backend.performance
+import portfolio_backend.pipeline
+import portfolio_backend.api_payloads
+import portfolio_backend.api_service
+import portfolio_backend.serializers
+import portfolio_backend.tables
+import portfolio_backend.view_models
+assert "streamlit" not in sys.modules
+assert "streamlit_app" not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 @pytest.mark.parametrize(
@@ -151,6 +292,146 @@ def test_pipeline_surfaces_ambiguous_mixed_leg_parse_issue(monkeypatch):
 
     assert any("Mixed-leg option row for MIX on 2024-05-01 has ambiguous short leg" in msg for msg in state["issues"])
     assert state["lots"] == []
+
+
+def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
+    df_opts = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-01-02"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-01-19"),
+                "strike": 100.0,
+                "qty": 1,
+                "amount": 200.0,
+                "commission": 0.0,
+                "total_pnl": 200.0,
+                "assigned_flag": 1.0,
+                "comment": "assigned",
+                "source_sheet": "Options 2024",
+            },
+            {
+                "trans_date": pd.Timestamp("2024-02-01"),
+                "ticker": "BBB",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2026-12-18"),
+                "strike": 50.0,
+                "qty": 2,
+                "amount": 300.0,
+                "commission": 0.0,
+                "total_pnl": 300.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2026",
+            },
+            {
+                "trans_date": pd.Timestamp("2026-03-02"),
+                "ticker": "CCC",
+                "type": "Call",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2026-06-19"),
+                "strike": 80.0,
+                "qty": 1,
+                "amount": 400.0,
+                "commission": 0.0,
+                "total_pnl": 400.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2026",
+            },
+            {
+                "trans_date": pd.Timestamp("2026-04-01"),
+                "ticker": "CCC",
+                "type": "Call",
+                "action": "Buy",
+                "expiration": pd.Timestamp("2026-06-19"),
+                "strike": 80.0,
+                "qty": 1,
+                "amount": -100.0,
+                "commission": 0.0,
+                "total_pnl": -100.0,
+                "assigned_flag": 0.0,
+                "comment": "",
+                "source_sheet": "Options 2026",
+            },
+        ]
+    )
+    price_index = pd.bdate_range("2024-01-19", "2026-06-30")
+    price_history = {"AAA": pd.Series([100.0] * len(price_index), index=price_index)}
+    dividends = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "ex_date": pd.Timestamp("2024-03-15"),
+                "pay_date": pd.Timestamp("2024-03-15"),
+                "per_share": 0.5,
+                "shares": 100,
+                "cash": 50.0,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(app, "load_options", lambda sheet_id, sheets: df_opts.copy())
+    monkeypatch.setattr(
+        app,
+        "fetch_price_history_yf",
+        lambda tickers, start, end: (
+            {ticker: price_history[ticker] for ticker in set(tickers) if ticker in price_history},
+            [],
+            {"requested": len(set(tickers)), "fetched": len({ticker for ticker in set(tickers) if ticker in price_history})},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: (
+            {"AAA": 120.0, "BBB": 45.0},
+            [],
+            {"requested": len(set(tickers)), "fetched": len(set(tickers))},
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "collect_dividend_cashflows",
+        lambda stock_txns, as_of: app.DividendFetchResult(
+            cashflows=dividends.copy(),
+            coverage_complete=True,
+            attempted_tickers=["AAA"],
+            failed_tickers=[],
+            errors=[],
+        ),
+    )
+    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+    app.get_cached_current_prices.clear()
+
+    state = app.build_pipeline(
+        pd.Timestamp("2026-06-30").date(),
+        True,
+        ["Options 2024", "Options 2025", "Options 2026"],
+        price_refresh_token=("reference-summary", 0),
+    )
+
+    assert state["issues"] == []
+    assert state["price_summary"] == {"stocks_requested": 2, "stocks_fetched": 2}
+    assert len(state["open_options"]) == 1
+    assert len(state["inv_df"]) == 2
+    assert state["cumulative_realized"] == pytest.approx(550.0)
+    assert state["total_unreal"] == pytest.approx(1300.0)
+    assert state["stock_unreal"] == pytest.approx(1000.0)
+    assert state["option_unreal"] == pytest.approx(300.0)
+    assert state["grand_total"] == pytest.approx(1850.0)
+
+    ytd_row = state["yearly_with_unreal"].loc[state["yearly_with_unreal"]["year"] == 2026].iloc[0]
+    assert ytd_row["total_realized_pnl"] == pytest.approx(300.0)
+    assert ytd_row["total_pnl_incl_unreal"] == pytest.approx(1600.0)
+
+    per_ticker = state["per_ticker_totals"].set_index("ticker")
+    assert per_ticker.loc["AAA", "total_pnl"] == pytest.approx(2200.0)
+    assert per_ticker.loc["BBB", "total_pnl"] == pytest.approx(-700.0)
+    assert per_ticker.loc["CCC", "total_pnl"] == pytest.approx(300.0)
 
 
 def test_realized_option_close_pnl():
@@ -670,6 +951,25 @@ def test_filter_df_to_range_applies_ytd_window():
     filtered = filter_df_to_range(df, "Date", pd.Timestamp("2025-03-20"), "YTD")
 
     assert filtered["value"].tolist() == [2, 3]
+
+
+def test_backend_open_option_shorts_frame_adds_price_and_moneyness():
+    from portfolio_backend.tables import build_open_option_shorts_frame
+
+    open_options = pd.DataFrame(
+        [
+            {"ticker": "PUTT", "type": "Put", "strike": 100.0, "qty": 1},
+            {"ticker": "CALL", "type": "Call", "strike": 50.0, "qty": 1},
+            {"ticker": "MISS", "type": "Put", "strike": 25.0, "qty": 1},
+        ]
+    )
+
+    enriched = build_open_option_shorts_frame(open_options, {"PUTT": 80.0, "CALL": 60.0})
+
+    assert enriched.loc[enriched["ticker"] == "PUTT", "current_price"].iloc[0] == pytest.approx(80.0)
+    assert enriched.loc[enriched["ticker"] == "PUTT", "moneyness_pct"].iloc[0] == pytest.approx(0.20)
+    assert enriched.loc[enriched["ticker"] == "CALL", "moneyness_pct"].iloc[0] == pytest.approx(0.20)
+    assert pd.isna(enriched.loc[enriched["ticker"] == "MISS", "moneyness_pct"].iloc[0])
 
 
 def test_snapshot_yearly_and_monthly_realized_pnl_reconcile_as_of_current_month(monkeypatch):
@@ -1577,7 +1877,7 @@ def _make_live_overlay_base_state() -> PipelineState:
         stock_txns=[],
         realized_sales=[],
         ending_inventory=[OpenLot("AAA", pd.Timestamp("2026-04-01"), 100, 100.0)],
-        capital_daily=pd.DataFrame({"total": [10000.0]}, index=pd.to_datetime(["2026-04-29"])),
+        capital_daily=pd.DataFrame({"total": [10000.0]}, index=pd.to_datetime(["2026-04-29"]).rename("date")),
         monthly_cycles=monthly_cycles,
         monthly_returns_w_div=pd.Series([0.03], index=pd.to_datetime(["2026-04-30"])),
         monthly_returns_covered=pd.Series([0.03], index=pd.to_datetime(["2026-04-30"])),
@@ -1787,6 +2087,292 @@ def test_snapshot_and_positions_share_same_current_price_snapshot(monkeypatch):
     assert open_options.loc[open_options["ticker"] == "AAA", "current_price"].iloc[0] == pytest.approx(125.0)
 
 
+def test_backend_serializers_emit_json_safe_portfolio_shapes(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token=("serializer", 0))
+    state = app.apply_unrealized_adjusted_display(priced_state, True)
+
+    payload = serialize_portfolio_state(state, include_unrealized_current_year=True)
+    json.dumps(payload)
+
+    assert set(payload) == {"snapshot", "positions", "yearly", "per_ticker", "issues", "metadata"}
+    assert payload["snapshot"]["as_of"] == "2026-04-29"
+    assert payload["snapshot"]["ytd_realized_pnl"] == pytest.approx(150.0)
+    assert payload["snapshot"]["ytd_total_pnl"] == pytest.approx(2350.0)
+    assert payload["snapshot"]["unrealized"]["total"] == pytest.approx(2200.0)
+    assert payload["snapshot"]["unrealized"]["options"] == pytest.approx(200.0)
+    assert payload["snapshot"]["unrealized"]["stock"] == pytest.approx(2000.0)
+    assert payload["snapshot"]["prices"] == {
+        "updated_at": payload["snapshot"]["prices"]["updated_at"],
+        "stocks_requested": 1,
+        "stocks_fetched": 1,
+    }
+    assert payload["positions"]["assigned_holdings"][0]["current_price"] == pytest.approx(120.0)
+    assert payload["positions"]["open_option_shorts"][0]["current_price"] == pytest.approx(120.0)
+    assert payload["positions"]["open_option_shorts"][0]["moneyness_pct"] == pytest.approx(-0.20)
+    assert payload["per_ticker"][0]["ticker"] == "AAA"
+    assert payload["metadata"]["sheet_counts"] == [{"source_sheet": "Options 2026", "rows": 1}]
+
+
+def test_dashboard_view_model_matches_snapshot_display_inputs(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token=("view-model", 0))
+    state = app.apply_unrealized_adjusted_display(priced_state, True)
+
+    view_model = build_dashboard_view_model(state, include_unrealized_current_year=True)
+
+    assert view_model.as_of_year == 2026
+    assert view_model.realized_total == pytest.approx(150.0)
+    assert view_model.ytd_total == pytest.approx(2350.0)
+    assert view_model.ytd_twr is not pd.NA
+    assert view_model.unrealized_blocked is False
+    assert view_model.price_summary == {"stocks_requested": 1, "stocks_fetched": 1}
+    assert view_model.dividend_warning_note is None
+    assert view_model.covered_period_note is None
+    assert view_model.yearly is state.yearly_with_unreal
+    assert view_model.monthly_cycles is state.monthly_cycles
+
+
+def test_portfolio_payload_matches_dashboard_view_model(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token=("api-payload", 0))
+    state = app.apply_unrealized_adjusted_display(priced_state, True)
+    view_model = build_dashboard_view_model(state, include_unrealized_current_year=True)
+
+    payload = build_portfolio_payload(state, include_unrealized_current_year=True)
+    json.dumps(payload)
+
+    assert set(payload) == {"snapshot", "positions", "yearly", "per_ticker", "issues", "metadata"}
+    assert payload["metadata"]["payload_version"] == PORTFOLIO_PAYLOAD_VERSION
+    assert payload["snapshot"]["year"] == view_model.as_of_year
+    assert payload["snapshot"]["ytd_realized_pnl"] == pytest.approx(view_model.realized_total)
+    assert payload["snapshot"]["ytd_total_pnl"] == pytest.approx(view_model.ytd_total)
+    assert payload["snapshot"]["ytd_annualized_twr"] == pytest.approx(float(view_model.ytd_twr))
+    assert payload["snapshot"]["unrealized"]["total"] == pytest.approx(state.total_unreal)
+    assert payload["snapshot"]["unrealized"]["options"] == pytest.approx(state.option_unreal)
+    assert payload["snapshot"]["unrealized"]["stock"] == pytest.approx(state.stock_unreal)
+    assert payload["snapshot"]["prices"]["stocks_requested"] == view_model.price_summary["stocks_requested"]
+    assert payload["snapshot"]["prices"]["stocks_fetched"] == view_model.price_summary["stocks_fetched"]
+    assert payload["snapshot"]["covered_period_note"] == view_model.covered_period_note
+    assert payload["snapshot"]["dividend_warning_note"] == view_model.dividend_warning_note
+    assert payload["snapshot"]["issue_count"] == len(view_model.issues) + len(view_model.price_errors)
+    assert payload["positions"]["assigned_holdings"]
+    assert payload["positions"]["open_option_shorts"]
+
+
+def test_portfolio_payload_includes_dashboard_notes():
+    state = _make_live_overlay_base_state()
+    state.capital_history_incomplete = True
+    state.monthly_returns_covered = pd.Series(dtype=float)
+    state.return_series_truncated = True
+    state.first_incomplete_return_month = pd.Timestamp("2026-03-31")
+    state.last_complete_return_month = pd.Timestamp("2026-02-28")
+    state.dividend_coverage_complete = False
+    state.dividend_affected_tickers = ["AAA"]
+
+    payload = build_portfolio_payload(state, include_unrealized_current_year=False)
+
+    assert payload["snapshot"]["covered_period_note"] == (
+        "Return-based charts and benchmark metrics are shown through 2026-02-28 only. "
+        "Later periods are incomplete due to missing historical capital prices and are excluded."
+    )
+    assert payload["snapshot"]["dividend_warning_note"] == (
+        "Dividend data is incomplete for AAA. "
+        "Realized P&L and return metrics remain visible but may understate dividends."
+    )
+
+
+def test_api_service_builds_payload_with_live_price_overlay():
+    calls = {}
+
+    def load_options(sheet_id, selected_sheets):
+        calls["load_options"] = (sheet_id, tuple(selected_sheets))
+        return pd.DataFrame(
+            [
+                {
+                    "trans_date": pd.Timestamp("2026-04-01"),
+                    "ticker": "AAA",
+                    "type": "Put",
+                    "action": "Sell",
+                    "expiration": pd.Timestamp("2026-05-17"),
+                    "strike": 100.0,
+                    "qty": 1,
+                    "amount": 200.0,
+                    "commission": 0.0,
+                    "total_pnl": 200.0,
+                    "assigned_flag": 0.0,
+                    "comment": "",
+                    "source_sheet": "Options 2026",
+                }
+            ]
+        )
+
+    def fetch_price_history(tickers, start, end):
+        calls["fetch_price_history"] = (set(tickers), start, end)
+        return {}, [], {"requested": len(tickers), "fetched": 0}
+
+    def collect_dividend_cashflows(stock_txns, as_of):
+        calls["collect_dividend_cashflows"] = (list(stock_txns), as_of)
+        return pd.DataFrame(columns=["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"])
+
+    def align_benchmarks_monthly(tickers, idx):
+        calls["align_benchmarks_monthly"] = (dict(tickers), idx.copy())
+        return {}
+
+    def fetch_current_prices(tickers):
+        calls["fetch_current_prices"] = tuple(tickers)
+        return {"AAA": 80.0}, [], {"requested": len(tickers), "fetched": len(tickers)}
+
+    payload = build_payload_for_request(
+        PortfolioPayloadRequest(
+            sheet_id="sheet-1",
+            as_of=pd.Timestamp("2026-04-29").date(),
+            selected_sheets=["Options 2026"],
+            include_unrealized_current_year=True,
+            price_updated_at="12:34:56",
+        ),
+        PortfolioServiceDependencies(
+            load_options=load_options,
+            fetch_price_history=fetch_price_history,
+            collect_dividend_cashflows=collect_dividend_cashflows,
+            align_benchmarks_monthly=align_benchmarks_monthly,
+            fetch_current_prices=fetch_current_prices,
+        ),
+    )
+    json.dumps(payload)
+
+    assert calls["load_options"] == ("sheet-1", ("Options 2026",))
+    assert calls["fetch_current_prices"] == ("AAA",)
+    assert payload["metadata"]["payload_version"] == PORTFOLIO_PAYLOAD_VERSION
+    assert payload["metadata"]["sheet_counts"] == [{"source_sheet": "Options 2026", "rows": 1}]
+    assert payload["snapshot"]["prices"] == {
+        "updated_at": "12:34:56",
+        "stocks_requested": 1,
+        "stocks_fetched": 1,
+    }
+    assert payload["snapshot"]["unrealized"]["complete"] is True
+    open_shorts = payload["positions"]["open_option_shorts"]
+    assert len(open_shorts) == 1
+    assert open_shorts[0]["ticker"] == "AAA"
+    assert open_shorts[0]["current_price"] == pytest.approx(80.0)
+    assert open_shorts[0]["moneyness_pct"] == pytest.approx(0.20)
+
+
+def test_api_service_can_build_payload_without_live_price_dependency():
+    def load_options(sheet_id, selected_sheets):
+        return pd.DataFrame(
+            [
+                {
+                    "trans_date": pd.Timestamp("2026-04-01"),
+                    "ticker": "AAA",
+                    "type": "Put",
+                    "action": "Sell",
+                    "expiration": pd.Timestamp("2026-05-17"),
+                    "strike": 100.0,
+                    "qty": 1,
+                    "amount": 200.0,
+                    "commission": 0.0,
+                    "total_pnl": 200.0,
+                    "assigned_flag": 0.0,
+                    "comment": "",
+                    "source_sheet": "Options 2026",
+                }
+            ]
+        )
+
+    payload = build_payload_for_request(
+        PortfolioPayloadRequest(
+            sheet_id="sheet-1",
+            as_of=pd.Timestamp("2026-04-29").date(),
+            selected_sheets=["Options 2026"],
+            include_unrealized_current_year=False,
+        ),
+        PortfolioServiceDependencies(
+            load_options=load_options,
+            fetch_price_history=lambda tickers, start, end: ({}, [], {"requested": 0, "fetched": 0}),
+            collect_dividend_cashflows=lambda stock_txns, as_of: pd.DataFrame(
+                columns=["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]
+            ),
+            align_benchmarks_monthly=lambda tickers, idx: {},
+        ),
+    )
+
+    assert payload["snapshot"]["prices"] == {
+        "updated_at": None,
+        "stocks_requested": 0,
+        "stocks_fetched": 0,
+    }
+    assert payload["positions"]["open_option_shorts"][0]["current_price"] is None
+    assert payload["positions"]["open_option_shorts"][0]["moneyness_pct"] is None
+
+
+def test_dashboard_view_model_builds_coverage_and_dividend_notes():
+    state = _make_live_overlay_base_state()
+    state.capital_history_incomplete = True
+    state.monthly_returns_covered = pd.Series(dtype=float)
+    state.return_series_truncated = True
+    state.first_incomplete_return_month = pd.Timestamp("2026-03-31")
+    state.last_complete_return_month = pd.Timestamp("2026-02-28")
+    state.dividend_coverage_complete = False
+    state.dividend_affected_tickers = ["AAA", "BBB"]
+    state.dividend_errors = ["AAA: timeout"]
+
+    view_model = build_dashboard_view_model(state, include_unrealized_current_year=False)
+
+    assert view_model.covered_period_note == (
+        "Return-based charts and benchmark metrics are shown through 2026-02-28 only. "
+        "Later periods are incomplete due to missing historical capital prices and are excluded."
+    )
+    assert view_model.dividend_warning_note == (
+        "Dividend data is incomplete for AAA, BBB. "
+        "Realized P&L and return metrics remain visible but may understate dividends."
+    )
+    assert view_model.dividend_errors == ["AAA: timeout"]
+
+
+def test_snapshot_serializer_matches_unrealized_toggle_totals(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token=("serializer-toggle", 0))
+
+    realized_snapshot = serialize_snapshot(
+        app.apply_unrealized_adjusted_display(priced_state, False),
+        include_unrealized_current_year=False,
+    )
+    adjusted_snapshot = serialize_snapshot(
+        app.apply_unrealized_adjusted_display(priced_state, True),
+        include_unrealized_current_year=True,
+    )
+
+    assert realized_snapshot["ytd_total_pnl"] == pytest.approx(150.0)
+    assert adjusted_snapshot["ytd_total_pnl"] == pytest.approx(2350.0)
+    assert realized_snapshot["ytd_annualized_twr"] == pytest.approx(0.12)
+    assert adjusted_snapshot["ytd_annualized_twr"] is not None
+
+
 def test_refresh_data_caches_clears_persistent_dividend_history_cache():
     class FakeTicker:
         def __init__(self, dividends):
@@ -1974,10 +2560,9 @@ def test_align_benchmarks_monthly_complete_history_remains_unchanged(monkeypatch
                 index=pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"]),
             )
 
-    monkeypatch.setattr(app, "yf", FakeYF())
     idx = pd.to_datetime(["2024-02-29", "2024-03-31", "2024-04-30"])
 
-    aligned = align_benchmarks_monthly({"Bench": "BENCH"}, idx)
+    aligned = data_source_align_benchmarks_monthly({"Bench": "BENCH"}, idx, FakeYF())
 
     assert list(aligned["Bench"].index) == list(idx)
     assert aligned["Bench"].tolist() == pytest.approx([0.10, 0.10, 0.10])
@@ -1991,10 +2576,9 @@ def test_align_benchmarks_monthly_internal_missing_month_is_not_forward_filled(m
                 index=pd.to_datetime(["2024-01-31", "2024-02-29", "2024-04-30"]),
             )
 
-    monkeypatch.setattr(app, "yf", FakeYF())
     idx = pd.to_datetime(["2024-02-29", "2024-03-31", "2024-04-30"])
 
-    aligned = align_benchmarks_monthly({"Bench": "BENCH"}, idx)["Bench"]
+    aligned = data_source_align_benchmarks_monthly({"Bench": "BENCH"}, idx, FakeYF())["Bench"]
 
     assert aligned.loc[pd.Timestamp("2024-02-29")] == pytest.approx(0.10)
     assert pd.isna(aligned.loc[pd.Timestamp("2024-03-31")])

@@ -1,17 +1,39 @@
 from __future__ import annotations
 
+import io
+import requests
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
+from google.auth.transport.requests import AuthorizedSession
 
 if TYPE_CHECKING:
-    from streamlit_app import HoldSeg, StockTxn
+    from portfolio_backend.models import HoldSeg, StockTxn
 
 
 DIVIDEND_COLUMNS = ["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]
 DIVIDEND_HISTORY_CACHE: Dict[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]], pd.Series] = {}
+OPTION_COLUMN_MAP = {
+    "Trans date": "trans_date",
+    "Tiker": "ticker",
+    "Type": "type",
+    "Action": "action",
+    "Expiration": "expiration",
+    "Strike": "strike",
+    "Qty": "qty",
+    "Amount": "amount",
+    "Comission": "commission",
+    "Total P&L": "total_pnl",
+    "Assigned": "assigned_flag",
+    "Comment": "comment",
+}
+OPTION_DATE_COLUMNS = ["trans_date", "expiration"]
+OPTION_NUMERIC_COLUMNS = ["strike", "qty", "amount", "commission", "total_pnl"]
 
 
 @dataclass(frozen=True)
@@ -21,6 +43,136 @@ class DividendFetchResult:
     attempted_tickers: List[str]
     failed_tickers: List[str]
     errors: List[str]
+
+
+@dataclass(frozen=True)
+class SheetDownload:
+    content: bytes
+    downloaded_at: str
+    source: str
+    file_name: Optional[str] = None
+    file_modified_at: Optional[str] = None
+    file_version: Optional[str] = None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def fetch_drive_file_metadata(sheet_id: str, credentials) -> Dict[str, str]:
+    authed = AuthorizedSession(credentials)
+    url = f"https://www.googleapis.com/drive/v3/files/{sheet_id}"
+    resp = authed.get(url, params={"fields": "id,name,modifiedTime,version"}, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def download_excel_workbook(
+    sheet_id: str,
+    *,
+    credentials=None,
+    local_excel_path: Optional[str] = None,
+) -> SheetDownload:
+    downloaded_at = _now_iso()
+    if local_excel_path:
+        path = Path(local_excel_path).expanduser()
+        if not path.exists():
+            raise RuntimeError(f"LOCAL_EXCEL_PATH is set but file not found: {path}")
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        return SheetDownload(
+            content=path.read_bytes(),
+            downloaded_at=downloaded_at,
+            source="local",
+            file_name=path.name,
+            file_modified_at=modified_at,
+        )
+
+    meta = {}
+    if credentials is not None:
+        try:
+            meta = fetch_drive_file_metadata(sheet_id, credentials)
+        except Exception:
+            meta = {}
+
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
+    if credentials is not None:
+        authed = AuthorizedSession(credentials)
+        resp = authed.get(url, timeout=15)
+        resp.raise_for_status()
+        if not resp.content.startswith(b"PK"):
+            raise RuntimeError("Google Sheets export returned non-XLSX content; check sharing settings.")
+        return SheetDownload(
+            content=resp.content,
+            downloaded_at=downloaded_at,
+            source="drive",
+            file_name=meta.get("name"),
+            file_modified_at=meta.get("modifiedTime"),
+            file_version=meta.get("version"),
+        )
+
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        content = resp.content
+        if not content.startswith(b"PK"):
+            raise RuntimeError("Public sheet export returned non-XLSX content; check sharing settings.")
+    except Exception as exc:
+        msg = (
+            "Public sheet download failed and no service account credentials were found. "
+            "Share the sheet publicly or set GOOGLE_SERVICE_ACCOUNT_JSON / LOCAL_SECRETS_PATH / LOCAL_EXCEL_PATH."
+        )
+        raise RuntimeError(msg) from exc
+
+    return SheetDownload(
+        content=content,
+        downloaded_at=downloaded_at,
+        source="public",
+        file_name=meta.get("name"),
+        file_modified_at=meta.get("modifiedTime"),
+    )
+
+
+def option_sheet_names_from_excel_bytes(excel_bytes: bytes) -> List[str]:
+    xls = pd.ExcelFile(io.BytesIO(excel_bytes))
+    names = [n for n in xls.sheet_names if pd.notna(n) and str(n).startswith("Options ")]
+    return sorted(names)
+
+
+def normalize_options_frame(raw: pd.DataFrame, source_sheet: str) -> pd.DataFrame:
+    df = raw.rename(columns=OPTION_COLUMN_MAP)
+    for column in OPTION_DATE_COLUMNS:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Parsing dates in .* format when dayfirst=True was specified.*",
+                category=UserWarning,
+            )
+            df[column] = pd.to_datetime(df[column], errors="coerce", dayfirst=True).dt.tz_localize(None)
+    for column in OPTION_NUMERIC_COLUMNS:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+    df["action"] = df["action"].astype(str).str.title().str.strip()
+    df["action"] = df["action"].replace({"Bought": "Buy"})
+    df["type"] = df["type"].astype(str).str.title().str.strip()
+    df["comment"] = df["comment"].astype(str)
+    if "assigned_flag" in df.columns:
+        df["assigned_flag"] = pd.to_numeric(df["assigned_flag"], errors="coerce").fillna(0).astype(float)
+    df["source_sheet"] = source_sheet
+    return df
+
+
+def load_options_from_excel_bytes(excel_bytes: bytes, sheets: List[str]) -> pd.DataFrame:
+    frames = []
+    for sheet in sheets:
+        raw = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=sheet, header=1)
+        frames.append(normalize_options_frame(raw, sheet))
+    if not frames:
+        return pd.DataFrame(columns=[*OPTION_COLUMN_MAP.values(), "source_sheet"])
+    df_all = pd.concat(frames, ignore_index=True)
+    return df_all[df_all["action"].isin(["Sell", "Buy"])]
 
 
 class DividendProvider:
@@ -95,6 +247,130 @@ class YFinancePriceHistoryProvider(PriceHistoryProvider):
         series = normalize_price_history(data, ticker_key)
         self._cache[cache_key] = series.copy()
         return series.copy()
+
+
+def fetch_current_prices_yf(tickers, yf_module) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
+    """Fetch latest stock prices; return prices, error messages, and coverage summary."""
+    errors: List[str] = []
+    summary = {"requested": 0, "fetched": 0}
+    if yf_module is None:
+        errors.append("yfinance not installed; cannot fetch live stock prices.")
+        return {}, errors, summary
+    tickers = sorted({str(t).upper().strip() for t in tickers if isinstance(t, str) and t.strip()})
+    summary["requested"] = len(tickers)
+    prices: Dict[str, float] = {}
+    if not tickers:
+        return prices, errors, summary
+    try:
+        data = yf_module.download(
+            tickers=tickers,
+            period="5d",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            group_by="ticker",
+            threads=True,
+        )
+        if isinstance(data.columns, pd.MultiIndex):
+            for t in tickers:
+                for col in ("Adj Close", "Close"):
+                    try:
+                        series = data[(t, col)].dropna()
+                        if not series.empty:
+                            prices[t] = float(series.iloc[-1])
+                            break
+                    except KeyError:
+                        continue
+        else:
+            series = data["Adj Close"].dropna() if "Adj Close" in data else data["Close"].dropna()
+            if not series.empty and len(tickers) == 1:
+                prices[tickers[0]] = float(series.iloc[-1])
+    except Exception as exc:
+        errors.append(f"Primary price download failed: {exc}")
+    missing = [t for t in tickers if t not in prices]
+    for t in missing:
+        try:
+            tk = yf_module.Ticker(t)
+            hist = tk.history(period="5d", interval="1d")
+            if not hist.empty:
+                prices[t] = float(hist["Close"].iloc[-1])
+                continue
+            p = getattr(tk.fast_info, "last_price", None)
+            if p:
+                prices[t] = float(p)
+        except Exception as exc:
+            errors.append(f"{t}: {exc}")
+    still_missing = [t for t in tickers if t not in prices]
+    summary["fetched"] = len(prices)
+    if still_missing:
+        errors.append(f"Missing prices for tickers: {', '.join(still_missing)}")
+    return prices, errors, summary
+
+
+def fetch_price_history_yf(
+    tickers,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    yf_module,
+) -> Tuple[Dict[str, pd.Series], List[str], Dict[str, int]]:
+    """Daily close prices per ticker between start and end, inclusive."""
+    history: Dict[str, pd.Series] = {}
+    errors: List[str] = []
+    summary = {"requested": 0, "fetched": 0}
+    if yf_module is None:
+        errors.append("yfinance not installed; cannot fetch historical stock prices.")
+        return history, errors, summary
+    tickers = sorted({t for t in tickers if t})
+    summary["requested"] = len(tickers)
+    if not tickers or pd.isna(start) or pd.isna(end):
+        return history, errors, summary
+    provider = YFinancePriceHistoryProvider(yf_module)
+    for ticker in tickers:
+        try:
+            series = provider.get_price_history(ticker, start, end)
+            if not series.empty:
+                history[ticker] = series
+        except Exception as exc:
+            errors.append(f"Historical price download failed: {exc}")
+    summary["fetched"] = len(history)
+    missing_tickers = [t for t in tickers if t not in history]
+    if missing_tickers:
+        errors.append(f"Missing historical price series for tickers: {', '.join(missing_tickers)}")
+    return history, errors, summary
+
+
+def align_benchmarks_monthly(
+    tickers: Dict[str, str],
+    idx: pd.DatetimeIndex,
+    yf_module,
+) -> Dict[str, pd.Series]:
+    """Return benchmark monthly returns aligned to the strategy month-end index."""
+    if yf_module is None or len(idx) == 0:
+        return {}
+    start = idx.min() - pd.DateOffset(months=2)
+    end = idx.max() + pd.DateOffset(days=1)
+    all_tickers_list = list(tickers.values())
+    try:
+        px_data = yf_module.download(all_tickers_list, start=start, end=end, progress=False, auto_adjust=True)
+        if px_data.empty:
+            return {}
+        px_data = px_data["Close"] if "Close" in px_data.columns else px_data
+    except Exception:
+        return {}
+    aligned = {}
+    for name, ticker in tickers.items():
+        try:
+            px = px_data[ticker] if len(all_tickers_list) > 1 else px_data
+            px = px.dropna()
+            if px.empty:
+                continue
+            monthly_px = px.resample("ME").last()
+            monthly_ret = monthly_px.pct_change(fill_method=None)
+            monthly_ret = monthly_ret.reindex(idx)
+            aligned[name] = monthly_ret
+        except Exception:
+            continue
+    return aligned
 
 
 def normalize_price_history(data, ticker: str) -> pd.Series:
