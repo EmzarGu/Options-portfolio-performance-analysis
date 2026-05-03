@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
-from google.auth.transport.requests import AuthorizedSession
 
 if TYPE_CHECKING:
     from portfolio_backend.models import HoldSeg, StockTxn
@@ -59,8 +58,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _authorized_session(credentials):
+    try:
+        from google.auth.transport.requests import AuthorizedSession
+    except ImportError as exc:
+        raise RuntimeError(
+            "Google Drive credentials are configured, but google-auth's requests transport "
+            "is unavailable. Ensure google-auth and requests are installed."
+        ) from exc
+    return AuthorizedSession(credentials)
+
+
 def fetch_drive_file_metadata(sheet_id: str, credentials) -> Dict[str, str]:
-    authed = AuthorizedSession(credentials)
+    authed = _authorized_session(credentials)
     url = f"https://www.googleapis.com/drive/v3/files/{sheet_id}"
     resp = authed.get(url, params={"fields": "id,name,modifiedTime,version"}, timeout=15)
     resp.raise_for_status()
@@ -99,7 +109,7 @@ def download_excel_workbook(
 
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
     if credentials is not None:
-        authed = AuthorizedSession(credentials)
+        authed = _authorized_session(credentials)
         resp = authed.get(url, timeout=15)
         resp.raise_for_status()
         if not resp.content.startswith(b"PK"):
