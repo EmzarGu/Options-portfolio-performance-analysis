@@ -59,6 +59,15 @@ def dataframe_records(df: pd.DataFrame, normalize_keys: bool = True) -> List[Dic
     return records
 
 
+def series_records(series: pd.Series, *, date_key: str, value_key: str) -> List[Dict[str, Any]]:
+    if series is None or series.empty:
+        return []
+    records = []
+    for index, value in series.items():
+        records.append({date_key: json_safe(index), value_key: json_safe(value)})
+    return records
+
+
 def _current_year_row(df: pd.DataFrame, as_of_year: int) -> Dict[str, Any]:
     if df is None or df.empty or "year" not in df.columns:
         return {}
@@ -125,6 +134,28 @@ def serialize_yearly(state: PipelineState, include_unrealized_current_year: bool
     return dataframe_records(yearly)
 
 
+def serialize_monthly(state: PipelineState, include_unrealized_current_year: bool) -> Dict[str, Any]:
+    monthly_returns = (
+        state.monthly_returns_unrealized_adjusted
+        if include_unrealized_current_year
+        else state.monthly_returns_covered
+    )
+    monthly_cycles = state.monthly_cycles.copy() if state.monthly_cycles is not None else pd.DataFrame()
+    if not monthly_cycles.empty:
+        monthly_cycles.index.name = "month"
+    return {
+        "cycles": dataframe_records(monthly_cycles.reset_index()),
+        "returns": series_records(monthly_returns, date_key="month", value_key="return"),
+        "covered_returns": series_records(state.monthly_returns_covered, date_key="month", value_key="return"),
+        "unrealized_adjusted_returns": series_records(
+            state.monthly_returns_unrealized_adjusted,
+            date_key="month",
+            value_key="return",
+        ),
+        "active_returns": series_records(state.monthly_returns_active, date_key="month", value_key="return"),
+    }
+
+
 def serialize_per_ticker(state: PipelineState) -> List[Dict[str, Any]]:
     return dataframe_records(state.per_ticker_totals)
 
@@ -163,6 +194,7 @@ def serialize_portfolio_state(
         "snapshot": serialize_snapshot(state, include_unrealized_current_year),
         "positions": serialize_positions(state),
         "yearly": serialize_yearly(state, include_unrealized_current_year),
+        "monthly": serialize_monthly(state, include_unrealized_current_year),
         "per_ticker": serialize_per_ticker(state),
         "issues": serialize_issues(state),
         "metadata": serialize_metadata(state),

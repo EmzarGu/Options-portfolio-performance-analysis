@@ -1,0 +1,103 @@
+{
+  "data_freshness": {
+    "pipeline_built_at": "2026-05-04T19:00:00+02:00",
+    "price_coverage": {
+      "missing_tickers": [
+        "MISS"
+      ],
+      "stocks_fetched": 3,
+      "stocks_requested": 4
+    },
+    "prices_updated_at": "2026-05-04T19:01:00+02:00",
+    "source_downloaded_at": "2026-05-04T18:59:00+02:00",
+    "source_modified_at": null,
+    "source_sheets": [
+      {
+        "name": "Options 2025",
+        "rows": 2,
+        "status": "loaded"
+      },
+      {
+        "name": "Options 2026",
+        "rows": 0,
+        "status": "missing"
+      }
+    ]
+  },
+  "issue_summary": {
+    "parse_issue_count": 1,
+    "price_issue_count": 1,
+    "severity": "warning",
+    "top_messages": [
+      "MISS: no price returned",
+      "Mixed-leg option row needs review"
+    ],
+    "total_count": 2
+  },
+  "monthly_target": {
+    "current_pnl": 100.0,
+    "current_return": 0.01,
+    "current_return_metric": "return_roac",
+    "days_remaining": 28,
+    "month": "2026-05-31",
+    "remaining_pnl": 50.0,
+    "status": "below_target",
+    "target_basis": "avg_capital",
+    "target_pnl": 150.0,
+    "target_return": 0.015
+  },
+  "open_option_short_preview": [
+    {
+      "covered_status": "cash_secured",
+      "current_price": 80.0,
+      "days_to_expiration": 14,
+      "expiration": "2026-05-17",
+      "id": "optlot:PUTT:Put:100.0:2026-05-17:2026-04-01:0",
+      "moneyness": 0.2,
+      "moneyness_band": "in_the_money",
+      "open_price": 2.0,
+      "opened": "2026-04-01",
+      "option_type": "Put",
+      "quantity": 1,
+      "risk_label": "In the money",
+      "strike": 100.0,
+      "ticker": "PUTT"
+    },
+    {
+      "covered_status": "cash_secured",
+      "current_price": 80.0,
+      "days_to_expiration": 14,
+      "expiration": "2026-05-17",
+      "id": "optlot:PUTT:Put:100.0:2026-05-17:2026-04-01:1",
+      "moneyness": 0.2,
+      "moneyness_band": "in_the_money",
+      "open_price": 2.0,
+      "opened": "2026-04-01",
+      "option_type": "Put",
+      "quantity": 1,
+      "risk_label": "In the money",
+      "strike": 100.0,
+      "ticker": "PUTT"
+    }
+  ],
+  "request": {
+    "as_of": "2026-05-03",
+    "include_unrealized": true,
+    "selected_sheets": [
+      "Options 2025",
+      "Options 2026"
+    ]
+  },
+  "snapshot": {
+    "currency": "USD",
+    "current_option_unrealized_pnl": 50.0,
+    "current_stock_unrealized_pnl": 200.0,
+    "current_unrealized_pnl": 250.0,
+    "unrealized_adjusted": true,
+    "unrealized_blocked": false,
+    "year": 2026,
+    "ytd_annualized_twr": 0.18,
+    "ytd_realized_pnl": 100.0,
+    "ytd_total_pnl": 350.0
+  }
+}

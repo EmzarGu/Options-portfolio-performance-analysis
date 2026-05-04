@@ -1,0 +1,128 @@
+{
+  "request": {
+    "as_of": "2026-05-03",
+    "include_unrealized": true,
+    "selected_sheets": [
+      "Options 2025",
+      "Options 2026"
+    ]
+  },
+  "data_freshness": {
+    "pipeline_built_at": "2026-05-04T19:00:00+02:00",
+    "prices_updated_at": "2026-05-04T19:01:00+02:00",
+    "source_downloaded_at": "2026-05-04T18:59:00+02:00",
+    "source_modified_at": null,
+    "price_coverage": {
+      "stocks_requested": 4,
+      "stocks_fetched": 3,
+      "missing_tickers": [
+        "MISS"
+      ]
+    },
+    "source_sheets": [
+      {
+        "name": "Options 2025",
+        "status": "loaded",
+        "rows": 2
+      },
+      {
+        "name": "Options 2026",
+        "status": "missing",
+        "rows": 0
+      }
+    ]
+  },
+  "summary": {
+    "severity": "warning",
+    "total_count": 6,
+    "unrealized_blocked": false,
+    "capital_history_incomplete": true,
+    "dividend_coverage_complete": false
+  },
+  "issues": [
+    {
+      "id": "price-coverage-stocks",
+      "category": "price",
+      "severity": "warning",
+      "message": "Price coverage incomplete: Stocks priced: 3/4",
+      "tickers": [
+        "MISS"
+      ],
+      "action": "refresh_prices"
+    },
+    {
+      "id": "current-price-1",
+      "category": "price",
+      "severity": "warning",
+      "message": "MISS: no price returned",
+      "tickers": [
+        "MISS"
+      ],
+      "action": "refresh_prices"
+    },
+    {
+      "id": "parse-1",
+      "category": "parse",
+      "severity": "warning",
+      "message": "Mixed-leg option row needs review",
+      "tickers": [],
+      "action": "fix_workbook_row"
+    },
+    {
+      "id": "historical-price-1",
+      "category": "historical_price",
+      "severity": "warning",
+      "message": "CAPGAP: missing historical price series",
+      "tickers": [
+        "CAPGAP"
+      ],
+      "action": "refresh_data"
+    },
+    {
+      "id": "dividend-1",
+      "category": "dividend",
+      "severity": "info",
+      "message": "DIVMISS: dividend history returned no usable data",
+      "tickers": [
+        "DIVMISS"
+      ],
+      "action": "refresh_data"
+    },
+    {
+      "id": "capital-history-1",
+      "category": "capital_history",
+      "severity": "warning",
+      "message": "Capital history coverage incomplete for CAPGAP: missing historical price before first trade",
+      "tickers": [
+        "CAPGAP"
+      ],
+      "action": "refresh_data"
+    }
+  ],
+  "coverage": {
+    "current_prices": {
+      "requested": 4,
+      "fetched": 3,
+      "missing_tickers": [
+        "MISS"
+      ],
+      "errors": [
+        "MISS: no price returned"
+      ]
+    },
+    "historical_prices": {
+      "requested": 4,
+      "fetched": 3,
+      "errors": [
+        "CAPGAP: missing historical price series"
+      ]
+    },
+    "dividends": {
+      "attempted_tickers": 2,
+      "failed_tickers": 1,
+      "errors": [
+        "DIVMISS: dividend history returned no usable data"
+      ]
+    }
+  }
+}

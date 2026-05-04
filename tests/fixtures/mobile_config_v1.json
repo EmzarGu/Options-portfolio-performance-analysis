@@ -1,0 +1,28 @@
+{
+  "available_sheets": [
+    "Options 2024",
+    "Options 2025"
+  ],
+  "default_selected_sheets": [
+    "Options 2024",
+    "Options 2025",
+    "Options 2026"
+  ],
+  "missing_default_sheets": [
+    "Options 2026"
+  ],
+  "include_unrealized_default": true,
+  "as_of_default": "2026-05-03",
+  "source": {
+    "kind": "local_excel",
+    "name": "latest_download.xlsx",
+    "downloaded_at": "2026-05-04T18:59:00+02:00",
+    "modified_at": null
+  },
+  "capabilities": {
+    "supports_price_refresh": true,
+    "supports_data_rebuild": true,
+    "supports_selected_sheets": true,
+    "supports_as_of": true
+  }
+}

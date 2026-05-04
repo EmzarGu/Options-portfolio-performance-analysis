@@ -9,3 +9,6 @@ tomli
 requests
 altair
 pytest
+fastapi
+uvicorn
+httpx

@@ -2,6 +2,7 @@ import io
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -2101,7 +2102,7 @@ def test_backend_serializers_emit_json_safe_portfolio_shapes(monkeypatch):
     payload = serialize_portfolio_state(state, include_unrealized_current_year=True)
     json.dumps(payload)
 
-    assert set(payload) == {"snapshot", "positions", "yearly", "per_ticker", "issues", "metadata"}
+    assert set(payload) == {"snapshot", "positions", "yearly", "monthly", "per_ticker", "issues", "metadata"}
     assert payload["snapshot"]["as_of"] == "2026-04-29"
     assert payload["snapshot"]["ytd_realized_pnl"] == pytest.approx(150.0)
     assert payload["snapshot"]["ytd_total_pnl"] == pytest.approx(2350.0)
@@ -2116,6 +2117,13 @@ def test_backend_serializers_emit_json_safe_portfolio_shapes(monkeypatch):
     assert payload["positions"]["assigned_holdings"][0]["current_price"] == pytest.approx(120.0)
     assert payload["positions"]["open_option_shorts"][0]["current_price"] == pytest.approx(120.0)
     assert payload["positions"]["open_option_shorts"][0]["moneyness_pct"] == pytest.approx(-0.20)
+    assert payload["monthly"]["cycles"] == [
+        {"month": "2026-04-30", "total_realized_pnl": 150.0, "roac": 0.03}
+    ]
+    assert payload["monthly"]["returns"] == [{"month": "2026-04-30", "return": 0.25}]
+    assert payload["monthly"]["covered_returns"] == [{"month": "2026-04-30", "return": 0.03}]
+    assert payload["monthly"]["unrealized_adjusted_returns"] == [{"month": "2026-04-30", "return": 0.25}]
+    assert payload["monthly"]["active_returns"] == [{"month": "2026-04-30", "return": 0.03}]
     assert payload["per_ticker"][0]["ticker"] == "AAA"
     assert payload["metadata"]["sheet_counts"] == [{"source_sheet": "Options 2026", "rows": 1}]
 
@@ -2160,7 +2168,7 @@ def test_portfolio_payload_matches_dashboard_view_model(monkeypatch):
     payload = build_portfolio_payload(state, include_unrealized_current_year=True)
     json.dumps(payload)
 
-    assert set(payload) == {"snapshot", "positions", "yearly", "per_ticker", "issues", "metadata"}
+    assert set(payload) == {"snapshot", "positions", "yearly", "monthly", "per_ticker", "issues", "metadata"}
     assert payload["metadata"]["payload_version"] == PORTFOLIO_PAYLOAD_VERSION
     assert payload["snapshot"]["year"] == view_model.as_of_year
     assert payload["snapshot"]["ytd_realized_pnl"] == pytest.approx(view_model.realized_total)
@@ -2176,6 +2184,29 @@ def test_portfolio_payload_matches_dashboard_view_model(monkeypatch):
     assert payload["snapshot"]["issue_count"] == len(view_model.issues) + len(view_model.price_errors)
     assert payload["positions"]["assigned_holdings"]
     assert payload["positions"]["open_option_shorts"]
+
+
+def test_generic_portfolio_payload_matches_sample_fixture(monkeypatch):
+    app.get_cached_current_prices.clear()
+    monkeypatch.setattr(
+        app,
+        "fetch_current_prices_yf",
+        lambda tickers: ({"AAA": 120.0}, [], {"requested": len(tickers), "fetched": len(tickers)}),
+    )
+    base_state = _make_live_overlay_base_state()
+    priced_state = app.apply_live_price_overlay(base_state, price_refresh_token=("mobile-contract", 0))
+    state = app.apply_unrealized_adjusted_display(priced_state, True)
+    state.price_updated_at = "12:34:56"
+
+    payload = build_portfolio_payload(state, include_unrealized_current_year=True)
+    json.dumps(payload)
+
+    # Legacy fixture name retained for now; this shape is the generic backend
+    # payload, not the mobile API contract in docs/mobile-api-contract.md.
+    fixture_path = Path(__file__).parent / "fixtures" / "mobile_portfolio_payload_v1.json"
+    expected = json.loads(fixture_path.read_text())
+
+    assert payload == expected
 
 
 def test_portfolio_payload_includes_dashboard_notes():

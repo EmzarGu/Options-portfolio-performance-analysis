@@ -1,0 +1,125 @@
+{
+  "request": {
+    "as_of": "2026-05-03",
+    "include_unrealized": true,
+    "selected_sheets": [
+      "Options 2025",
+      "Options 2026"
+    ]
+  },
+  "data_freshness": {
+    "pipeline_built_at": "2026-05-04T19:00:00+02:00",
+    "prices_updated_at": "2026-05-04T19:01:00+02:00",
+    "source_downloaded_at": "2026-05-04T18:59:00+02:00",
+    "source_modified_at": null,
+    "price_coverage": {
+      "stocks_requested": 4,
+      "stocks_fetched": 3,
+      "missing_tickers": [
+        "MISS"
+      ]
+    },
+    "source_sheets": [
+      {
+        "name": "Options 2025",
+        "status": "loaded",
+        "rows": 2
+      },
+      {
+        "name": "Options 2026",
+        "status": "missing",
+        "rows": 0
+      }
+    ]
+  },
+  "items": [
+    {
+      "id": "ticker:CALL",
+      "ticker": "CALL",
+      "current_price": 60.0,
+      "realized_options_pnl": 10.0,
+      "realized_stock_pnl": 20.0,
+      "combined_realized_pnl": 30.0,
+      "unrealized_pnl": 1500.0,
+      "total_pnl": 1530.0,
+      "open_option_count": 1,
+      "inventory_share_count": 100,
+      "risk_labels": [
+        "In the money"
+      ],
+      "history": [
+        {
+          "id": "year:2026:ticker:CALL",
+          "year": 2026,
+          "realized_options_pnl": 10.0,
+          "realized_stock_pnl": 20.0,
+          "combined_realized_pnl": 30.0
+        }
+      ]
+    },
+    {
+      "id": "ticker:PUTT",
+      "ticker": "PUTT",
+      "current_price": 80.0,
+      "realized_options_pnl": 150.0,
+      "realized_stock_pnl": 0.0,
+      "combined_realized_pnl": 150.0,
+      "unrealized_pnl": -25.0,
+      "total_pnl": 175.0,
+      "open_option_count": 2,
+      "inventory_share_count": 0,
+      "risk_labels": [
+        "In the money"
+      ],
+      "history": [
+        {
+          "id": "year:2026:ticker:PUTT",
+          "year": 2026,
+          "realized_options_pnl": 150.0,
+          "realized_stock_pnl": 0.0,
+          "combined_realized_pnl": 150.0
+        }
+      ]
+    },
+    {
+      "id": "ticker:MISS",
+      "ticker": "MISS",
+      "current_price": null,
+      "realized_options_pnl": 0.0,
+      "realized_stock_pnl": 0.0,
+      "combined_realized_pnl": 0.0,
+      "unrealized_pnl": 0.0,
+      "total_pnl": 0.0,
+      "open_option_count": 1,
+      "inventory_share_count": 100,
+      "risk_labels": [
+        "Missing price"
+      ],
+      "history": [
+        {
+          "id": "year:2026:ticker:MISS",
+          "year": 2026,
+          "realized_options_pnl": 0.0,
+          "realized_stock_pnl": 0.0,
+          "combined_realized_pnl": 0.0
+        }
+      ]
+    },
+    {
+      "id": "ticker:CLEAR",
+      "ticker": "CLEAR",
+      "current_price": 120.0,
+      "realized_options_pnl": 0.0,
+      "realized_stock_pnl": 0.0,
+      "combined_realized_pnl": 0.0,
+      "unrealized_pnl": -500.0,
+      "total_pnl": -500.0,
+      "open_option_count": 1,
+      "inventory_share_count": 0,
+      "risk_labels": [
+        "Largest unrealized loser"
+      ],
+      "history": []
+    }
+  ]
+}

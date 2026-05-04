@@ -1,0 +1,81 @@
+{
+  "request": {
+    "as_of": "2026-05-03",
+    "include_unrealized": true,
+    "selected_sheets": [
+      "Options 2025",
+      "Options 2026"
+    ]
+  },
+  "data_freshness": {
+    "pipeline_built_at": "2026-05-04T19:00:00+02:00",
+    "prices_updated_at": "2026-05-04T19:01:00+02:00",
+    "source_downloaded_at": "2026-05-04T18:59:00+02:00",
+    "source_modified_at": null,
+    "price_coverage": {
+      "stocks_requested": 4,
+      "stocks_fetched": 3,
+      "missing_tickers": [
+        "MISS"
+      ]
+    },
+    "source_sheets": [
+      {
+        "name": "Options 2025",
+        "status": "loaded",
+        "rows": 2
+      },
+      {
+        "name": "Options 2026",
+        "status": "missing",
+        "rows": 0
+      }
+    ]
+  },
+  "target_return": 0.015,
+  "target_basis": "avg_capital",
+  "return_metric": "return_roac",
+  "current_month": {
+    "id": "month:2026-05-31",
+    "month": "2026-05-31",
+    "return_roac": 0.01,
+    "return_ropc": 0.008333333333333333,
+    "total_realized_pnl": 100.0,
+    "target_pnl": 150.0,
+    "remaining_pnl": 50.0,
+    "avg_capital": 10000.0,
+    "peak_capital": 12000.0,
+    "status": "below_target",
+    "days_remaining": 28
+  },
+  "months": [
+    {
+      "id": "month:2026-04-30",
+      "month": "2026-04-30",
+      "realized_options_pnl": 250.0,
+      "realized_stock_pnl": 50.0,
+      "dividends": 0.0,
+      "total_realized_pnl": 300.0,
+      "avg_capital": 10000.0,
+      "peak_capital": 11000.0,
+      "return_roac": 0.03,
+      "return_ropc": 0.02727272727272727,
+      "target_return": 0.015,
+      "status": "beat"
+    },
+    {
+      "id": "month:2026-05-31",
+      "month": "2026-05-31",
+      "realized_options_pnl": 100.0,
+      "realized_stock_pnl": 0.0,
+      "dividends": 0.0,
+      "total_realized_pnl": 100.0,
+      "avg_capital": 10000.0,
+      "peak_capital": 12000.0,
+      "return_roac": 0.01,
+      "return_ropc": 0.008333333333333333,
+      "target_return": 0.015,
+      "status": "below_target"
+    }
+  ]
+}

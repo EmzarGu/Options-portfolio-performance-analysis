@@ -1,0 +1,77 @@
+{
+  "request": {
+    "as_of": "2026-05-03",
+    "include_unrealized": true,
+    "selected_sheets": [
+      "Options 2025",
+      "Options 2026"
+    ]
+  },
+  "data_freshness": {
+    "pipeline_built_at": "2026-05-04T19:00:00+02:00",
+    "prices_updated_at": "2026-05-04T19:01:00+02:00",
+    "source_downloaded_at": "2026-05-04T18:59:00+02:00",
+    "source_modified_at": null,
+    "price_coverage": {
+      "stocks_requested": 4,
+      "stocks_fetched": 3,
+      "missing_tickers": [
+        "MISS"
+      ]
+    },
+    "source_sheets": [
+      {
+        "name": "Options 2025",
+        "status": "loaded",
+        "rows": 2
+      },
+      {
+        "name": "Options 2026",
+        "status": "missing",
+        "rows": 0
+      }
+    ]
+  },
+  "years": [
+    {
+      "id": "year:2025",
+      "year": 2025,
+      "realized_options_pnl": 50.0,
+      "realized_stock_pnl": 0.0,
+      "dividends": 0.0,
+      "total_realized_pnl": 50.0,
+      "total_pnl_including_unrealized": null,
+      "avg_capital": 8000.0,
+      "peak_capital": 9000.0,
+      "roac_year": 0.05,
+      "ropc_year": 0.044444444444444446,
+      "annualized_roac": 0.05,
+      "annualized_ropc": 0.044444444444444446,
+      "annualized_twr": 0.04,
+      "annualized_twr_active": 0.045,
+      "annualized_twr_unrealized_adjusted": null,
+      "metrics_available": true,
+      "suppression_reason": null
+    },
+    {
+      "id": "year:2026",
+      "year": 2026,
+      "realized_options_pnl": 100.0,
+      "realized_stock_pnl": 0.0,
+      "dividends": 0.0,
+      "total_realized_pnl": 100.0,
+      "total_pnl_including_unrealized": 350.0,
+      "avg_capital": 10000.0,
+      "peak_capital": 12000.0,
+      "roac_year": 0.01,
+      "ropc_year": 0.008333333333333333,
+      "annualized_roac": 0.07,
+      "annualized_ropc": 0.06,
+      "annualized_twr": 0.12,
+      "annualized_twr_active": 0.13,
+      "annualized_twr_unrealized_adjusted": 0.18,
+      "metrics_available": true,
+      "suppression_reason": null
+    }
+  ]
+}
