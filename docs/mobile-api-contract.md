@@ -20,7 +20,7 @@ All read endpoints accept:
 | `include_unrealized` | boolean | no | Defaults to `false`. Mirrors the current unrealized-adjusted toggle. |
 | `selected_sheets` | repeated string | no | Repeat the query parameter, e.g. `selected_sheets=Options%202024&selected_sheets=Options%202025`. Defaults to saved/server defaults. |
 
-Read endpoints must not mutate server-side cache or freshness state. Use `POST /v1/mobile/refresh` for price refresh, data rebuild, or both.
+Read endpoints must not trigger an explicit price/data refresh. The server may reuse an in-memory request context for matching read calls so multiple mobile screens do not rebuild the same portfolio repeatedly. Use `POST /v1/mobile/refresh` for an explicit price refresh, data rebuild, or both.
 
 Example:
 
@@ -933,6 +933,9 @@ Nullability:
   `data_freshness`, `missing_price_count`, and `missing_sheet_count`.
 - `refresh.reload_endpoints` tells the client which read endpoints to reload after
   refresh succeeds.
+- After refresh succeeds, the server makes the refreshed request context the active
+  default for matching read calls. Clients do not need to append `cache_bust`
+  unless they are deliberately debugging a specific rebuild token.
 
 ## Error Contract
 

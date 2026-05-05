@@ -20,6 +20,7 @@ def _request_payload(context):
 
 @pytest.fixture
 def api_harness(monkeypatch):
+    mobile_api._clear_context_cache()
     calls = SimpleNamespace(contexts=[], builders={})
 
     monkeypatch.setattr(mobile_api.dashboard_app, "SHEET_ID", "sheet-id")
@@ -245,6 +246,26 @@ def test_refresh_route_respects_explicit_cache_bust(api_harness):
     assert response.status_code == 200
     assert api_harness.calls.contexts[-1].request.cache_bust == 123
     assert response.json()["refresh"]["cache_bust"] == 123
+
+
+def test_read_routes_reuse_context_for_same_request(api_harness):
+    dashboard_response = api_harness.client.get("/v1/mobile/dashboard")
+    positions_response = api_harness.client.get("/v1/mobile/positions")
+
+    assert dashboard_response.status_code == 200
+    assert positions_response.status_code == 200
+    assert len(api_harness.calls.contexts) == 1
+    assert api_harness.calls.builders["dashboard"] is api_harness.calls.builders["positions"]
+
+
+def test_refresh_updates_default_read_cache_bust(api_harness):
+    refresh_response = api_harness.client.post("/v1/mobile/refresh?cache_bust=123")
+    dashboard_response = api_harness.client.get("/v1/mobile/dashboard")
+
+    assert refresh_response.status_code == 200
+    assert dashboard_response.status_code == 200
+    assert len(api_harness.calls.contexts) == 1
+    assert api_harness.calls.builders["dashboard"].request.cache_bust == 123
 
 
 @pytest.mark.parametrize(

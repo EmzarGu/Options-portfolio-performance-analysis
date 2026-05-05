@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from fastapi import FastAPI, HTTPException, Query, Request
@@ -33,6 +35,11 @@ app = FastAPI(title="Options ROI Mobile API", version="0.1.0")
 MONTHLY_RANGES = {"3m", "6m", "ytd", "1y", "since_inception"}
 OPEN_OPTION_SORTS = {"moneyness_risk", "expiration", "ticker", "moneyness_pct"}
 SERVICE_NAME = "options-roi-mobile-api"
+CONTEXT_CACHE_MAX_ITEMS = 16
+
+_context_cache_lock = threading.Lock()
+_context_cache: "OrderedDict[Tuple[str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
+_active_cache_bust = 1
 
 
 @app.exception_handler(HTTPException)
@@ -95,24 +102,73 @@ def _common_request(
     )
 
 
+def _resolve_cache_bust(cache_bust: Optional[int]) -> int:
+    if cache_bust is not None:
+        return int(cache_bust)
+    with _context_cache_lock:
+        return int(_active_cache_bust)
+
+
+def _context_cache_key(request: MobilePayloadRequest) -> Tuple[str, str, bool, Tuple[str, ...], int]:
+    return (
+        request.sheet_id,
+        request.as_of.isoformat(),
+        bool(request.include_unrealized),
+        tuple(str(sheet) for sheet in request.selected_sheets),
+        int(request.cache_bust),
+    )
+
+
+def _remember_context(key: Tuple[str, str, bool, Tuple[str, ...], int], context: Any) -> None:
+    with _context_cache_lock:
+        _context_cache[key] = context
+        _context_cache.move_to_end(key)
+        while len(_context_cache) > CONTEXT_CACHE_MAX_ITEMS:
+            _context_cache.popitem(last=False)
+
+
+def _set_active_cache_bust(cache_bust: int) -> None:
+    global _active_cache_bust
+    with _context_cache_lock:
+        _active_cache_bust = int(cache_bust)
+
+
+def _clear_context_cache() -> None:
+    global _active_cache_bust
+    with _context_cache_lock:
+        _context_cache.clear()
+        _active_cache_bust = 1
+
+
 def _context(
     *,
     as_of: Optional[date],
     include_unrealized: bool,
     selected_sheets: Optional[List[str]],
-    cache_bust: int,
+    cache_bust: Optional[int],
+    force_rebuild: bool = False,
 ):
     request, available = _common_request(
         as_of=as_of,
         include_unrealized=include_unrealized,
         selected_sheets=selected_sheets,
-        cache_bust=cache_bust,
+        cache_bust=_resolve_cache_bust(cache_bust),
     )
-    return build_mobile_payload_context(
+    key = _context_cache_key(request)
+    if not force_rebuild:
+        with _context_cache_lock:
+            cached = _context_cache.get(key)
+            if cached is not None:
+                _context_cache.move_to_end(key)
+                return cached
+
+    context = build_mobile_payload_context(
         request,
         _dependencies(),
         available_sheets=available,
     )
+    _remember_context(key, context)
+    return context
 
 
 def _refresh_cache_bust() -> int:
@@ -148,13 +204,16 @@ def refresh_mobile_payloads(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     resolved_cache_bust = cache_bust if cache_bust is not None else _refresh_cache_bust()
+    context = _context(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=resolved_cache_bust,
+        force_rebuild=True,
+    )
+    _set_active_cache_bust(resolved_cache_bust)
     return build_mobile_refresh_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=resolved_cache_bust,
-        ),
+        context,
         cache_bust=resolved_cache_bust,
     )
 
@@ -164,7 +223,7 @@ def get_mobile_dashboard(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_dashboard_payload(
         _context(
@@ -181,7 +240,7 @@ def get_mobile_positions(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_positions_payload(
         _context(
@@ -200,7 +259,7 @@ def get_mobile_open_option_shorts(
     selected_sheets: Optional[List[str]] = Query(default=None),
     sort: str = "moneyness_risk",
     limit: Optional[int] = None,
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     if sort not in OPEN_OPTION_SORTS:
         raise HTTPException(
@@ -239,7 +298,7 @@ def get_mobile_tickers(
     selected_sheets: Optional[List[str]] = Query(default=None),
     year: Optional[int] = None,
     include_history: bool = False,
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_tickers_payload(
         _context(
@@ -260,7 +319,7 @@ def get_mobile_monthly_performance(
     selected_sheets: Optional[List[str]] = Query(default=None),
     target_return: float = 0.015,
     range: str = "ytd",
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     if range not in MONTHLY_RANGES:
         raise HTTPException(
@@ -288,7 +347,7 @@ def get_mobile_yearly_performance(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_yearly_payload(
         _context(
@@ -305,7 +364,7 @@ def get_mobile_issues(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    cache_bust: int = 1,
+    cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_issues_payload(
         _context(
