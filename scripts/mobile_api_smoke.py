@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
         help="Selected option sheet. Repeat for multiple sheets.",
     )
     parser.add_argument("--timeout", type=float, default=60.0, help="Request timeout in seconds.")
+    parser.add_argument("--api-key", default=None, help="Optional mobile API key to send as X-API-Key.")
     return parser.parse_args()
 
 
@@ -77,8 +78,16 @@ def common_query(args: argparse.Namespace) -> str:
     return urlencode(params)
 
 
-def request_json(url: str, *, method: str = "GET", timeout: float = 60.0) -> tuple[int, dict[str, Any]]:
+def request_json(
+    url: str,
+    *,
+    method: str = "GET",
+    timeout: float = 60.0,
+    api_key: str | None = None,
+) -> tuple[int, dict[str, Any]]:
     request = Request(url, method=method)
+    if api_key:
+        request.add_header("X-API-Key", api_key)
     with urlopen(request, timeout=timeout) as response:
         return response.status, json.load(response)
 
@@ -112,9 +121,16 @@ def summarize(endpoint: str, payload: dict[str, Any]) -> str:
     return "ok"
 
 
-def assert_error(base_url: str, path: str, expected_status: int, expected_code: str, timeout: float) -> None:
+def assert_error(
+    base_url: str,
+    path: str,
+    expected_status: int,
+    expected_code: str,
+    timeout: float,
+    api_key: str | None,
+) -> None:
     try:
-        request_json(f"{base_url}{path}", timeout=timeout)
+        request_json(f"{base_url}{path}", timeout=timeout, api_key=api_key)
     except HTTPError as exc:
         payload = json.loads(exc.read().decode("utf-8"))
         code = payload.get("error", {}).get("code")
@@ -139,13 +155,18 @@ def main() -> int:
     print(f"/v1/mobile/health: {status} service={health.get('service')}, version={health.get('version')}")
 
     for endpoint, expected_keys in READ_ENDPOINTS.items():
-        status, payload = request_json(f"{base_url}{endpoint}?{query}", timeout=args.timeout)
+        status, payload = request_json(f"{base_url}{endpoint}?{query}", timeout=args.timeout, api_key=args.api_key)
         if status != 200:
             raise AssertionError(f"{endpoint}: expected 200, got {status}")
         assert_keys(endpoint, payload, expected_keys)
         print(f"{endpoint}: {status} {summarize(endpoint, payload)}")
 
-    status, refresh = request_json(f"{base_url}/v1/mobile/refresh?{query}", method="POST", timeout=args.timeout)
+    status, refresh = request_json(
+        f"{base_url}/v1/mobile/refresh?{query}",
+        method="POST",
+        timeout=args.timeout,
+        api_key=args.api_key,
+    )
     if status != 200:
         raise AssertionError(f"/v1/mobile/refresh: expected 200, got {status}")
     assert_keys("/v1/mobile/refresh", refresh, REFRESH_KEYS)
@@ -158,9 +179,23 @@ def main() -> int:
         f" {status} status={refresh_status}, cache_bust={refresh['refresh'].get('cache_bust')}, reloads={len(reloads)}"
     )
 
-    assert_error(base_url, "/v1/mobile/open-option-shorts?sort=unsupported", 400, "invalid_open_option_sort", args.timeout)
-    assert_error(base_url, "/v1/mobile/open-option-shorts?limit=-1", 400, "invalid_limit", args.timeout)
-    assert_error(base_url, "/v1/mobile/performance/monthly?range=unsupported", 400, "invalid_monthly_range", args.timeout)
+    assert_error(
+        base_url,
+        "/v1/mobile/open-option-shorts?sort=unsupported",
+        400,
+        "invalid_open_option_sort",
+        args.timeout,
+        args.api_key,
+    )
+    assert_error(base_url, "/v1/mobile/open-option-shorts?limit=-1", 400, "invalid_limit", args.timeout, args.api_key)
+    assert_error(
+        base_url,
+        "/v1/mobile/performance/monthly?range=unsupported",
+        400,
+        "invalid_monthly_range",
+        args.timeout,
+        args.api_key,
+    )
     return 0
 
 

@@ -1,0 +1,66 @@
+# Cloud Run Deployment
+
+This project exposes the mobile backend through `mobile_api:app`, a FastAPI app.
+Cloud Run is the simplest Google Cloud target for the iOS app API because it
+runs containers, scales to zero, and gives a stable HTTPS endpoint.
+
+## Service
+
+- Service name: `options-roi-mobile-api`
+- Region: `europe-west6` for Zurich, or `europe-west1` if you prefer the default
+  Western Europe region.
+- Container port: `8080`
+- Startup command: provided by `Dockerfile`
+- Health endpoint: `/v1/mobile/health`
+
+## Required Runtime Secret
+
+Set these as environment variables or Secret Manager secrets in Cloud Run:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON`: raw service account JSON with read access to
+  the Google Sheet used by `streamlit_app.SHEET_ID`.
+- `MOBILE_API_KEY`: shared development API key required by all mobile endpoints
+  except `/v1/mobile/health`.
+
+Recommended setup:
+
+1. Create a Secret Manager secret named `google-service-account-json`.
+2. Store the raw service account JSON as the secret value.
+3. Create a Secret Manager secret named `mobile-api-key`.
+4. Store a long random value as the secret value.
+5. In the Cloud Run service, mount the secrets as environment variables:
+   `GOOGLE_SERVICE_ACCOUNT_JSON`.
+   `MOBILE_API_KEY`.
+
+The container intentionally excludes local files like `.streamlit/secrets.toml`,
+`.streamlit_user_prefs.json`, and downloaded portfolio workbooks.
+
+## Deploy From Google Cloud Console
+
+1. Open Cloud Run in the Google Cloud Console.
+2. Select project `options-performance-dashboard`.
+3. Click **Create service** or **Deploy container**.
+4. Choose **Continuously deploy from a repository** and connect
+   `EmzarGu/Options-portfolio-performance-analysis`.
+5. Select build type **Dockerfile** and keep the Dockerfile path as
+   `Dockerfile`.
+6. Set service name `options-roi-mobile-api`.
+7. Select a region.
+8. Under authentication, allow unauthenticated invocations only if
+   `MOBILE_API_KEY` is set. Otherwise the iOS app will not be able to call the
+   service without Google IAM credentials.
+9. Add the `GOOGLE_SERVICE_ACCOUNT_JSON` and `MOBILE_API_KEY` environment
+   variables from Secret Manager.
+10. Deploy.
+
+## Smoke Test
+
+After deployment, replace `SERVICE_URL` with the Cloud Run URL:
+
+```bash
+curl "$SERVICE_URL/v1/mobile/health"
+curl -H "X-API-Key: $MOBILE_API_KEY" "$SERVICE_URL/v1/mobile/config"
+python scripts/mobile_api_smoke.py --base-url "$SERVICE_URL" --api-key "$MOBILE_API_KEY"
+```
+
+The iOS app should use the Cloud Run URL as its API base URL.

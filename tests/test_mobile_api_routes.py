@@ -171,6 +171,47 @@ def test_health_route_is_lightweight(api_harness):
     assert api_harness.calls.builders == {}
 
 
+def test_api_key_is_not_required_when_unset(api_harness, monkeypatch):
+    monkeypatch.delenv("MOBILE_API_KEY", raising=False)
+
+    response = api_harness.client.get("/v1/mobile/config")
+
+    assert response.status_code == 200
+
+
+def test_api_key_protects_mobile_routes(api_harness, monkeypatch):
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+
+    response = api_harness.client.get("/v1/mobile/config")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_api_key_accepts_header(api_harness, monkeypatch):
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+
+    response = api_harness.client.get("/v1/mobile/config", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+
+
+def test_api_key_accepts_bearer_token(api_harness, monkeypatch):
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+
+    response = api_harness.client.get("/v1/mobile/config", headers={"Authorization": "Bearer secret"})
+
+    assert response.status_code == 200
+
+
+def test_health_route_stays_public_when_api_key_is_set(api_harness, monkeypatch):
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+
+    response = api_harness.client.get("/v1/mobile/health")
+
+    assert response.status_code == 200
+
+
 def test_config_route_dispatches_available_sheets_and_defaults(api_harness):
     response = api_harness.client.get("/v1/mobile/config")
 

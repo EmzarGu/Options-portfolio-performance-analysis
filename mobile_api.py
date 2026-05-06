@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+import hmac
+import os
 from collections import OrderedDict
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -36,10 +38,38 @@ MONTHLY_RANGES = {"3m", "6m", "ytd", "1y", "since_inception"}
 OPEN_OPTION_SORTS = {"moneyness_risk", "expiration", "ticker", "moneyness_pct"}
 SERVICE_NAME = "options-roi-mobile-api"
 CONTEXT_CACHE_MAX_ITEMS = 16
+PUBLIC_PATHS = {"/v1/mobile/health"}
 
 _context_cache_lock = threading.Lock()
 _context_cache: "OrderedDict[Tuple[str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
 _active_cache_bust = 1
+
+
+@app.middleware("http")
+async def mobile_api_key_middleware(request: Request, call_next):
+    expected_key = os.getenv("MOBILE_API_KEY")
+    if not expected_key or request.url.path in PUBLIC_PATHS or not request.url.path.startswith("/v1/mobile/"):
+        return await call_next(request)
+
+    provided_key = request.headers.get("x-api-key", "")
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        provided_key = authorization[7:].strip()
+
+    if hmac.compare_digest(provided_key, expected_key):
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=401,
+        content={
+            "error": {
+                "code": "unauthorized",
+                "message": "A valid mobile API key is required.",
+                "details": {},
+                "request_id": None,
+            }
+        },
+    )
 
 
 @app.exception_handler(HTTPException)
