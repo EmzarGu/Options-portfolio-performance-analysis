@@ -141,6 +141,11 @@ def assert_error(
     raise AssertionError(f"{path}: expected {expected_status}/{expected_code}, got success")
 
 
+def assert_protected(base_url: str, path: str, timeout: float) -> None:
+    assert_error(base_url, path, 401, "unauthorized", timeout, api_key=None)
+    assert_error(base_url, path, 401, "unauthorized", timeout, api_key="invalid-mobile-api-key")
+
+
 def main() -> int:
     args = parse_args()
     base_url = args.base_url.rstrip("/")
@@ -153,6 +158,9 @@ def main() -> int:
     if health.get("status") != "ok":
         raise AssertionError(f"/v1/mobile/health: expected status=ok, got {health}")
     print(f"/v1/mobile/health: {status} service={health.get('service')}, version={health.get('version')}")
+
+    if args.api_key:
+        assert_protected(base_url, f"/v1/mobile/config?{query}", args.timeout)
 
     for endpoint, expected_keys in READ_ENDPOINTS.items():
         status, payload = request_json(f"{base_url}{endpoint}?{query}", timeout=args.timeout, api_key=args.api_key)

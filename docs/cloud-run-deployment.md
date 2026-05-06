@@ -63,4 +63,7 @@ curl -H "X-API-Key: $MOBILE_API_KEY" "$SERVICE_URL/v1/mobile/config"
 python scripts/mobile_api_smoke.py --base-url "$SERVICE_URL" --api-key "$MOBILE_API_KEY"
 ```
 
+When `--api-key` is supplied, the smoke script also verifies that protected
+endpoints reject missing and invalid keys with `401 unauthorized`.
+
 The iOS app should use the Cloud Run URL as its API base URL.
