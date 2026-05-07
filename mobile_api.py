@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import threading
 import hmac
+import logging
 import os
 from collections import OrderedDict
 from datetime import date, datetime
+from inspect import Parameter, signature
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -33,6 +36,8 @@ from portfolio_backend.mobile_payloads import build_mobile_config
 
 
 app = FastAPI(title="Options ROI Mobile API", version="0.1.0")
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.INFO)
 
 MONTHLY_RANGES = {"3m", "6m", "ytd", "1y", "since_inception"}
 OPEN_OPTION_SORTS = {"moneyness_risk", "expiration", "ticker", "moneyness_pct"}
@@ -45,11 +50,83 @@ _context_cache: "OrderedDict[Tuple[str, str, bool, Tuple[str, ...], int], Any]" 
 _active_cache_bust = 1
 
 
+def _elapsed_ms(started_at: float) -> float:
+    return (perf_counter() - started_at) * 1000
+
+
+def _request_timings(request: Request) -> Dict[str, float]:
+    timings = getattr(request.state, "mobile_timings", None)
+    if timings is None:
+        timings = {}
+        request.state.mobile_timings = timings
+    return timings
+
+
+def _record_timing(request: Request, phase: str, elapsed_ms: float) -> None:
+    _request_timings(request)[phase] = round(float(elapsed_ms), 2)
+
+
+def _supports_timing_recorder(func) -> bool:
+    try:
+        parameters = signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == "timing_recorder" or parameter.kind == Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
+def _timing_recorder(request: Request):
+    def record(phase: str, elapsed_ms: float) -> None:
+        _record_timing(request, phase, elapsed_ms)
+
+    return record
+
+
+def _log_request_timing(
+    request: Request,
+    *,
+    status_code: int,
+    total_ms: float,
+    cache_hit: Optional[bool] = None,
+) -> None:
+    if not request.url.path.startswith("/v1/mobile/"):
+        return
+    timings = dict(getattr(request.state, "mobile_timings", {}) or {})
+    route_ms = float(timings.get("route_total_ms", 0) or 0)
+    auth_ms = float(timings.get("request_auth_ms", 0) or 0)
+    response_serialization_ms = max(float(total_ms) - route_ms - auth_ms, 0)
+    parts = [
+        "mobile_api_timing",
+        f"method={request.method}",
+        f"path={request.url.path}",
+        f"status={status_code}",
+        f"total_ms={total_ms:.2f}",
+        f"response_serialization_ms={response_serialization_ms:.2f}",
+    ]
+    if cache_hit is not None:
+        parts.append(f"cache_hit={str(cache_hit).lower()}")
+    for key in sorted(timings):
+        parts.append(f"{key}={timings[key]}")
+    logger.info(" ".join(parts))
+
+
 @app.middleware("http")
 async def mobile_api_key_middleware(request: Request, call_next):
+    request_started_at = perf_counter()
+    auth_started_at = perf_counter()
+    _request_timings(request)
     expected_key = os.getenv("MOBILE_API_KEY")
     if not expected_key or request.url.path in PUBLIC_PATHS or not request.url.path.startswith("/v1/mobile/"):
-        return await call_next(request)
+        _record_timing(request, "request_auth_ms", _elapsed_ms(auth_started_at))
+        response = await call_next(request)
+        _log_request_timing(
+            request,
+            status_code=response.status_code,
+            total_ms=_elapsed_ms(request_started_at),
+        )
+        return response
 
     provided_key = request.headers.get("x-api-key", "")
     authorization = request.headers.get("authorization", "")
@@ -57,9 +134,17 @@ async def mobile_api_key_middleware(request: Request, call_next):
         provided_key = authorization[7:].strip()
 
     if hmac.compare_digest(provided_key, expected_key):
-        return await call_next(request)
+        _record_timing(request, "request_auth_ms", _elapsed_ms(auth_started_at))
+        response = await call_next(request)
+        _log_request_timing(
+            request,
+            status_code=response.status_code,
+            total_ms=_elapsed_ms(request_started_at),
+        )
+        return response
 
-    return JSONResponse(
+    _record_timing(request, "request_auth_ms", _elapsed_ms(auth_started_at))
+    response = JSONResponse(
         status_code=401,
         content={
             "error": {
@@ -70,6 +155,12 @@ async def mobile_api_key_middleware(request: Request, call_next):
             }
         },
     )
+    _log_request_timing(
+        request,
+        status_code=response.status_code,
+        total_ms=_elapsed_ms(request_started_at),
+    )
+    return response
 
 
 @app.exception_handler(HTTPException)
@@ -108,8 +199,12 @@ def _common_request(
     include_unrealized: bool,
     selected_sheets: Optional[List[str]],
     cache_bust: int,
+    timing_recorder=None,
 ) -> tuple[MobilePayloadRequest, List[str]]:
+    started_at = perf_counter()
     available = _available_sheets()
+    if timing_recorder is not None:
+        timing_recorder("sheet_load_ms", _elapsed_ms(started_at))
     selected = selected_sheets or _default_selected_sheets(available)
     if not selected:
         raise HTTPException(
@@ -177,26 +272,43 @@ def _context(
     selected_sheets: Optional[List[str]],
     cache_bust: Optional[int],
     force_rebuild: bool = False,
+    timing_recorder=None,
 ):
     request, available = _common_request(
         as_of=as_of,
         include_unrealized=include_unrealized,
         selected_sheets=selected_sheets,
         cache_bust=_resolve_cache_bust(cache_bust),
+        timing_recorder=timing_recorder,
     )
     key = _context_cache_key(request)
     if not force_rebuild:
+        started_at = perf_counter()
         with _context_cache_lock:
             cached = _context_cache.get(key)
             if cached is not None:
                 _context_cache.move_to_end(key)
+                if timing_recorder is not None:
+                    timing_recorder("context_cache_lookup_ms", _elapsed_ms(started_at))
+                    timing_recorder("context_cache_hit", 1)
                 return cached
+        if timing_recorder is not None:
+            timing_recorder("context_cache_lookup_ms", _elapsed_ms(started_at))
+            timing_recorder("context_cache_hit", 0)
+    elif timing_recorder is not None:
+        timing_recorder("context_cache_hit", 0)
 
+    started_at = perf_counter()
+    context_kwargs = {"available_sheets": available}
+    if timing_recorder is not None and _supports_timing_recorder(build_mobile_payload_context):
+        context_kwargs["timing_recorder"] = timing_recorder
     context = build_mobile_payload_context(
         request,
         _dependencies(),
-        available_sheets=available,
+        **context_kwargs,
     )
+    if timing_recorder is not None:
+        timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
     _remember_context(key, context)
     return context
 
@@ -228,11 +340,13 @@ def get_mobile_config() -> Dict[str, Any]:
 
 @app.post("/v1/mobile/refresh")
 def refresh_mobile_payloads(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
+    route_started_at = perf_counter()
     resolved_cache_bust = cache_bust if cache_bust is not None else _refresh_cache_bust()
     context = _context(
         as_of=as_of,
@@ -240,12 +354,17 @@ def refresh_mobile_payloads(
         selected_sheets=selected_sheets,
         cache_bust=resolved_cache_bust,
         force_rebuild=True,
+        timing_recorder=_timing_recorder(request),
     )
     _set_active_cache_bust(resolved_cache_bust)
-    return build_mobile_refresh_payload(
+    started_at = perf_counter()
+    payload = build_mobile_refresh_payload(
         context,
         cache_bust=resolved_cache_bust,
     )
+    _record_timing(request, "dto_build_ms", _elapsed_ms(started_at))
+    _record_timing(request, "route_total_ms", _elapsed_ms(route_started_at))
+    return payload
 
 
 @app.get("/v1/mobile/dashboard")
