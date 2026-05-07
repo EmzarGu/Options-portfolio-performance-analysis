@@ -135,6 +135,15 @@ Response:
     "target_pnl": 7890.0,
     "remaining_pnl": 4680.0,
     "status": "below_target",
+    "realized_month_pnl": 3210.0,
+    "realized_options_pnl": 3210.0,
+    "realized_stock_pnl": 0.0,
+    "open_expiring_option_premium": 5200.0,
+    "projected_month_pnl": 8410.0,
+    "projected_return_roac": 0.016,
+    "projected_return_ropc": 0.0131,
+    "projected_remaining_pnl": 0.0,
+    "monthly_target_status": "beat",
     "days_remaining": 18
   },
   "open_option_short_preview": [
@@ -190,7 +199,11 @@ Fields:
 - `snapshot.current_unrealized_pnl`, `current_option_unrealized_pnl`, `current_stock_unrealized_pnl`: null if blocked by missing required prices.
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
-- `monthly_target.*`: null for return/P&L fields if monthly capital denominator is unavailable.
+- `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
+- `monthly_target.open_expiring_option_premium`: premium collected for still-open short options whose expiration date falls in the target month.
+- `monthly_target.projected_month_pnl`: `realized_month_pnl + open_expiring_option_premium`.
+- `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
+- `monthly_target.*`: null for return/P&L fields if the required monthly capital denominator or source value is unavailable.
 - `open_option_short_preview`: sorted by moneyness risk, limited to 3-5 rows.
 
 ## Endpoint 2: Open Option Shorts
@@ -566,11 +579,20 @@ Response:
     "return_roac": 0.006,
     "return_ropc": 0.005,
     "total_realized_pnl": 3210.0,
+    "realized_month_pnl": 3210.0,
+    "realized_options_pnl": 3210.0,
+    "realized_stock_pnl": 0.0,
+    "open_expiring_option_premium": 5200.0,
+    "projected_month_pnl": 8410.0,
+    "projected_return_roac": 0.016,
+    "projected_return_ropc": 0.0131,
     "target_pnl": 7890.0,
     "remaining_pnl": 4680.0,
+    "projected_remaining_pnl": 0.0,
     "avg_capital": 526000.0,
     "peak_capital": 642000.0,
     "status": "below_target",
+    "monthly_target_status": "beat",
     "days_remaining": 18
   },
   "months": [
@@ -586,7 +608,15 @@ Response:
       "return_roac": 0.024,
       "return_ropc": 0.019,
       "target_return": 0.015,
-      "status": "beat"
+      "status": "beat",
+      "realized_month_pnl": 11840.0,
+      "open_expiring_option_premium": 0.0,
+      "projected_month_pnl": 11840.0,
+      "projected_return_roac": 0.024,
+      "projected_return_ropc": 0.019,
+      "target_pnl": 7400.0,
+      "projected_remaining_pnl": 0.0,
+      "monthly_target_status": "beat"
     },
     {
       "id": "month:2026-03-31",
@@ -600,7 +630,15 @@ Response:
       "return_roac": -0.008,
       "return_ropc": -0.006,
       "target_return": 0.015,
-      "status": "miss"
+      "status": "miss",
+      "realized_month_pnl": -3920.0,
+      "open_expiring_option_premium": 2500.0,
+      "projected_month_pnl": -1420.0,
+      "projected_return_roac": -0.0029,
+      "projected_return_ropc": -0.0023,
+      "target_pnl": 7350.0,
+      "projected_remaining_pnl": 8770.0,
+      "monthly_target_status": "miss"
     }
   ]
 }
@@ -610,22 +648,29 @@ Nullability:
 
 - Month row `id` is mandatory and must follow the stable row ID rules above.
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
-- `target_pnl` and `remaining_pnl` are `null` if `avg_capital` is unavailable.
+- `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
+- `open_expiring_option_premium` is assigned by option expiration month for still-open short options.
+- `projected_month_pnl` is `realized_month_pnl + open_expiring_option_premium`.
+- `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the target-monitoring fields iOS should prefer.
+- `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `status` allowed values: `beat`, `miss`, `below_target`, `on_track`, `unavailable`.
+- `monthly_target_status` uses the same allowed values as `status`, but is based on projected RoAC.
 - `target_basis` allowed values: `avg_capital`, `peak_capital`. Initial mobile target uses `avg_capital`.
 - `return_metric` allowed values: `return_roac`, `return_ropc`. Initial mobile target uses `return_roac`.
 
 Backend source today:
 
 - `state.monthly_cycles`
+- `state.open_options` for expiration-month open short premium projection.
 - `state.monthly_returns_covered`
 - `state.first_incomplete_return_month`
 - `state.last_complete_return_month`
 - `state.return_series_truncated`
 
-Recommended backend shape change:
+Implementation notes:
 
-- Add a backend utility that maps monthly rows to target status and computes `target_pnl` and `remaining_pnl`.
+- Realized monthly values remain separate from projected values.
+- Projected target status must not be labelled as realized status.
 
 ## Endpoint 6: Yearly Performance
 

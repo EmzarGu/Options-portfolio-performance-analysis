@@ -581,6 +581,15 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "target_pnl": 150.0,
         "remaining_pnl": 50.0,
         "status": "below_target",
+        "realized_month_pnl": 100.0,
+        "realized_options_pnl": 100.0,
+        "realized_stock_pnl": 0.0,
+        "open_expiring_option_premium": 625.0,
+        "projected_month_pnl": 725.0,
+        "projected_return_roac": 0.0725,
+        "projected_return_ropc": 0.06041666666666667,
+        "projected_remaining_pnl": 0.0,
+        "monthly_target_status": "beat",
         "days_remaining": 28,
     }
     assert len(dashboard["open_option_short_preview"]) == 2
@@ -841,6 +850,14 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
             "return_ropc": 0.02727272727272727,
             "target_return": 0.015,
             "status": "beat",
+            "realized_month_pnl": 300.0,
+            "open_expiring_option_premium": 0.0,
+            "projected_month_pnl": 300.0,
+            "projected_return_roac": 0.03,
+            "projected_return_ropc": 0.02727272727272727,
+            "target_pnl": 150.0,
+            "projected_remaining_pnl": 0.0,
+            "monthly_target_status": "beat",
         },
         {
             "id": "month:2026-05-31",
@@ -855,6 +872,14 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
             "return_ropc": 0.008333333333333333,
             "target_return": 0.015,
             "status": "below_target",
+            "realized_month_pnl": 100.0,
+            "open_expiring_option_premium": 625.0,
+            "projected_month_pnl": 725.0,
+            "projected_return_roac": 0.0725,
+            "projected_return_ropc": 0.06041666666666667,
+            "target_pnl": 150.0,
+            "projected_remaining_pnl": 0.0,
+            "monthly_target_status": "beat",
         },
     ]
 
@@ -868,6 +893,9 @@ def test_monthly_performance_rows_support_ranges_and_missing_capital():
     assert [row["id"] for row in rows] == ["month:2026-04-30", "month:2026-05-31"]
     assert rows[1]["return_roac"] is None
     assert rows[1]["status"] == "unavailable"
+    assert rows[1]["projected_return_roac"] is None
+    assert rows[1]["projected_return_ropc"] == pytest.approx(0.06041666666666667)
+    assert rows[1]["monthly_target_status"] == "unavailable"
 
     with pytest.raises(ValueError):
         build_monthly_performance_rows(state, monthly_range="unsupported")
@@ -906,11 +934,20 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "return_roac": 0.01,
         "return_ropc": 0.008333333333333333,
         "total_realized_pnl": 100.0,
+        "realized_month_pnl": 100.0,
+        "realized_options_pnl": 100.0,
+        "realized_stock_pnl": 0.0,
+        "open_expiring_option_premium": 625.0,
+        "projected_month_pnl": 725.0,
+        "projected_return_roac": 0.0725,
+        "projected_return_ropc": 0.06041666666666667,
         "target_pnl": 150.0,
         "remaining_pnl": 50.0,
+        "projected_remaining_pnl": 0.0,
         "avg_capital": 10000.0,
         "peak_capital": 12000.0,
         "status": "below_target",
+        "monthly_target_status": "beat",
         "days_remaining": 28,
     }
     assert [row["id"] for row in monthly["months"]] == ["month:2026-04-30", "month:2026-05-31"]

@@ -210,11 +210,77 @@ def _monthly_target_status(current_return: Optional[float], target_return: float
     return "beat" if current_return >= target_return else "below_target"
 
 
+def _open_expiring_option_premium(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
+    if month_end is None:
+        return None
+    open_options = getattr(state, "open_options", pd.DataFrame())
+    if open_options is None or open_options.empty:
+        return 0.0
+    required_columns = {"expiration", "open_price", "qty"}
+    if not required_columns.issubset(open_options.columns):
+        return 0.0
+
+    options = open_options.copy()
+    options["expiration"] = pd.to_datetime(options["expiration"], errors="coerce")
+    options = options.loc[options["expiration"].notna()]
+    if options.empty:
+        return 0.0
+
+    expiring = options.loc[options["expiration"].dt.to_period("M") == month_end.to_period("M")]
+    if expiring.empty:
+        return 0.0
+
+    open_prices = pd.to_numeric(expiring["open_price"], errors="coerce")
+    quantities = pd.to_numeric(expiring["qty"], errors="coerce").abs()
+    premium = (open_prices * quantities * CONTRACT_MULTIPLIER).dropna()
+    return float(premium.sum()) if not premium.empty else 0.0
+
+
+def _monthly_projection_values(
+    state,
+    row: Dict[str, Any],
+    month_end: Optional[pd.Timestamp],
+    target_return: float,
+) -> Dict[str, Optional[float]]:
+    avg_capital = _number(row.get("avg_capital"))
+    peak_capital = _number(row.get("peak_capital"))
+    realized_month_pnl = _number(row.get("total_realized_pnl"))
+    open_expiring_option_premium = _open_expiring_option_premium(state, month_end)
+
+    projected_month_pnl = None
+    if realized_month_pnl is not None and open_expiring_option_premium is not None:
+        projected_month_pnl = realized_month_pnl + open_expiring_option_premium
+
+    projected_return_roac = None
+    if projected_month_pnl is not None and avg_capital not in (None, 0):
+        projected_return_roac = projected_month_pnl / avg_capital
+
+    projected_return_ropc = None
+    if projected_month_pnl is not None and peak_capital not in (None, 0):
+        projected_return_ropc = projected_month_pnl / peak_capital
+
+    target_pnl = avg_capital * target_return if avg_capital is not None else None
+    projected_remaining_pnl = None
+    if target_pnl is not None and projected_month_pnl is not None:
+        projected_remaining_pnl = max(target_pnl - projected_month_pnl, 0.0)
+
+    return {
+        "realized_month_pnl": realized_month_pnl,
+        "open_expiring_option_premium": open_expiring_option_premium,
+        "projected_month_pnl": projected_month_pnl,
+        "projected_return_roac": projected_return_roac,
+        "projected_return_ropc": projected_return_ropc,
+        "target_pnl": target_pnl,
+        "projected_remaining_pnl": projected_remaining_pnl,
+    }
+
+
 def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, Any]:
     month_end, row = _current_month_row(getattr(state, "monthly_cycles", pd.DataFrame()), getattr(state, "as_of", None))
     avg_capital = _number(row.get("avg_capital"))
     current_return = _number(row.get("roac"))
     current_pnl = _number(row.get("total_realized_pnl"))
+    projection = _monthly_projection_values(state, row, month_end, target_return)
     target_pnl = avg_capital * target_return if avg_capital is not None else None
     remaining_pnl = None
     if target_pnl is not None and current_pnl is not None:
@@ -235,6 +301,20 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
         "target_pnl": json_safe(target_pnl),
         "remaining_pnl": json_safe(remaining_pnl),
         "status": _monthly_target_status(current_return, target_return, month_end, getattr(state, "as_of", None)),
+        "realized_month_pnl": json_safe(projection["realized_month_pnl"]),
+        "realized_options_pnl": json_safe(_number(row.get("realized_options_pnl"))),
+        "realized_stock_pnl": json_safe(_number(row.get("realized_stock_pnl"))),
+        "open_expiring_option_premium": json_safe(projection["open_expiring_option_premium"]),
+        "projected_month_pnl": json_safe(projection["projected_month_pnl"]),
+        "projected_return_roac": json_safe(projection["projected_return_roac"]),
+        "projected_return_ropc": json_safe(projection["projected_return_ropc"]),
+        "projected_remaining_pnl": json_safe(projection["projected_remaining_pnl"]),
+        "monthly_target_status": _monthly_target_status(
+            projection["projected_return_roac"],
+            target_return,
+            month_end,
+            getattr(state, "as_of", None),
+        ),
         "days_remaining": json_safe(days_remaining),
     }
 
@@ -280,11 +360,13 @@ def _mobile_month_row(
     month_end: pd.Timestamp,
     target_return: float,
     as_of: Any,
+    state=None,
     *,
     include_target_detail: bool = False,
 ) -> Dict[str, Any]:
     avg_capital = _number(row.get("avg_capital"))
     total_realized_pnl = _number(row.get("total_realized_pnl"))
+    projection = _monthly_projection_values(state, row, month_end, target_return) if state is not None else {}
     target_pnl = avg_capital * target_return if avg_capital is not None else None
     remaining_pnl = None
     if target_pnl is not None and total_realized_pnl is not None:
@@ -309,6 +391,20 @@ def _mobile_month_row(
         "target_return": json_safe(float(target_return)),
         "status": _month_status(row, month_end, target_return, as_of),
     }
+    if state is not None:
+        out["realized_month_pnl"] = json_safe(projection["realized_month_pnl"])
+        out["open_expiring_option_premium"] = json_safe(projection["open_expiring_option_premium"])
+        out["projected_month_pnl"] = json_safe(projection["projected_month_pnl"])
+        out["projected_return_roac"] = json_safe(projection["projected_return_roac"])
+        out["projected_return_ropc"] = json_safe(projection["projected_return_ropc"])
+        out["target_pnl"] = json_safe(projection["target_pnl"])
+        out["projected_remaining_pnl"] = json_safe(projection["projected_remaining_pnl"])
+        out["monthly_target_status"] = _monthly_target_status(
+            projection["projected_return_roac"],
+            target_return,
+            month_end,
+            as_of,
+        )
     if include_target_detail:
         out["target_pnl"] = json_safe(target_pnl)
         out["remaining_pnl"] = json_safe(remaining_pnl)
@@ -327,7 +423,7 @@ def build_monthly_performance_rows(
         return []
     rows = []
     for month_end, row in monthly.iterrows():
-        rows.append(_mobile_month_row(row.to_dict(), month_end, target_return, getattr(state, "as_of", None)))
+        rows.append(_mobile_month_row(row.to_dict(), month_end, target_return, getattr(state, "as_of", None), state))
     return rows
 
 
@@ -344,25 +440,43 @@ def build_current_month_performance(
             "return_roac": None,
             "return_ropc": None,
             "total_realized_pnl": None,
+            "realized_month_pnl": None,
+            "realized_options_pnl": None,
+            "realized_stock_pnl": None,
+            "open_expiring_option_premium": None,
+            "projected_month_pnl": None,
+            "projected_return_roac": None,
+            "projected_return_ropc": None,
             "target_pnl": None,
             "remaining_pnl": None,
+            "projected_remaining_pnl": None,
             "avg_capital": None,
             "peak_capital": None,
             "status": "unavailable",
+            "monthly_target_status": "unavailable",
             "days_remaining": None,
         }
-    month_row = _mobile_month_row(row, month_end, target_return, getattr(state, "as_of", None), include_target_detail=True)
+    month_row = _mobile_month_row(row, month_end, target_return, getattr(state, "as_of", None), state, include_target_detail=True)
     return {
         "id": month_row["id"],
         "month": month_row["month"],
         "return_roac": month_row["return_roac"],
         "return_ropc": month_row["return_ropc"],
         "total_realized_pnl": month_row["total_realized_pnl"],
+        "realized_month_pnl": month_row["realized_month_pnl"],
+        "realized_options_pnl": month_row["realized_options_pnl"],
+        "realized_stock_pnl": month_row["realized_stock_pnl"],
+        "open_expiring_option_premium": month_row["open_expiring_option_premium"],
+        "projected_month_pnl": month_row["projected_month_pnl"],
+        "projected_return_roac": month_row["projected_return_roac"],
+        "projected_return_ropc": month_row["projected_return_ropc"],
         "target_pnl": month_row["target_pnl"],
         "remaining_pnl": month_row["remaining_pnl"],
+        "projected_remaining_pnl": month_row["projected_remaining_pnl"],
         "avg_capital": month_row["avg_capital"],
         "peak_capital": month_row["peak_capital"],
         "status": month_row["status"],
+        "monthly_target_status": month_row["monthly_target_status"],
         "days_remaining": month_row["days_remaining"],
     }
 
