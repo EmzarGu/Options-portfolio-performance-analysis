@@ -25,6 +25,14 @@ class PriceHistoryStore:
     def get_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> PriceHistoryLookup:
         raise NotImplementedError
 
+    def get_many_history(
+        self,
+        tickers: list[str],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> Dict[str, PriceHistoryLookup]:
+        return {ticker: self.get_history(ticker, start, end) for ticker in tickers}
+
     def upsert_history(self, ticker: str, series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> None:
         raise NotImplementedError
 
@@ -44,6 +52,14 @@ class MemoryPriceHistoryStore(PriceHistoryStore):
 
     def get_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> PriceHistoryLookup:
         return _lookup_from_docs(self._docs, ticker, start, end)
+
+    def get_many_history(
+        self,
+        tickers: list[str],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> Dict[str, PriceHistoryLookup]:
+        return {ticker: _lookup_from_docs(self._docs, ticker, start, end) for ticker in tickers}
 
     def upsert_history(self, ticker: str, series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> None:
         _upsert_docs(self._docs, ticker, series, start, end)
@@ -66,6 +82,32 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
             if snapshot.exists:
                 docs[doc_id] = snapshot.to_dict() or {}
         return _lookup_from_docs(docs, ticker_key, start, end)
+
+    def get_many_history(
+        self,
+        tickers: list[str],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> Dict[str, PriceHistoryLookup]:
+        ticker_keys = [_ticker_key(ticker) for ticker in tickers]
+        doc_refs = []
+        for ticker_key in ticker_keys:
+            for year in _years_between(start, end):
+                doc_refs.append(
+                    self.client.collection(COLLECTION_PRICE_HISTORY_CHUNKS).document(
+                        _document_id(ticker_key, year)
+                    )
+                )
+
+        docs: Dict[str, Dict] = {}
+        for snapshot in self.client.get_all(doc_refs):
+            if snapshot.exists:
+                docs[snapshot.id] = snapshot.to_dict() or {}
+
+        return {
+            ticker_key: _lookup_from_docs(docs, ticker_key, start, end)
+            for ticker_key in ticker_keys
+        }
 
     def upsert_history(self, ticker: str, series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> None:
         ticker_key = _ticker_key(ticker)

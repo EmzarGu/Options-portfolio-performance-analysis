@@ -23,8 +23,8 @@ Set these as environment variables or Secret Manager secrets in Cloud Run:
   except `/v1/mobile/health`.
 
 The service also uses Firestore Native mode in project
-`options-performance-dashboard` for the persistent yfinance historical price
-cache. Cloud Run should run with a service account that has
+`options-performance-dashboard` for persistent yfinance historical price and
+dividend history caches. Cloud Run should run with a service account that has
 `roles/datastore.user`; no Firestore client credentials are sent to iOS.
 
 Recommended setup:
@@ -58,11 +58,14 @@ The container intentionally excludes local files like `.streamlit/secrets.toml`,
    variables from Secret Manager.
 10. Deploy.
 
-## Historical Price Cache
+## Market Data Caches
 
 The backend checks Firestore before fetching historical stock prices from
 yfinance. Cached records are stored in `price_history_chunks` as ticker/year
 documents such as `AAPL:2026`.
+
+Dividend history uses the same pattern. Cached records are stored in
+`dividend_history` as ticker documents such as `AAPL`.
 
 Runtime selection:
 
@@ -75,6 +78,7 @@ Runtime selection:
 Useful environment variables:
 
 - `PRICE_HISTORY_STORE`: `auto`, `firestore`, `memory`, or `disabled`.
+- `DIVIDEND_HISTORY_STORE`: `auto`, `firestore`, `memory`, or `disabled`.
 - `FIRESTORE_PROJECT_ID`: optional explicit project override.
 - `FIRESTORE_DATABASE`: optional database override; default is `(default)`.
 

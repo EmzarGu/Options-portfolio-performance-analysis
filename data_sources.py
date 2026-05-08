@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from portfolio_backend.dividend_history_store import get_default_dividend_history_store
 from portfolio_backend.price_history_store import get_default_price_history_store
 
 if TYPE_CHECKING:
@@ -211,6 +212,16 @@ class YFinanceDividendProvider(DividendProvider):
         if self.yf_module is None:
             raise RuntimeError("yfinance not installed; cannot fetch dividend history.")
 
+        store = get_default_dividend_history_store()
+        try:
+            cached = store.get_history(ticker_key, start_ts, end_ts)
+        except Exception as exc:
+            logger.warning("dividend_history_store_read_failed ticker=%s error=%s", ticker_key, exc)
+            cached = None
+        if cached is not None and cached.fully_covered:
+            self._cache[cache_key] = cached.series.copy()
+            return cached.series.copy()
+
         raw_div_hist = self.yf_module.Ticker(ticker_key).dividends
         div_hist = normalize_dividend_history(raw_div_hist)
         if not div_hist.empty:
@@ -218,6 +229,10 @@ class YFinanceDividendProvider(DividendProvider):
                 div_hist = div_hist[div_hist.index >= start_ts]
             if end_ts is not None:
                 div_hist = div_hist[div_hist.index < end_ts]
+        try:
+            store.upsert_history(ticker_key, div_hist, start_ts, end_ts)
+        except Exception as exc:
+            logger.warning("dividend_history_store_write_failed ticker=%s error=%s", ticker_key, exc)
         self._cache[cache_key] = div_hist.copy()
         return div_hist.copy()
 
@@ -345,13 +360,14 @@ def fetch_price_history_yf(
     cache_misses = 0
     cache_writes = 0
     yfinance_fetches = 0
+    try:
+        cached_by_ticker = store.get_many_history(tickers, start, end)
+    except Exception as exc:
+        logger.warning("price_history_store_bulk_read_failed error=%s", exc)
+        cached_by_ticker = {}
     for ticker in tickers:
         try:
-            try:
-                cached = store.get_history(ticker, start, end)
-            except Exception as exc:
-                logger.warning("price_history_store_read_failed ticker=%s error=%s", ticker, exc)
-                cached = None
+            cached = cached_by_ticker.get(str(ticker).upper().strip())
             if cached is not None and cached.fully_covered:
                 cache_hits += 1
                 series = cached.series

@@ -12,6 +12,7 @@ from data_sources import (
     collect_dividend_cashflows,
     fetch_price_history_yf,
 )
+from portfolio_backend.dividend_history_store import MemoryDividendHistoryStore
 from portfolio_backend.price_history_store import MemoryPriceHistoryStore
 
 
@@ -202,6 +203,26 @@ def test_dividend_history_cache_clear_invalidates_reload_cache_bust():
     provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
 
     assert yf_module.calls == ["AAA", "AAA"]
+
+
+def test_yfinance_dividend_provider_uses_persistent_store_after_memory_cache_clear(monkeypatch):
+    yf_module = FakeYF(
+        {
+            "AAA": pd.Series([0.5], index=pd.to_datetime(["2024-01-15"]))
+        }
+    )
+    store = MemoryDividendHistoryStore()
+    monkeypatch.setattr(data_sources, "get_default_dividend_history_store", lambda: store)
+
+    first_provider = YFinanceDividendProvider(yf_module)
+    first = first_provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+    clear_dividend_history_cache()
+    second_provider = YFinanceDividendProvider(yf_module)
+    second = second_provider.get_dividend_history("AAA", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))
+
+    assert yf_module.calls == ["AAA"]
+    assert first.tolist() == [0.5]
+    assert second.tolist() == [0.5]
 
 
 def test_dividend_cache_preserves_zero_dividend_and_failure_semantics():
