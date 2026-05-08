@@ -396,6 +396,20 @@ def resolve_capital_price_on_day(
     return fallback_price
 
 
+def _normalized_capital_price_series(px_series: Optional[pd.Series]) -> pd.Series:
+    if px_series is None:
+        return pd.Series(dtype=float)
+    prices = pd.to_numeric(px_series, errors="coerce").dropna()
+    if prices.empty:
+        return pd.Series(dtype=float)
+    prices.index = pd.to_datetime(prices.index, errors="coerce")
+    prices = prices[prices.index.notna()].sort_index()
+    if prices.empty:
+        return pd.Series(dtype=float)
+    prices.index = prices.index.normalize()
+    return prices[~prices.index.duplicated(keep="last")]
+
+
 def resolve_capital_prices_for_days(
     px_series: Optional[pd.Series],
     valuation_days: pd.DatetimeIndex,
@@ -408,15 +422,9 @@ def resolve_capital_prices_for_days(
     if px_series is None:
         return pd.Series(fallback, index=valuation_days, dtype=float)
     try:
-        prices = pd.to_numeric(px_series, errors="coerce").dropna()
+        prices = _normalized_capital_price_series(px_series)
         if prices.empty:
             return pd.Series(fallback, index=valuation_days, dtype=float)
-        prices.index = pd.to_datetime(prices.index, errors="coerce")
-        prices = prices[prices.index.notna()].sort_index()
-        if prices.empty:
-            return pd.Series(fallback, index=valuation_days, dtype=float)
-        prices.index = prices.index.normalize()
-        prices = prices[~prices.index.duplicated(keep="last")]
         resolved = prices.reindex(prices.index.union(valuation_days)).sort_index().ffill().reindex(valuation_days)
         return resolved.fillna(fallback).astype(float)
     except Exception:
@@ -478,7 +486,30 @@ def _count_business_days(start: pd.Timestamp, end: pd.Timestamp) -> int:
     end = pd.to_datetime(end)
     if pd.isna(start) or pd.isna(end) or start > end:
         return 0
-    return len(pd.bdate_range(start, end))
+    start_day = start.normalize().to_datetime64().astype("datetime64[D]")
+    end_day_exclusive = (end.normalize() + pd.Timedelta(days=1)).to_datetime64().astype("datetime64[D]")
+    return int(np.busday_count(start_day, end_day_exclusive))
+
+
+def _business_day_gap_ranges(sorted_dates: pd.DatetimeIndex) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+    if len(sorted_dates) < 2:
+        return []
+    starts = sorted_dates[:-1] + pd.Timedelta(days=1)
+    ends = sorted_dates[1:] - pd.Timedelta(days=1)
+    valid = starts <= ends
+    if not valid.any():
+        return []
+
+    counts = np.zeros(len(starts), dtype=int)
+    start_days = starts[valid].to_numpy(dtype="datetime64[D]")
+    end_days = (ends[valid] + pd.Timedelta(days=1)).to_numpy(dtype="datetime64[D]")
+    counts[valid] = np.busday_count(start_days, end_days)
+
+    return [
+        (pd.Timestamp(start), pd.Timestamp(end))
+        for start, end, count in zip(starts, ends, counts)
+        if count > 1
+    ]
 
 
 def assess_capital_history_coverage(
@@ -511,34 +542,25 @@ def assess_capital_history_coverage(
             }
         )
         affected_tickers.add(ticker)
-        for d in pd.date_range(start_ts, end_ts, freq="D"):
-            affected_months.add(d.to_period("M").to_timestamp("M"))
-            affected_years.add(d.year)
+        for period in pd.period_range(start_ts.to_period("M"), end_ts.to_period("M"), freq="M"):
+            affected_months.add(period.to_timestamp("M"))
+        affected_years.update(range(start_ts.year, end_ts.year + 1))
+
+    normalized_price_history = {
+        ticker: _normalized_capital_price_series(series)
+        for ticker, series in price_history.items()
+    }
 
     for seg in holding_segments:
         valuation_days = daterange_days(seg.start, seg.end)
         if valuation_days.empty:
             continue
 
-        px_series = price_history.get(seg.ticker)
-        if px_series is None:
+        prices = normalized_price_history.get(seg.ticker)
+        if prices is None or prices.empty:
             if len(valuation_days) > 1:
                 add_issue(seg.ticker, valuation_days[1], valuation_days[-1], "missing_history")
             continue
-
-        prices = px_series.dropna().copy()
-        if prices.empty:
-            if len(valuation_days) > 1:
-                add_issue(seg.ticker, valuation_days[1], valuation_days[-1], "missing_history")
-            continue
-
-        prices.index = pd.to_datetime(prices.index, errors="coerce")
-        prices = prices[prices.index.notna()].sort_index()
-        if prices.empty:
-            if len(valuation_days) > 1:
-                add_issue(seg.ticker, valuation_days[1], valuation_days[-1], "missing_history")
-            continue
-        prices.index = prices.index.normalize()
 
         first_price_date = prices.index.min()
         last_price_date = prices.index.max()
@@ -553,12 +575,8 @@ def assess_capital_history_coverage(
                 add_issue(seg.ticker, early_days[1], early_days[-1], "missing_before_first_close")
 
         in_range_prices = prices[(prices.index >= first_price_date) & (prices.index <= last_price_date)]
-        if len(in_range_prices.index) > 1:
-            for prev_date, next_date in zip(in_range_prices.index[:-1], in_range_prices.index[1:]):
-                gap_start = prev_date + pd.Timedelta(days=1)
-                gap_end = next_date - pd.Timedelta(days=1)
-                if _count_business_days(gap_start, gap_end) > 1:
-                    add_issue(seg.ticker, gap_start, gap_end, "internal_gap")
+        for gap_start, gap_end in _business_day_gap_ranges(in_range_prices.index):
+            add_issue(seg.ticker, gap_start, gap_end, "internal_gap")
 
         late_days = valuation_days[valuation_days > last_price_date]
         if len(late_days) > 0:
