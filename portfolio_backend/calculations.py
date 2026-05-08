@@ -396,6 +396,33 @@ def resolve_capital_price_on_day(
     return fallback_price
 
 
+def resolve_capital_prices_for_days(
+    px_series: Optional[pd.Series],
+    valuation_days: pd.DatetimeIndex,
+    fallback_price: float,
+) -> pd.Series:
+    """Resolve capital-denominator prices for many days with same fallback semantics as one-day lookup."""
+    if valuation_days.empty:
+        return pd.Series(dtype=float, index=valuation_days)
+    fallback = float(fallback_price)
+    if px_series is None:
+        return pd.Series(fallback, index=valuation_days, dtype=float)
+    try:
+        prices = pd.to_numeric(px_series, errors="coerce").dropna()
+        if prices.empty:
+            return pd.Series(fallback, index=valuation_days, dtype=float)
+        prices.index = pd.to_datetime(prices.index, errors="coerce")
+        prices = prices[prices.index.notna()].sort_index()
+        if prices.empty:
+            return pd.Series(fallback, index=valuation_days, dtype=float)
+        prices.index = prices.index.normalize()
+        prices = prices[~prices.index.duplicated(keep="last")]
+        resolved = prices.reindex(prices.index.union(valuation_days)).sort_index().ffill().reindex(valuation_days)
+        return resolved.fillna(fallback).astype(float)
+    except Exception:
+        return pd.Series(fallback, index=valuation_days, dtype=float)
+
+
 def build_capital_timeline(
     option_lots: List[OptionLot],
     txns: List[StockTxn],
@@ -403,7 +430,7 @@ def build_capital_timeline(
     df_opts: pd.DataFrame,
     price_history: Dict[str, pd.Series],
 ) -> pd.DataFrame:
-    rows = []
+    component_series: Dict[str, List[pd.Series]] = defaultdict(list)
     for lot in option_lots:
         if lot.otype != "Put":
             continue
@@ -414,24 +441,35 @@ def build_capital_timeline(
         if pd.isna(open_d) or pd.isna(close_d):
             continue
         reserve = lot.strike * CONTRACT_MULTIPLIER * int(round(lot.qty))
-        for d in daterange_days(open_d, close_d):
-            rows.append((d, "puts_reserve", reserve))
+        days = daterange_days(open_d, close_d)
+        if not days.empty:
+            component_series["puts_reserve"].append(pd.Series(float(reserve), index=days))
 
     segs = build_holding_segments(txns, as_of)
     for seg in segs:
+        days = daterange_days(seg.start, seg.end)
+        if days.empty:
+            continue
         px_series = price_history.get(seg.ticker)
-        for d in daterange_days(seg.start, seg.end):
-            price_on_day = resolve_capital_price_on_day(px_series, d, seg.cost_per_share)
-            invested = seg.shares * price_on_day
-            rows.append((d, "shares_invested", invested))
+        prices = resolve_capital_prices_for_days(px_series, days, seg.cost_per_share)
+        component_series["shares_invested"].append(prices * seg.shares)
 
-    cap = pd.DataFrame(rows, columns=["date", "component", "amount"])
-    if cap.empty:
+    if not component_series:
         start_date = df_opts["trans_date"].min().normalize() if not df_opts.empty else as_of.normalize()
         idx = pd.date_range(start_date, as_of, freq="D")
-        cap = pd.DataFrame({"date": idx, "component": ["puts_reserve"] * len(idx), "amount": [0.0] * len(idx)})
-    daily = cap.groupby(["date", "component"])["amount"].sum().unstack(fill_value=0.0)
+        daily = pd.DataFrame({"puts_reserve": [0.0] * len(idx)}, index=idx)
+        daily["total"] = daily.sum(axis=1)
+        daily.index.name = "date"
+        return daily
+
+    columns = {}
+    for component, series_list in component_series.items():
+        if series_list:
+            values = pd.concat(series_list).groupby(level=0).sum().sort_index()
+            columns[component] = values
+    daily = pd.DataFrame(columns).fillna(0.0)
     daily["total"] = daily.sum(axis=1)
+    daily.index.name = "date"
     return daily
 
 
@@ -538,4 +576,3 @@ def assess_capital_history_coverage(
         "capital_history_affected_years": sorted(affected_years),
         "capital_history_affected_tickers": sorted(affected_tickers),
     }
-

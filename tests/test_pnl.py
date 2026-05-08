@@ -24,6 +24,8 @@ from portfolio_backend.calculations import (
     build_capital_timeline,
     build_option_trades,
     process_option_positions,
+    resolve_capital_price_on_day,
+    resolve_capital_prices_for_days,
 )
 from portfolio_backend.charts import build_benchmark_growth_chart_data, build_options_cycle_chart_data
 from portfolio_backend.constants import CONTRACT_MULTIPLIER
@@ -1429,6 +1431,20 @@ def test_capital_timeline_uses_same_day_close_when_available():
     )
 
     assert cap.loc[pd.Timestamp("2024-05-22"), "shares_invested"] == pytest.approx(11_200.0)
+
+
+def test_vectorized_capital_price_resolution_matches_scalar_resolution():
+    price_history = pd.Series(
+        [110.0, None, 115.0],
+        index=pd.to_datetime(["2024-05-24", "2024-05-27", "2024-05-28"]),
+    )
+    valuation_days = pd.date_range("2024-05-23", "2024-05-30", freq="D")
+
+    vectorized = resolve_capital_prices_for_days(price_history, valuation_days, fallback_price=100.0)
+
+    for valuation_day in valuation_days:
+        scalar = resolve_capital_price_on_day(price_history, valuation_day, fallback_price=100.0)
+        assert vectorized.loc[valuation_day] == pytest.approx(scalar)
 
 
 def test_capital_history_coverage_flags_missing_history_after_first_day():
