@@ -94,6 +94,7 @@ def build_mobile_payload_context(
         dependencies.collect_dividend_cashflows,
         dependencies.align_benchmarks_monthly,
         cache_bust=request.cache_bust,
+        timing_recorder=timing_recorder,
     )
     record("pipeline_build_ms", started_at)
 

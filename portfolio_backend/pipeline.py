@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date
-from typing import Any, Callable, Dict, List, Tuple
+from time import perf_counter
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -78,9 +79,18 @@ def build_base_pipeline(
     collect_dividend_cashflows_fn: Callable[[List, pd.Timestamp], Any],
     align_benchmarks_monthly_fn: Callable[[Dict[str, str], pd.DatetimeIndex], Dict[str, pd.Series]],
     cache_bust: int = 1,
+    timing_recorder: Optional[Callable[[str, float], None]] = None,
 ) -> PipelineState:
+    def record(phase: str, started_at: float) -> None:
+        if timing_recorder is not None:
+            timing_recorder(phase, (perf_counter() - started_at) * 1000)
+
     _ = cache_bust
+    started_at = perf_counter()
     df_opts = load_options_fn(sheet_id, selected_sheets)
+    record("pipeline_load_options_ms", started_at)
+
+    started_at = perf_counter()
     sheet_counts = df_opts.groupby("source_sheet").size().rename("rows").reset_index()
     today_norm = pd.Timestamp.today().normalize()
     as_of_ts = min(pd.Timestamp(as_of), today_norm)
@@ -89,13 +99,27 @@ def build_base_pipeline(
     historical_price_errors: List[str] = []
 
     df_opts = df_opts[df_opts["trans_date"] <= as_of_ts].copy()
+    record("pipeline_prepare_options_ms", started_at)
 
+    started_at = perf_counter()
     trades = build_option_trades(df_opts, issues)
+    record("pipeline_build_option_trades_ms", started_at)
+
+    started_at = perf_counter()
     realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
     issues.extend(trade_issues)
+    record("pipeline_process_option_positions_ms", started_at)
+
+    started_at = perf_counter()
     realized_sales, ending_inventory = compute_stock_realized_and_inventory(stock_txns, issues)
+    record("pipeline_stock_inventory_ms", started_at)
+
+    started_at = perf_counter()
     chain_outcomes = build_chains(stock_txns, realized_option_events, as_of_ts)
+    record("pipeline_chain_build_ms", started_at)
+
     start_date = df_opts["trans_date"].min() if not df_opts.empty else as_of_ts
+    started_at = perf_counter()
     if pd.notna(start_date):
         price_history, historical_price_errors, historical_price_summary = fetch_price_history_fn(
             {t.ticker for t in stock_txns},
@@ -104,10 +128,18 @@ def build_base_pipeline(
         )
     else:
         price_history, historical_price_errors, historical_price_summary = {}, [], {"requested": 0, "fetched": 0}
+    record("pipeline_historical_price_fetch_ms", started_at)
+
+    started_at = perf_counter()
     capital_daily = build_capital_timeline(all_option_lots, stock_txns, as_of_ts, df_opts, price_history)
+    record("pipeline_capital_timeline_ms", started_at)
+
+    started_at = perf_counter()
     holding_segments = build_holding_segments(stock_txns, as_of_ts)
     capital_history_state = assess_capital_history_coverage(holding_segments, price_history)
+    record("pipeline_capital_coverage_ms", started_at)
 
+    started_at = perf_counter()
     dividend_fetch_result = normalize_dividend_fetch_result(collect_dividend_cashflows_fn(stock_txns, as_of_ts))
     div_df = dividend_fetch_result.cashflows
     dividend_coverage_complete = bool(dividend_fetch_result.coverage_complete)
@@ -119,7 +151,9 @@ def build_base_pipeline(
         "attempted": len(dividend_attempted_tickers),
         "failed": len(dividend_failed_tickers),
     }
+    record("pipeline_dividend_fetch_ms", started_at)
 
+    started_at = perf_counter()
     monthly_summary = build_monthly_summary(realized_option_events, realized_sales, capital_daily, div_df, as_of_ts)
     affected_months = capital_history_state["capital_history_affected_months"]
     if capital_history_state["capital_history_incomplete"] and not monthly_summary.empty:
@@ -142,6 +176,7 @@ def build_base_pipeline(
         monthly_returns_active = pd.Series(dtype=float)
 
     open_options_df = build_open_options_frame(open_option_lots)
+    record("pipeline_monthly_summary_ms", started_at)
 
     live_prices: Dict[str, float] = {}
     price_summary = {"stocks_requested": 0, "stocks_fetched": 0}
@@ -187,6 +222,7 @@ def build_base_pipeline(
     if price_errors:
         issues.extend([f"Price error: {e}" for e in price_errors])
 
+    started_at = perf_counter()
     yearly = yearly_summary_from_monthly(monthly_summary, capital_daily, as_of_ts)
     twr_annualized = twr_annualized_by_year(monthly_returns.dropna())
     if not twr_annualized.empty:
@@ -229,13 +265,17 @@ def build_base_pipeline(
         as_of_ts,
         unrealized_blocked,
     )
+    record("pipeline_yearly_summary_ms", started_at)
 
+    started_at = perf_counter()
     per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
     per_ticker_totals = build_per_ticker_totals(per_ticker, per_ticker_unreal)
 
     cumulative_realized = float(monthly_summary["total_realized_pnl"].sum()) if not monthly_summary.empty else 0.0
     grand_total = cumulative_realized + total_unreal
+    record("pipeline_per_ticker_summary_ms", started_at)
 
+    started_at = perf_counter()
     benchmark_tickers = {"Cboe BXM": "^BXM", "PUTW ETF": "PUTW", "SCHD ETF": "SCHD"}
     strat_rets = monthly_returns_covered.copy()
     if not strat_rets.empty:
@@ -267,6 +307,7 @@ def build_base_pipeline(
                 row[key] = risk[key]
         benchmark_metrics_rows.append(row)
     benchmark_metrics_df = pd.DataFrame(benchmark_metrics_rows)
+    record("pipeline_benchmark_alignment_ms", started_at)
 
     return PipelineState(
         df_opts=df_opts,

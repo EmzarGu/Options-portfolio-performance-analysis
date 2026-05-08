@@ -341,6 +341,10 @@ def fetch_price_history_yf(
         return history, errors, summary
     provider = YFinancePriceHistoryProvider(yf_module)
     store = get_default_price_history_store()
+    cache_hits = 0
+    cache_misses = 0
+    cache_writes = 0
+    yfinance_fetches = 0
     for ticker in tickers:
         try:
             try:
@@ -349,18 +353,31 @@ def fetch_price_history_yf(
                 logger.warning("price_history_store_read_failed ticker=%s error=%s", ticker, exc)
                 cached = None
             if cached is not None and cached.fully_covered:
+                cache_hits += 1
                 series = cached.series
             else:
+                cache_misses += 1
+                yfinance_fetches += 1
                 series = provider.get_price_history(ticker, start, end)
                 if not series.empty:
                     try:
                         store.upsert_history(ticker, series, start, end)
+                        cache_writes += 1
                     except Exception as exc:
                         logger.warning("price_history_store_write_failed ticker=%s error=%s", ticker, exc)
             if not series.empty:
                 history[ticker] = series
         except Exception as exc:
             errors.append(f"Historical price download failed: {exc}")
+    logger.info(
+        "historical_price_cache_summary requested=%s fetched=%s cache_hits=%s cache_misses=%s cache_writes=%s yfinance_fetches=%s",
+        summary["requested"],
+        len(history),
+        cache_hits,
+        cache_misses,
+        cache_writes,
+        yfinance_fetches,
+    )
     summary["fetched"] = len(history)
     missing_tickers = [t for t in tickers if t not in history]
     if missing_tickers:
