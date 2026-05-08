@@ -57,11 +57,14 @@ class FirestoreDividendHistoryStore(DividendHistoryStore):
 
             client = firestore.Client(project=project, database=database)
         self.client = client
+        self._doc_cache: Dict[str, Optional[Dict]] = {}
 
     def get_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> DividendHistoryLookup:
         doc_id = _document_id(ticker)
-        snapshot = self.client.collection(COLLECTION_DIVIDEND_HISTORY).document(doc_id).get()
-        doc = snapshot.to_dict() if snapshot.exists else None
+        if doc_id not in self._doc_cache:
+            snapshot = self.client.collection(COLLECTION_DIVIDEND_HISTORY).document(doc_id).get()
+            self._doc_cache[doc_id] = snapshot.to_dict() or {} if snapshot.exists else None
+        doc = self._doc_cache[doc_id]
         return _lookup_from_doc(doc, ticker, start, end)
 
     def upsert_history(self, ticker: str, series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> None:
@@ -69,7 +72,9 @@ class FirestoreDividendHistoryStore(DividendHistoryStore):
         ref = self.client.collection(COLLECTION_DIVIDEND_HISTORY).document(doc_id)
         snapshot = ref.get()
         existing = snapshot.to_dict() if snapshot.exists else None
-        ref.set(_doc_from_series(ticker, series, start, end, existing))
+        doc = _doc_from_series(ticker, series, start, end, existing)
+        ref.set(doc)
+        self._doc_cache[doc_id] = doc
 
 
 _DEFAULT_STORE: Optional[DividendHistoryStore] = None

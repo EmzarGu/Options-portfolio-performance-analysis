@@ -72,15 +72,18 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
 
             client = firestore.Client(project=project, database=database)
         self.client = client
+        self._doc_cache: Dict[str, Optional[Dict]] = {}
 
     def get_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> PriceHistoryLookup:
         ticker_key = _ticker_key(ticker)
         docs: Dict[str, Dict] = {}
         for year in _years_between(start, end):
             doc_id = _document_id(ticker_key, year)
-            snapshot = self.client.collection(COLLECTION_PRICE_HISTORY_CHUNKS).document(doc_id).get()
-            if snapshot.exists:
-                docs[doc_id] = snapshot.to_dict() or {}
+            if doc_id not in self._doc_cache:
+                snapshot = self.client.collection(COLLECTION_PRICE_HISTORY_CHUNKS).document(doc_id).get()
+                self._doc_cache[doc_id] = snapshot.to_dict() or {} if snapshot.exists else None
+            if self._doc_cache[doc_id]:
+                docs[doc_id] = self._doc_cache[doc_id] or {}
         return _lookup_from_docs(docs, ticker_key, start, end)
 
     def get_many_history(
@@ -93,16 +96,19 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
         doc_refs = []
         for ticker_key in ticker_keys:
             for year in _years_between(start, end):
-                doc_refs.append(
-                    self.client.collection(COLLECTION_PRICE_HISTORY_CHUNKS).document(
-                        _document_id(ticker_key, year)
+                doc_id = _document_id(ticker_key, year)
+                if doc_id not in self._doc_cache:
+                    doc_refs.append(
+                        self.client.collection(COLLECTION_PRICE_HISTORY_CHUNKS).document(doc_id)
                     )
-                )
 
-        docs: Dict[str, Dict] = {}
-        for snapshot in self.client.get_all(doc_refs):
-            if snapshot.exists:
-                docs[snapshot.id] = snapshot.to_dict() or {}
+        if doc_refs:
+            for snapshot in self.client.get_all(doc_refs):
+                self._doc_cache[snapshot.id] = snapshot.to_dict() or {} if snapshot.exists else None
+
+        docs: Dict[str, Dict] = {
+            doc_id: doc for doc_id, doc in self._doc_cache.items() if doc
+        }
 
         return {
             ticker_key: _lookup_from_docs(docs, ticker_key, start, end)
@@ -122,6 +128,7 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
             _upsert_docs(docs, ticker_key, clean, start, end, years={year})
             if doc_id in docs:
                 ref.set(docs[doc_id])
+                self._doc_cache[doc_id] = docs[doc_id]
 
 
 _DEFAULT_STORE: Optional[PriceHistoryStore] = None
