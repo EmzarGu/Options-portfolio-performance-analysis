@@ -73,9 +73,13 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
             client = firestore.Client(project=project, database=database)
         self.client = client
         self._doc_cache: Dict[str, Optional[Dict]] = {}
+        self._lookup_cache: Dict[tuple[str, pd.Timestamp, pd.Timestamp], PriceHistoryLookup] = {}
 
     def get_history(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> PriceHistoryLookup:
         ticker_key = _ticker_key(ticker)
+        lookup_key = _lookup_key(ticker_key, start, end)
+        if lookup_key in self._lookup_cache:
+            return self._lookup_cache[lookup_key]
         docs: Dict[str, Dict] = {}
         for year in _years_between(start, end):
             doc_id = _document_id(ticker_key, year)
@@ -84,7 +88,9 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
                 self._doc_cache[doc_id] = snapshot.to_dict() or {} if snapshot.exists else None
             if self._doc_cache[doc_id]:
                 docs[doc_id] = self._doc_cache[doc_id] or {}
-        return _lookup_from_docs(docs, ticker_key, start, end)
+        lookup = _lookup_from_docs(docs, ticker_key, start, end)
+        self._lookup_cache[lookup_key] = lookup
+        return lookup
 
     def get_many_history(
         self,
@@ -93,8 +99,19 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
         end: pd.Timestamp,
     ) -> Dict[str, PriceHistoryLookup]:
         ticker_keys = [_ticker_key(ticker) for ticker in tickers]
-        doc_refs = []
+        result: Dict[str, PriceHistoryLookup] = {}
+        missing_ticker_keys = []
         for ticker_key in ticker_keys:
+            lookup_key = _lookup_key(ticker_key, start, end)
+            if lookup_key in self._lookup_cache:
+                result[ticker_key] = self._lookup_cache[lookup_key]
+            else:
+                missing_ticker_keys.append(ticker_key)
+        if not missing_ticker_keys:
+            return result
+
+        doc_refs = []
+        for ticker_key in missing_ticker_keys:
             for year in _years_between(start, end):
                 doc_id = _document_id(ticker_key, year)
                 if doc_id not in self._doc_cache:
@@ -110,10 +127,11 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
             doc_id: doc for doc_id, doc in self._doc_cache.items() if doc
         }
 
-        return {
-            ticker_key: _lookup_from_docs(docs, ticker_key, start, end)
-            for ticker_key in ticker_keys
-        }
+        for ticker_key in missing_ticker_keys:
+            lookup = _lookup_from_docs(docs, ticker_key, start, end)
+            self._lookup_cache[_lookup_key(ticker_key, start, end)] = lookup
+            result[ticker_key] = lookup
+        return result
 
     def upsert_history(self, ticker: str, series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> None:
         ticker_key = _ticker_key(ticker)
@@ -129,6 +147,13 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
             if doc_id in docs:
                 ref.set(docs[doc_id])
                 self._doc_cache[doc_id] = docs[doc_id]
+        self._clear_lookup_cache_for_ticker(ticker_key)
+
+    def _clear_lookup_cache_for_ticker(self, ticker: str) -> None:
+        ticker_key = _ticker_key(ticker)
+        self._lookup_cache = {
+            key: value for key, value in self._lookup_cache.items() if key[0] != ticker_key
+        }
 
 
 _DEFAULT_STORE: Optional[PriceHistoryStore] = None
@@ -172,6 +197,14 @@ def _ticker_key(ticker: str) -> str:
 def _document_id(ticker: str, year: int) -> str:
     safe_ticker = _ticker_key(ticker).replace("/", "_")
     return f"{safe_ticker}:{int(year)}"
+
+
+def _lookup_key(ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> tuple[str, pd.Timestamp, pd.Timestamp]:
+    return (
+        _ticker_key(ticker),
+        pd.to_datetime(start).normalize(),
+        pd.to_datetime(end).normalize(),
+    )
 
 
 def _years_between(start: pd.Timestamp, end: pd.Timestamp) -> list[int]:
