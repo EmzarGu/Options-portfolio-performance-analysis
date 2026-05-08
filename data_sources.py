@@ -369,7 +369,7 @@ def fetch_price_history_yf(
                 history[ticker] = series
         except Exception as exc:
             errors.append(f"Historical price download failed: {exc}")
-    logger.info(
+    logger.warning(
         "historical_price_cache_summary requested=%s fetched=%s cache_hits=%s cache_misses=%s cache_writes=%s yfinance_fetches=%s",
         summary["requested"],
         len(history),
