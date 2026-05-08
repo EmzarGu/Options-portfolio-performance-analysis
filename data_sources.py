@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import requests
 import warnings
 from collections import defaultdict
@@ -11,9 +12,13 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from portfolio_backend.price_history_store import get_default_price_history_store
+
 if TYPE_CHECKING:
     from portfolio_backend.models import HoldSeg, StockTxn
 
+
+logger = logging.getLogger(__name__)
 
 DIVIDEND_COLUMNS = ["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]
 DIVIDEND_HISTORY_CACHE: Dict[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]], pd.Series] = {}
@@ -335,9 +340,23 @@ def fetch_price_history_yf(
     if not tickers or pd.isna(start) or pd.isna(end):
         return history, errors, summary
     provider = YFinancePriceHistoryProvider(yf_module)
+    store = get_default_price_history_store()
     for ticker in tickers:
         try:
-            series = provider.get_price_history(ticker, start, end)
+            try:
+                cached = store.get_history(ticker, start, end)
+            except Exception as exc:
+                logger.warning("price_history_store_read_failed ticker=%s error=%s", ticker, exc)
+                cached = None
+            if cached is not None and cached.fully_covered:
+                series = cached.series
+            else:
+                series = provider.get_price_history(ticker, start, end)
+                if not series.empty:
+                    try:
+                        store.upsert_history(ticker, series, start, end)
+                    except Exception as exc:
+                        logger.warning("price_history_store_write_failed ticker=%s error=%s", ticker, exc)
             if not series.empty:
                 history[ticker] = series
         except Exception as exc:

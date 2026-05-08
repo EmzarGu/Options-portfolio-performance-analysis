@@ -22,6 +22,11 @@ Set these as environment variables or Secret Manager secrets in Cloud Run:
 - `MOBILE_API_KEY`: shared development API key required by all mobile endpoints
   except `/v1/mobile/health`.
 
+The service also uses Firestore Native mode in project
+`options-performance-dashboard` for the persistent yfinance historical price
+cache. Cloud Run should run with a service account that has
+`roles/datastore.user`; no Firestore client credentials are sent to iOS.
+
 Recommended setup:
 
 1. Create a Secret Manager secret named `google-service-account-json`.
@@ -52,6 +57,26 @@ The container intentionally excludes local files like `.streamlit/secrets.toml`,
 9. Add the `GOOGLE_SERVICE_ACCOUNT_JSON` and `MOBILE_API_KEY` environment
    variables from Secret Manager.
 10. Deploy.
+
+## Historical Price Cache
+
+The backend checks Firestore before fetching historical stock prices from
+yfinance. Cached records are stored in `price_history_chunks` as ticker/year
+documents such as `AAPL:2026`.
+
+Runtime selection:
+
+- Cloud Run: Firestore is selected automatically when Google Cloud project
+  metadata is available.
+- Local development: the cache is disabled by default unless
+  `PRICE_HISTORY_STORE=memory` or `PRICE_HISTORY_STORE=firestore` is set.
+- Tests: use the in-memory store.
+
+Useful environment variables:
+
+- `PRICE_HISTORY_STORE`: `auto`, `firestore`, `memory`, or `disabled`.
+- `FIRESTORE_PROJECT_ID`: optional explicit project override.
+- `FIRESTORE_DATABASE`: optional database override; default is `(default)`.
 
 ## Smoke Test
 

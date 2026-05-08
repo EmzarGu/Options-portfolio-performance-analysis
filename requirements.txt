@@ -4,6 +4,7 @@ numpy
 yfinance
 google-auth
 google-auth-httplib2
+google-cloud-firestore
 openpyxl
 tomli
 requests

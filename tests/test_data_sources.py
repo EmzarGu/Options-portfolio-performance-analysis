@@ -3,13 +3,16 @@ from dataclasses import dataclass
 import pandas as pd
 import pytest
 
+import data_sources
 from data_sources import (
     DividendFetchResult,
     YFinanceDividendProvider,
     YFinancePriceHistoryProvider,
     clear_dividend_history_cache,
     collect_dividend_cashflows,
+    fetch_price_history_yf,
 )
+from portfolio_backend.price_history_store import MemoryPriceHistoryStore
 
 
 @dataclass
@@ -258,3 +261,62 @@ def test_yfinance_price_history_provider_caches_repeated_ticker_range_fetches():
     assert yf_module.calls[0]["tickers"] == ["AAA"]
     assert first.tolist() == [101.0, 102.0]
     assert second.tolist() == [101.0, 102.0]
+
+
+def test_fetch_price_history_uses_persistent_store_for_repeated_ranges(monkeypatch):
+    price_data = pd.DataFrame(
+        {"Adj Close": [101.0, 102.0]},
+        index=pd.to_datetime(["2024-05-20", "2024-05-21"]),
+    )
+    yf_module = FakePriceYF(price_data)
+    store = MemoryPriceHistoryStore()
+    monkeypatch.setattr(data_sources, "get_default_price_history_store", lambda: store)
+
+    first, first_errors, first_summary = fetch_price_history_yf(
+        {"AAA"},
+        pd.Timestamp("2024-05-20"),
+        pd.Timestamp("2024-05-21"),
+        yf_module,
+    )
+    second, second_errors, second_summary = fetch_price_history_yf(
+        {"AAA"},
+        pd.Timestamp("2024-05-20"),
+        pd.Timestamp("2024-05-21"),
+        yf_module,
+    )
+
+    assert len(yf_module.calls) == 1
+    assert first_errors == []
+    assert second_errors == []
+    assert first_summary == {"requested": 1, "fetched": 1}
+    assert second_summary == {"requested": 1, "fetched": 1}
+    assert first["AAA"].tolist() == [101.0, 102.0]
+    assert second["AAA"].tolist() == [101.0, 102.0]
+
+
+def test_fetch_price_history_refetches_when_store_range_is_incomplete(monkeypatch):
+    price_data = pd.DataFrame(
+        {"Adj Close": [100.0, 101.0, 102.0]},
+        index=pd.to_datetime(["2024-05-19", "2024-05-20", "2024-05-21"]),
+    )
+    yf_module = FakePriceYF(price_data)
+    store = MemoryPriceHistoryStore()
+    monkeypatch.setattr(data_sources, "get_default_price_history_store", lambda: store)
+
+    fetch_price_history_yf(
+        {"AAA"},
+        pd.Timestamp("2024-05-20"),
+        pd.Timestamp("2024-05-21"),
+        yf_module,
+    )
+    history, errors, summary = fetch_price_history_yf(
+        {"AAA"},
+        pd.Timestamp("2024-05-19"),
+        pd.Timestamp("2024-05-21"),
+        yf_module,
+    )
+
+    assert len(yf_module.calls) == 2
+    assert errors == []
+    assert summary == {"requested": 1, "fetched": 1}
+    assert history["AAA"].tolist() == [100.0, 101.0, 102.0]
