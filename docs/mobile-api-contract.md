@@ -139,6 +139,8 @@ Response:
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
     "open_expiring_option_premium": 5200.0,
+    "includes_open_premium": true,
+    "projection_basis": "realized_plus_open_premium",
     "projected_month_pnl": 8410.0,
     "projected_return_roac": 0.016,
     "projected_return_ropc": 0.0131,
@@ -611,6 +613,8 @@ Response:
       "status": "beat",
       "realized_month_pnl": 11840.0,
       "open_expiring_option_premium": 0.0,
+      "includes_open_premium": false,
+      "projection_basis": "realized_only",
       "projected_month_pnl": 11840.0,
       "projected_return_roac": 0.024,
       "projected_return_ropc": 0.019,
@@ -633,6 +637,8 @@ Response:
       "status": "miss",
       "realized_month_pnl": -3920.0,
       "open_expiring_option_premium": 2500.0,
+      "includes_open_premium": true,
+      "projection_basis": "realized_plus_open_premium",
       "projected_month_pnl": -1420.0,
       "projected_return_roac": -0.0029,
       "projected_return_ropc": -0.0023,
@@ -650,6 +656,8 @@ Nullability:
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
 - `open_expiring_option_premium` is assigned by option expiration month for still-open short options.
+- `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
+- `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
 - `projected_month_pnl` is `realized_month_pnl + open_expiring_option_premium`.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the target-monitoring fields iOS should prefer.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.

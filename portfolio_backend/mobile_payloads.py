@@ -263,10 +263,13 @@ def _monthly_projection_values(
     projected_remaining_pnl = None
     if target_pnl is not None and projected_month_pnl is not None:
         projected_remaining_pnl = max(target_pnl - projected_month_pnl, 0.0)
+    includes_open_premium = bool((open_expiring_option_premium or 0.0) > 0.0)
 
     return {
         "realized_month_pnl": realized_month_pnl,
         "open_expiring_option_premium": open_expiring_option_premium,
+        "includes_open_premium": includes_open_premium,
+        "projection_basis": "realized_plus_open_premium" if includes_open_premium else "realized_only",
         "projected_month_pnl": projected_month_pnl,
         "projected_return_roac": projected_return_roac,
         "projected_return_ropc": projected_return_ropc,
@@ -394,6 +397,8 @@ def _mobile_month_row(
     if state is not None:
         out["realized_month_pnl"] = json_safe(projection["realized_month_pnl"])
         out["open_expiring_option_premium"] = json_safe(projection["open_expiring_option_premium"])
+        out["includes_open_premium"] = bool(projection["includes_open_premium"])
+        out["projection_basis"] = projection["projection_basis"]
         out["projected_month_pnl"] = json_safe(projection["projected_month_pnl"])
         out["projected_return_roac"] = json_safe(projection["projected_return_roac"])
         out["projected_return_ropc"] = json_safe(projection["projected_return_ropc"])
@@ -444,6 +449,8 @@ def build_current_month_performance(
             "realized_options_pnl": None,
             "realized_stock_pnl": None,
             "open_expiring_option_premium": None,
+            "includes_open_premium": False,
+            "projection_basis": "realized_only",
             "projected_month_pnl": None,
             "projected_return_roac": None,
             "projected_return_ropc": None,
@@ -467,6 +474,8 @@ def build_current_month_performance(
         "realized_options_pnl": month_row["realized_options_pnl"],
         "realized_stock_pnl": month_row["realized_stock_pnl"],
         "open_expiring_option_premium": month_row["open_expiring_option_premium"],
+        "includes_open_premium": month_row["includes_open_premium"],
+        "projection_basis": month_row["projection_basis"],
         "projected_month_pnl": month_row["projected_month_pnl"],
         "projected_return_roac": month_row["projected_return_roac"],
         "projected_return_ropc": month_row["projected_return_ropc"],
