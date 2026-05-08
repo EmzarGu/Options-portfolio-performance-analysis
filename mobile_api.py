@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import hashlib
 import hmac
 import logging
 import os
@@ -19,6 +20,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when dep
     ) from exc
 
 import streamlit_app as dashboard_app
+import pandas as pd
+from portfolio_backend.audit_store import RefreshAuditRecord, get_default_audit_store
 from portfolio_backend.mobile_api_service import (
     MobilePayloadRequest,
     MobileServiceDependencies,
@@ -73,6 +76,17 @@ def _supports_timing_recorder(func) -> bool:
         return False
     return any(
         parameter.name == "timing_recorder" or parameter.kind == Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
+def _supports_keyword(func, keyword: str) -> bool:
+    try:
+        parameters = signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == keyword or parameter.kind == Parameter.VAR_KEYWORD
         for parameter in parameters
     )
 
@@ -173,9 +187,72 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
     return JSONResponse(status_code=exc.status_code, content={"error": detail})
 
 
-def _dependencies() -> MobileServiceDependencies:
+def _options_source_hash(df) -> Optional[str]:
+    if df is None:
+        return None
+    try:
+        normalized = df.copy()
+        normalized = normalized.reindex(sorted(normalized.columns), axis=1)
+        row_hashes = pd.util.hash_pandas_object(normalized, index=False)
+        digest = hashlib.sha256()
+        digest.update("|".join(str(column) for column in normalized.columns).encode("utf-8"))
+        digest.update(row_hashes.values.tobytes())
+        return digest.hexdigest()
+    except Exception as exc:
+        logger.warning("source_hash_failed error=%s", exc)
+        return None
+
+
+def _sheet_row_counts(df) -> List[Dict[str, Any]]:
+    if df is None or getattr(df, "empty", True) or "source_sheet" not in df.columns:
+        return []
+    counts = df.groupby("source_sheet").size().reset_index(name="rows")
+    return [
+        {"name": str(row["source_sheet"]), "rows": int(row["rows"])}
+        for row in counts.to_dict(orient="records")
+    ]
+
+
+def _source_snapshot_id(source_hash: Optional[str], selected_sheets: List[str]) -> Optional[str]:
+    if not source_hash:
+        return None
+    sheets_key = ",".join(str(sheet) for sheet in selected_sheets)
+    return hashlib.sha256(f"{source_hash}|{sheets_key}".encode("utf-8")).hexdigest()[:32]
+
+
+def _dependencies(source_metadata: Optional[Dict[str, Any]] = None) -> MobileServiceDependencies:
+    def load_options_with_metadata(sheet_id: str, sheets: List[str]):
+        df = dashboard_app.load_options(sheet_id, sheets)
+        if source_metadata is not None:
+            download = None
+            try:
+                download = dashboard_app._download_excel(sheet_id)
+            except Exception as exc:
+                logger.warning("source_download_metadata_failed error=%s", exc)
+            if download is not None:
+                source_metadata.update(
+                    {
+                        "source_kind": getattr(download, "source", None),
+                        "source_name": getattr(download, "file_name", None),
+                        "source_downloaded_at": getattr(download, "downloaded_at", None),
+                        "source_modified_at": getattr(download, "file_modified_at", None),
+                        "source_version": getattr(download, "file_version", None),
+                    }
+                )
+            source_hash = _options_source_hash(df)
+            source_metadata.update(
+                {
+                    "source_content_hash": source_hash,
+                    "source_row_count": int(len(df)),
+                    "source_selected_sheets": [str(sheet) for sheet in sheets],
+                    "source_sheet_counts": _sheet_row_counts(df),
+                    "source_snapshot_id": _source_snapshot_id(source_hash, [str(sheet) for sheet in sheets]),
+                }
+            )
+        return df
+
     return MobileServiceDependencies(
-        load_options=dashboard_app.load_options,
+        load_options=load_options_with_metadata,
         fetch_price_history=dashboard_app.fetch_price_history_yf,
         collect_dividend_cashflows=dashboard_app.collect_dividend_cashflows,
         align_benchmarks_monthly=dashboard_app.align_benchmarks_monthly,
@@ -265,6 +342,20 @@ def _clear_context_cache() -> None:
         _active_cache_bust = 1
 
 
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _resolve_dependencies(source_metadata: Dict[str, Any]) -> MobileServiceDependencies:
+    try:
+        parameters = signature(_dependencies).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if parameters:
+        return _dependencies(source_metadata)
+    return _dependencies()
+
+
 def _context(
     *,
     as_of: Optional[date],
@@ -299,18 +390,70 @@ def _context(
         timing_recorder("context_cache_hit", 0)
 
     started_at = perf_counter()
+    source_metadata: Dict[str, Any] = {}
     context_kwargs = {"available_sheets": available}
+    if _supports_keyword(build_mobile_payload_context, "source_metadata"):
+        context_kwargs["source_metadata"] = source_metadata
     if timing_recorder is not None and _supports_timing_recorder(build_mobile_payload_context):
         context_kwargs["timing_recorder"] = timing_recorder
     context = build_mobile_payload_context(
         request,
-        _dependencies(),
+        _resolve_dependencies(source_metadata),
         **context_kwargs,
     )
     if timing_recorder is not None:
         timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
     _remember_context(key, context)
     return context
+
+
+def _record_refresh_audit(
+    *,
+    request: Request,
+    context,
+    payload: Dict[str, Any],
+    cache_bust: int,
+    started_at: str,
+    finished_at: str,
+) -> None:
+    source_metadata = dict(getattr(context, "source_metadata", {}) or {})
+    source_snapshot_id = source_metadata.get("source_snapshot_id")
+    store = get_default_audit_store()
+    try:
+        if source_snapshot_id:
+            store.upsert_source_snapshot(
+                str(source_snapshot_id),
+                {
+                    "schema_version": 1,
+                    "snapshot_id": source_snapshot_id,
+                    "content_hash": source_metadata.get("source_content_hash"),
+                    "source_kind": source_metadata.get("source_kind"),
+                    "source_name": source_metadata.get("source_name"),
+                    "source_version": source_metadata.get("source_version"),
+                    "source_downloaded_at": source_metadata.get("source_downloaded_at"),
+                    "source_modified_at": source_metadata.get("source_modified_at"),
+                    "selected_sheets": source_metadata.get("source_selected_sheets"),
+                    "sheet_counts": source_metadata.get("source_sheet_counts"),
+                    "row_count": source_metadata.get("source_row_count"),
+                    "last_seen_at": finished_at,
+                },
+            )
+        refresh = payload.get("refresh", {}) if isinstance(payload, dict) else {}
+        store.record_refresh_run(
+            RefreshAuditRecord(
+                run_id=f"mobile-refresh:{int(cache_bust)}",
+                started_at=started_at,
+                finished_at=finished_at,
+                status=str(refresh.get("status") or "unknown"),
+                request=payload.get("request", {}) if isinstance(payload, dict) else {},
+                data_freshness=payload.get("data_freshness", {}) if isinstance(payload, dict) else {},
+                refresh=refresh,
+                timings_ms=dict(getattr(request.state, "mobile_timings", {}) or {}),
+                source_snapshot_id=str(source_snapshot_id) if source_snapshot_id else None,
+            )
+        )
+    except Exception as exc:
+        logger.warning("refresh_audit_write_failed error=%s", exc)
 
 
 def _refresh_cache_bust() -> int:
@@ -347,6 +490,7 @@ def refresh_mobile_payloads(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     route_started_at = perf_counter()
+    audit_started_at = _now_iso()
     resolved_cache_bust = cache_bust if cache_bust is not None else _refresh_cache_bust()
     context = _context(
         as_of=as_of,
@@ -364,6 +508,14 @@ def refresh_mobile_payloads(
     )
     _record_timing(request, "dto_build_ms", _elapsed_ms(started_at))
     _record_timing(request, "route_total_ms", _elapsed_ms(route_started_at))
+    _record_refresh_audit(
+        request=request,
+        context=context,
+        payload=payload,
+        cache_bust=resolved_cache_bust,
+        started_at=audit_started_at,
+        finished_at=_now_iso(),
+    )
     return payload
 
 

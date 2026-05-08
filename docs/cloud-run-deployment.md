@@ -67,6 +67,11 @@ documents such as `AAPL:2026`.
 Dividend history uses the same pattern. Cached records are stored in
 `dividend_history` as ticker documents such as `AAPL`.
 
+Mobile refresh audit records are also written to Firestore on a best-effort
+basis. Refresh runs are stored in `refresh_runs`; source metadata snapshots are
+stored in `source_snapshots`. These records are operational/audit data only:
+Google Sheets remains the transaction source of truth.
+
 Runtime selection:
 
 - Cloud Run: Firestore is selected automatically when Google Cloud project
@@ -79,6 +84,7 @@ Useful environment variables:
 
 - `PRICE_HISTORY_STORE`: `auto`, `firestore`, `memory`, or `disabled`.
 - `DIVIDEND_HISTORY_STORE`: `auto`, `firestore`, `memory`, or `disabled`.
+- `AUDIT_STORE`: `auto`, `firestore`, `memory`, or `disabled`.
 - `FIRESTORE_PROJECT_ID`: optional explicit project override.
 - `FIRESTORE_DATABASE`: optional database override; default is `(default)`.
 

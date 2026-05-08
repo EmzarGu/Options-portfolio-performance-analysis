@@ -289,6 +289,77 @@ def test_refresh_route_respects_explicit_cache_bust(api_harness):
     assert response.json()["refresh"]["cache_bust"] == 123
 
 
+def test_refresh_route_records_best_effort_audit(api_harness, monkeypatch):
+    class FakeAuditStore:
+        def __init__(self):
+            self.source_snapshots = {}
+            self.refresh_runs = []
+
+        def upsert_source_snapshot(self, snapshot_id, snapshot):
+            self.source_snapshots[snapshot_id] = snapshot
+
+        def record_refresh_run(self, record):
+            self.refresh_runs.append(record)
+
+    store = FakeAuditStore()
+    monkeypatch.setattr(mobile_api, "get_default_audit_store", lambda: store)
+
+    response = api_harness.client.post("/v1/mobile/refresh?cache_bust=123")
+
+    assert response.status_code == 200
+    assert len(store.refresh_runs) == 1
+    record = store.refresh_runs[0]
+    assert record.run_id == "mobile-refresh:123"
+    assert record.status == "refreshed"
+    assert record.request["selected_sheets"] == ["Options 2025"]
+    assert "route_total_ms" in record.timings_ms
+
+
+def test_refresh_audit_records_source_snapshot(monkeypatch):
+    class FakeAuditStore:
+        def __init__(self):
+            self.source_snapshots = {}
+            self.refresh_runs = []
+
+        def upsert_source_snapshot(self, snapshot_id, snapshot):
+            self.source_snapshots[snapshot_id] = snapshot
+
+        def record_refresh_run(self, record):
+            self.refresh_runs.append(record)
+
+    store = FakeAuditStore()
+    monkeypatch.setattr(mobile_api, "get_default_audit_store", lambda: store)
+    request = SimpleNamespace(state=SimpleNamespace(mobile_timings={"price_fetch_ms": 12.3}))
+    context = SimpleNamespace(
+        source_metadata={
+            "source_snapshot_id": "snapshot-1",
+            "source_content_hash": "hash-1",
+            "source_selected_sheets": ["Options 2026"],
+            "source_sheet_counts": [{"name": "Options 2026", "rows": 5}],
+            "source_row_count": 5,
+        }
+    )
+    payload = {
+        "request": {"selected_sheets": ["Options 2026"]},
+        "data_freshness": {"source_sheets": [{"name": "Options 2026", "rows": 5}]},
+        "refresh": {"status": "refreshed", "reload_endpoints": []},
+    }
+
+    mobile_api._record_refresh_audit(
+        request=request,
+        context=context,
+        payload=payload,
+        cache_bust=123,
+        started_at="2026-05-08T20:00:00+00:00",
+        finished_at="2026-05-08T20:00:01+00:00",
+    )
+
+    assert store.source_snapshots["snapshot-1"]["content_hash"] == "hash-1"
+    assert store.source_snapshots["snapshot-1"]["row_count"] == 5
+    assert store.refresh_runs[0].source_snapshot_id == "snapshot-1"
+    assert store.refresh_runs[0].timings_ms == {"price_fetch_ms": 12.3}
+
+
 def test_read_routes_reuse_context_for_same_request(api_harness):
     dashboard_response = api_harness.client.get("/v1/mobile/dashboard")
     positions_response = api_harness.client.get("/v1/mobile/positions")
