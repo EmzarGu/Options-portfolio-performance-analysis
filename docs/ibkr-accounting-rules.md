@@ -76,6 +76,13 @@ IBKR same-order roll:
   the old lot close event. The replacement lot remains open with zero
   unrecognized premium for dashboard purposes, so its later expiration or
   assignment does not count the same credit a second time.
+
+Excluded/non-wheel call roll:
+  if a call is excluded because it is not backed by available
+  assignment-derived stock, every same-execution-group replacement leg remains
+  excluded until that non-wheel chain is closed. A later replacement must not
+  become wheel P&L merely because assignment-derived shares become available
+  after the non-wheel chain was already opened.
 ```
 
 This is not open-date realization. A non-rolled option opened in one year and
@@ -106,6 +113,7 @@ shares is excluded, even if IBKR later records a call assignment.
 | Roll short call up/out for debit | Same as above | Realize old lot on close date using old premium + close debit + replacement credit/debit. Open replacement with zero unrecognized premium for the rolled quantity. | Stock inventory unchanged. | Dividends continue. | Same if manually netted. | Same. |
 | Partial roll | Close part of old lot and open smaller/larger new lot in same execution group | FIFO close only the rolled quantity. Allocate replacement credit/debit pro rata. Preserve any unrolled old quantity and any residual new quantity separately. | Stock inventory unchanged. | Dividends continue. | Partial closes preserve remaining lot. | Same; IBKR quantities drive allocation. |
 | Roll short put down/out | `BUY/C` old put plus `SELL/O` new put in same execution group | Same roll netting as calls. | No stock transaction unless later assigned. | None until stock exists. | Same if rows separate or manually netted. | Same. |
+| Non-wheel call rolled forward | Original call is not backed by assignment-derived inventory; later `BUY/C` plus `SELL/O` replacement shares same IBKR execution group | Exclude original call, close, and replacement from wheel option P&L. | No wheel stock effect. | No wheel dividend effect. | Sheet may include this manually if it was intentionally tracked. | Preserve raw IBKR rows but do not include in wheel dashboard. |
 | Short put assigned then stock later sold manually | Put assignment stock buy plus later `Trade` `assetCategory=STK`, `buySell=SELL` | Put premium already realized at assignment. | Stock sale realizes stock P&L FIFO. | Dividends included for holding period. | Can handle only if sale comes from assigned call or manually represented stock flow; sheet source does not generally load stock sells. | Use explicit IBKR stock sell. This is required for reliable accounting. |
 | Manual stock buy followed by covered call | `Trade` stock buy; later short call `SELL/O` | Exclude from wheel option P&L. | Exclude from wheel stock P&L. | Exclude dividends. | Current source usually lacks independent stock buys unless derived. | Preserve raw activity, but do not include in wheel performance unless a separate covered-call strategy view is added. |
 | Manual stock sell not linked to option | `Trade` stock sell | No option P&L. | Realize stock P&L FIFO. If insufficient known basis, use prior-period positions or flag. | Holding segment ends for sold shares. | Limited/unsupported unless represented indirectly. | Use explicit stock sell; flag missing basis. |
@@ -171,6 +179,10 @@ Recommended defaults:
 10. Dashboard call option P&L is included only while assignment-derived shares
     from a prior short put are held. Covered calls without that prior put are
     preserved in raw storage and excluded from wheel performance.
+11. A roll replacement inherits the wheel/non-wheel classification of the
+    call being bought to close when both legs share the same IBKR execution
+    group. This prevents excluded call chains from re-entering wheel P&L later
+    as standalone replacement premium.
 
 ## Open Decisions
 

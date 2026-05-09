@@ -305,9 +305,17 @@ def wheel_option_executions(
     excluded: list[IbkrOptionExecution] = []
     issues: list[str] = []
     open_call_lots: dict[tuple, list[dict]] = {}
+    excluded_call_lots: dict[tuple, list[dict]] = {}
+    excluded_roll_groups: set[tuple] = set()
 
     def call_key(execution: IbkrOptionExecution) -> tuple:
         return (execution.ticker, execution.otype, execution.strike, execution.expiration)
+
+    def roll_group_key(execution: IbkrOptionExecution) -> Optional[tuple]:
+        group = _ibkr_roll_execution_group(execution.ib_exec_id)
+        if group is None:
+            return None
+        return (execution.date, execution.ticker, execution.otype, group)
 
     def held_shares_for(execution: IbkrOptionExecution) -> float:
         return sum(
@@ -317,12 +325,53 @@ def wheel_option_executions(
         )
 
     def expire_call_allocations(current_date: pd.Timestamp) -> None:
-        for key, lots in list(open_call_lots.items()):
-            active_lots = [lot for lot in lots if lot["expiration"] >= current_date and lot["qty"] > 1e-9]
-            if active_lots:
-                open_call_lots[key] = active_lots
-            else:
-                open_call_lots.pop(key, None)
+        for allocations in (open_call_lots, excluded_call_lots):
+            for key, lots in list(allocations.items()):
+                active_lots = [lot for lot in lots if lot["expiration"] >= current_date and lot["qty"] > 1e-9]
+                if active_lots:
+                    allocations[key] = active_lots
+                else:
+                    allocations.pop(key, None)
+
+    def append_call_lot(allocations: dict[tuple, list[dict]], execution: IbkrOptionExecution) -> None:
+        allocations.setdefault(call_key(execution), []).append(
+            {
+                "ticker": execution.ticker,
+                "qty": execution.qty,
+                "multiplier": execution.multiplier,
+                "expiration": execution.expiration,
+            }
+        )
+
+    def consume_call_lots(allocations: dict[tuple, list[dict]], execution: IbkrOptionExecution, qty: float) -> float:
+        remaining = qty
+        consumed = 0.0
+        key = call_key(execution)
+        buckets = allocations.get(key, [])
+        while remaining > 1e-9 and buckets:
+            lot = buckets[0]
+            take = min(remaining, lot["qty"])
+            consumed += take
+            lot["qty"] -= take
+            remaining -= take
+            if lot["qty"] <= 1e-9:
+                buckets.pop(0)
+        if not buckets:
+            allocations.pop(key, None)
+        return consumed
+
+    def mark_excluded_roll_replacement(execution: IbkrOptionExecution) -> None:
+        group_key = roll_group_key(execution)
+        if group_key is not None:
+            excluded_roll_groups.add(group_key)
+
+    def is_excluded_roll_replacement(execution: IbkrOptionExecution) -> bool:
+        group_key = roll_group_key(execution)
+        return group_key is not None and group_key in excluded_roll_groups
+
+    def add_excluded_sell(execution: IbkrOptionExecution) -> None:
+        excluded.append(execution)
+        append_call_lot(excluded_call_lots, execution)
 
     def allocated_call_shares(ticker: str) -> float:
         return sum(
@@ -332,7 +381,10 @@ def wheel_option_executions(
             if lot["ticker"] == ticker
         )
 
-    def split_execution(execution: IbkrOptionExecution, include_qty: float) -> tuple[Optional[IbkrOptionExecution], Optional[IbkrOptionExecution]]:
+    def split_execution(
+        execution: IbkrOptionExecution,
+        include_qty: float,
+    ) -> tuple[Optional[IbkrOptionExecution], Optional[IbkrOptionExecution]]:
         include_qty = min(max(include_qty, 0.0), execution.qty)
         if include_qty <= 1e-9:
             return None, execution
@@ -365,44 +417,55 @@ def wheel_option_executions(
             continue
 
         expire_call_allocations(execution.date)
-        key = call_key(execution)
         action = execution.action
         open_close = execution.open_close
 
         if action == "Buy" and open_close == "C":
-            remaining = execution.qty
-            include_qty = 0.0
-            buckets = open_call_lots.get(key, [])
-            while remaining > 1e-9 and buckets:
-                lot = buckets[0]
-                take = min(remaining, lot["qty"])
-                include_qty += take
-                lot["qty"] -= take
-                remaining -= take
-                if lot["qty"] <= 1e-9:
-                    buckets.pop(0)
-            if not buckets:
-                open_call_lots.pop(key, None)
-            included_part, excluded_part = split_execution(execution, include_qty)
+            included_qty = consume_call_lots(open_call_lots, execution, execution.qty)
+            remaining = execution.qty - included_qty
+            excluded_qty = consume_call_lots(excluded_call_lots, execution, remaining) if remaining > 1e-9 else 0.0
+            unmatched_qty = execution.qty - included_qty - excluded_qty
+
+            included_part, after_included = split_execution(execution, included_qty)
             if included_part is not None:
                 included.append(included_part)
-            if excluded_part is not None:
-                excluded.append(excluded_part)
-                issues.append(
-                    f"Excluded {excluded_part.qty:g} {execution.ticker} call close contracts on {execution.date.date()} "
-                    "because no included wheel call lot was open."
-                )
+            after_excluded = after_included
+            if excluded_qty > 1e-9:
+                mark_excluded_roll_replacement(execution)
+                excluded_part, after_excluded = split_execution(after_included or execution, excluded_qty)
+                if excluded_part is not None:
+                    excluded.append(excluded_part)
+                    issues.append(
+                        f"Excluded {excluded_part.qty:g} {execution.ticker} call close contracts on {execution.date.date()} "
+                        "because they close a non-wheel call lot."
+                    )
+            if unmatched_qty > 1e-9:
+                unmatched_part, _ = split_execution(after_excluded or execution, unmatched_qty)
+                if unmatched_part is not None:
+                    excluded.append(unmatched_part)
+                    issues.append(
+                        f"Excluded {unmatched_part.qty:g} {execution.ticker} call close contracts on {execution.date.date()} "
+                        "because no included wheel call lot was open."
+                    )
             continue
 
         if action != "Sell":
             excluded.append(execution)
             continue
 
+        if open_close == "O" and is_excluded_roll_replacement(execution):
+            add_excluded_sell(execution)
+            issues.append(
+                f"Excluded {execution.ticker} call roll replacement on {execution.date.date()} "
+                "because the closed call lot was non-wheel."
+            )
+            continue
+
         held_shares = held_shares_for(execution)
         required_shares = execution.qty * execution.multiplier
         available_shares = max(held_shares - allocated_call_shares(execution.ticker), 0.0)
         if available_shares <= 1e-9:
-            excluded.append(execution)
+            add_excluded_sell(execution)
             if held_shares <= 1e-9:
                 issues.append(
                     f"Excluded {execution.ticker} call execution on {execution.date.date()} "
@@ -419,24 +482,25 @@ def wheel_option_executions(
         included_part, excluded_part = split_execution(execution, include_qty)
         if included_part is not None:
             included.append(included_part)
-            open_call_lots.setdefault(key, []).append(
-                {
-                    "ticker": included_part.ticker,
-                    "qty": included_part.qty,
-                    "multiplier": included_part.multiplier,
-                    "expiration": included_part.expiration,
-                }
-            )
+            append_call_lot(open_call_lots, included_part)
         if excluded_part is None:
             continue
 
-        excluded.append(excluded_part)
+        add_excluded_sell(excluded_part)
         issues.append(
             f"Prorated {execution.ticker} call execution on {execution.date.date()} to {include_qty * execution.multiplier:g} "
             f"wheel-held shares out of {required_shares:g} required shares."
         )
 
     return included, excluded, issues
+
+
+def _ibkr_roll_execution_group(ib_exec_id: Optional[str]) -> Optional[str]:
+    text = str(ib_exec_id or "").strip()
+    parts = text.split(".")
+    if len(parts) < 4 or not parts[0] or not parts[1]:
+        return None
+    return ".".join(parts[:2])
 
 
 def cashflows_from_rows(cash_rows: Iterable[IbkrRawRow]) -> list[IbkrCashflow]:
