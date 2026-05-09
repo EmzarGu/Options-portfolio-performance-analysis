@@ -91,7 +91,7 @@
       "unrealized_pnl": 0.0,
       "total_pnl": 0.0,
       "open_option_count": 1,
-      "inventory_share_count": 100,
+      "inventory_share_count": 0,
       "risk_labels": [
         "Missing price"
       ],

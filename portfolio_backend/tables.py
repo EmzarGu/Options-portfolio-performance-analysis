@@ -51,7 +51,7 @@ def build_assigned_holdings_frame(inventory: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame() if inventory is None else inventory.copy()
     holdings = inventory.copy()
     if "source" in holdings.columns:
-        holdings = holdings[holdings["source"].isin(["stock_lot", "put_gap"])]
+        holdings = holdings[holdings["source"] == "stock_lot"]
     return holdings
 
 

@@ -37,19 +37,6 @@
       "source": "stock_lot",
       "ticker": "CALL",
       "unrealized_pnl": 1500.0
-    },
-    {
-      "buy_date": "2026-04-03",
-      "cost_per_share": 25.0,
-      "covered_shares": 0,
-      "covered_strike": null,
-      "current_price": null,
-      "id": "inventory:MISS:2026-04-03:put_gap:0",
-      "missing_price": true,
-      "shares": 100,
-      "source": "put_gap",
-      "ticker": "MISS",
-      "unrealized_pnl": null
     }
   ],
   "open_option_shorts": [

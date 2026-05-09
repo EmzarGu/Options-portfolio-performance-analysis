@@ -412,19 +412,6 @@ def test_inventory_rows_emit_mobile_contract_shape():
             "source": "stock_lot",
             "missing_price": False,
         },
-        {
-            "id": "inventory:MISS:2026-04-03:put_gap:0",
-            "ticker": "MISS",
-            "buy_date": "2026-04-03",
-            "shares": 100,
-            "cost_per_share": 25.0,
-            "current_price": None,
-            "covered_shares": 0,
-            "covered_strike": None,
-            "unrealized_pnl": None,
-            "source": "put_gap",
-            "missing_price": True,
-        },
     ]
 
 
@@ -677,10 +664,7 @@ def test_mobile_positions_composes_contract_payload():
     ]
     assert [row["id"] for row in positions["inventory"]] == [
         "inventory:CALL:2026-04-02:stock_lot:0",
-        "inventory:MISS:2026-04-03:put_gap:0",
     ]
-    assert positions["inventory"][1]["missing_price"] is True
-    assert positions["inventory"][1]["unrealized_pnl"] is None
     assert len(positions["open_option_shorts"]) == 5
     assert positions["open_option_shorts"][0]["id"].startswith("optlot:")
 
