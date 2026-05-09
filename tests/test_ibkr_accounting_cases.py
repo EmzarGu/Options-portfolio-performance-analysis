@@ -251,6 +251,205 @@ def test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_unco
     ]
 
 
+def test_ibkr_partial_covered_call_keeps_uncovered_assigned_stock_inventory_open():
+    put_open = _trade(
+        symbol="EMN  260117P00070000",
+        underlyingSymbol="EMN",
+        description="EMN 17JAN26 70 P",
+        conid="7001",
+        tradeID="TP1",
+        transactionID="XP1",
+        ibExecID="EP1",
+        tradeDate="20260110",
+        dateTime="20260110;154500",
+        expiry="20260117",
+        strike="70",
+        putCall="P",
+        quantity="-4",
+        tradePrice="2.00",
+        proceeds="800",
+        ibCommission="-4",
+        netCash="796",
+    )
+    put_assignment = _option_eae(
+        symbol="EMN  260117P00070000",
+        underlyingSymbol="EMN",
+        description="EMN 17JAN26 70 P",
+        conid="7001",
+        tradeID="TP1",
+        date="20260117",
+        expiry="20260117",
+        strike="70",
+        putCall="P",
+        quantity="-4",
+        realizedPnl="796",
+    )
+    assigned_buy = _stock_eae(
+        symbol="EMN",
+        tradeID="SP1",
+        date="20260117",
+        transactionType="Buy",
+        quantity="400",
+        tradePrice="70",
+        proceeds="-28000",
+    )
+    call_open = _trade(
+        symbol="EMN  260320C00075000",
+        underlyingSymbol="EMN",
+        description="EMN 20MAR26 75 C",
+        conid="7501",
+        tradeID="TC1",
+        transactionID="XC1",
+        ibExecID="EC1",
+        tradeDate="20260201",
+        dateTime="20260201;154500",
+        expiry="20260320",
+        strike="75",
+        putCall="C",
+        quantity="-2",
+        tradePrice="1.50",
+        proceeds="300",
+        ibCommission="-2",
+        netCash="298",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report({"Trade": [put_open, call_open], "OptionEAE": [put_assignment, assigned_buy]}),
+        as_of=pd.Timestamp("2026-02-15").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(txn.ticker, txn.side, txn.shares, txn.price) for txn in state.stock_txns] == [
+        ("EMN", "BUY", 400, 70.0)
+    ]
+    assert state.realized_sales == []
+    assert [(lot.ticker, lot.shares_remaining, lot.cost_per_share) for lot in state.ending_inventory] == [
+        ("EMN", 400, 70.0)
+    ]
+    assert [(row["ticker"], row["type"], row["qty"], row["strike"], row["open_price"]) for _, row in state.open_options.iterrows()] == [
+        ("EMN", "Call", 2, 75.0, pytest.approx(1.49))
+    ]
+    assert [(event.ticker, event.otype, event.qty, event.pnl, event.reason) for event in state.realized_option_events] == [
+        ("EMN", "Put", 4, pytest.approx(796.0), "assignment")
+    ]
+    assert not [issue for issue in state.issues if "EMN call" in issue or "assigned-call sold shares of EMN" in issue]
+
+
+def test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_remaining_inventory():
+    put_open = _trade(
+        symbol="EMN  260117P00070000",
+        underlyingSymbol="EMN",
+        description="EMN 17JAN26 70 P",
+        conid="7001",
+        tradeID="TP1",
+        transactionID="XP1",
+        ibExecID="EP1",
+        tradeDate="20260110",
+        dateTime="20260110;154500",
+        expiry="20260117",
+        strike="70",
+        putCall="P",
+        quantity="-4",
+        tradePrice="2.00",
+        proceeds="800",
+        ibCommission="-4",
+        netCash="796",
+    )
+    put_assignment = _option_eae(
+        symbol="EMN  260117P00070000",
+        underlyingSymbol="EMN",
+        description="EMN 17JAN26 70 P",
+        conid="7001",
+        tradeID="TP1",
+        date="20260117",
+        expiry="20260117",
+        strike="70",
+        putCall="P",
+        quantity="-4",
+        realizedPnl="796",
+    )
+    assigned_buy = _stock_eae(
+        symbol="EMN",
+        tradeID="SP1",
+        date="20260117",
+        transactionType="Buy",
+        quantity="400",
+        tradePrice="70",
+        proceeds="-28000",
+    )
+    call_open = _trade(
+        symbol="EMN  260320C00075000",
+        underlyingSymbol="EMN",
+        description="EMN 20MAR26 75 C",
+        conid="7501",
+        tradeID="TC1",
+        transactionID="XC1",
+        ibExecID="EC1",
+        tradeDate="20260201",
+        dateTime="20260201;154500",
+        expiry="20260320",
+        strike="75",
+        putCall="C",
+        quantity="-2",
+        tradePrice="1.50",
+        proceeds="300",
+        ibCommission="-2",
+        netCash="298",
+    )
+    call_assignment = _option_eae(
+        symbol="EMN  260320C00075000",
+        underlyingSymbol="EMN",
+        description="EMN 20MAR26 75 C",
+        conid="7501",
+        tradeID="TC1",
+        date="20260320",
+        expiry="20260320",
+        strike="75",
+        putCall="C",
+        quantity="-2",
+        realizedPnl="298",
+    )
+    assigned_sell = _stock_eae(
+        symbol="EMN",
+        tradeID="SC1",
+        date="20260320",
+        transactionType="Sell",
+        quantity="-200",
+        tradePrice="75",
+        proceeds="15000",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report(
+            {
+                "Trade": [put_open, call_open],
+                "OptionEAE": [put_assignment, assigned_buy, call_assignment, assigned_sell],
+            }
+        ),
+        as_of=pd.Timestamp("2026-04-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(txn.ticker, txn.side, txn.shares, txn.price) for txn in state.stock_txns] == [
+        ("EMN", "BUY", 400, 70.0),
+        ("EMN", "SELL", 200, 75.0),
+    ]
+    assert [(sale.ticker, sale.shares, sale.proceeds, sale.cost, sale.pnl) for sale in state.realized_sales] == [
+        ("EMN", 200, 15000.0, 14000.0, 1000.0)
+    ]
+    assert [(lot.ticker, lot.shares_remaining, lot.cost_per_share) for lot in state.ending_inventory] == [
+        ("EMN", 200, 70.0)
+    ]
+    assert state.open_options.empty
+    assert [(event.ticker, event.otype, event.qty, event.pnl, event.reason) for event in state.realized_option_events] == [
+        ("EMN", "Put", 4, pytest.approx(796.0), "assignment"),
+        ("EMN", "Call", 2, pytest.approx(298.0), "assignment"),
+    ]
+    assert not [issue for issue in state.issues if "EMN call" in issue or "assigned-call sold shares of EMN" in issue]
+
+
 def test_ibkr_wheel_options_dataframe_preserves_prorated_call_execution():
     report = _report(
         {
