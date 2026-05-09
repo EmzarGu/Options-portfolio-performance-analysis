@@ -4,11 +4,12 @@ import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional, Protocol
 
 from portfolio_backend.ibkr.dedupe import canonical_row_hash, dedupe_key, raw_row_id
+from portfolio_backend.ibkr.flex_client import DateRange
 from portfolio_backend.ibkr.flex_parser import IbkrFlexReport, IbkrRawRow, parse_flex_xml
 from portfolio_backend.ibkr.normalization import IbkrNormalizedTransaction, normalize_transactions
 
@@ -83,6 +84,9 @@ class ImportRecordStore(Protocol):
     def finish_run(self, run_id: str, updates: dict[str, Any]) -> None:
         ...
 
+    def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
+        ...
+
 
 class LocalRawReportStore:
     def __init__(self, root_dir: str | Path = "tmp/ibkr_import/raw") -> None:
@@ -152,6 +156,19 @@ class LocalJsonImportStore:
         path = self._doc_path("ibkr_import_runs", run_id)
         existing = _read_json(path) if path.exists() else {"run_id": run_id}
         self._write_doc("ibkr_import_runs", run_id, {**existing, **updates})
+
+    def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
+        ranges: list[DateRange] = []
+        for path in sorted((self.root_dir / "ibkr_import_runs").glob("*.json")):
+            doc = _read_json(path)
+            if str(doc.get("query_id")) != str(query_id):
+                continue
+            if str(doc.get("status")) != "succeeded":
+                continue
+            date_range = _date_range_from_doc(doc)
+            if date_range is not None:
+                ranges.append(date_range)
+        return ranges
 
     def _doc_path(self, collection: str, doc_id: str) -> Path:
         return self.root_dir / collection / f"{doc_id}.json"
@@ -255,6 +272,18 @@ class FirestoreImportStore:
 
     def finish_run(self, run_id: str, updates: dict[str, Any]) -> None:
         self.client.collection(self.import_runs_collection).document(run_id).set(updates, merge=True)
+
+    def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
+        query = self.client.collection(self.import_runs_collection).where("query_id", "==", str(query_id))
+        ranges: list[DateRange] = []
+        for snap in query.stream():
+            doc = snap.to_dict() or {}
+            if str(doc.get("status")) != "succeeded":
+                continue
+            date_range = _date_range_from_doc(doc)
+            if date_range is not None:
+                ranges.append(date_range)
+        return ranges
 
     def _upsert_docs(self, collection: str, docs: list[tuple[str, dict[str, Any]]]) -> tuple[int, int]:
         inserted = 0
@@ -414,6 +443,26 @@ def _sha256(data: bytes) -> str:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _date_range_from_doc(doc: dict[str, Any]) -> Optional[DateRange]:
+    start = _date_from_ibkr_value(doc.get("from_date") or doc.get("report_from_date"))
+    end = _date_from_ibkr_value(doc.get("to_date") or doc.get("report_to_date"))
+    if start is None or end is None or end < start:
+        return None
+    return DateRange(start, end)
+
+
+def _date_from_ibkr_value(value: Any) -> Optional[date]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) == 8 and text.isdigit():
+        return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
 
 
 def _now_iso() -> str:

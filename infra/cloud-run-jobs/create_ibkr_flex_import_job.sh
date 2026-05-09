@@ -10,7 +10,8 @@ JOB_NAME="${JOB_NAME:-ibkr-flex-import}"
 SERVICE_NAME="${SERVICE_NAME:-options-roi-mobile-api}"
 RUNTIME_SA="${RUNTIME_SA:-595990983720-compute@developer.gserviceaccount.com}"
 RAW_BUCKET="${IBKR_RAW_BUCKET:-options-portfolio-ibkr-raw-595990983720}"
-IMPORT_LAST_DAYS="${IBKR_IMPORT_LAST_DAYS:-14}"
+IMPORT_INCEPTION_DATE="${IBKR_IMPORT_INCEPTION_DATE:-2022-11-01}"
+IMPORT_RECENT_OVERLAP_DAYS="${IBKR_IMPORT_RECENT_OVERLAP_DAYS:-14}"
 IMPORT_TO_OFFSET_DAYS="${IBKR_IMPORT_TO_OFFSET_DAYS:-1}"
 
 IMAGE_URI="${IMAGE_URI:-$(gcloud run services describe "${SERVICE_NAME}" \
@@ -25,11 +26,11 @@ COMMON_FLAGS=(
   --service-account="${RUNTIME_SA}"
   --command=python
   --args=-m,portfolio_backend.ibkr.import_job
-  --set-env-vars="IBKR_RAW_BUCKET=${RAW_BUCKET},IBKR_IMPORT_LAST_DAYS=${IMPORT_LAST_DAYS},IBKR_IMPORT_TO_OFFSET_DAYS=${IMPORT_TO_OFFSET_DAYS}"
+  --set-env-vars="IBKR_RAW_BUCKET=${RAW_BUCKET},IBKR_IMPORT_INCEPTION_DATE=${IMPORT_INCEPTION_DATE},IBKR_IMPORT_RECENT_OVERLAP_DAYS=${IMPORT_RECENT_OVERLAP_DAYS},IBKR_IMPORT_TO_OFFSET_DAYS=${IMPORT_TO_OFFSET_DAYS}"
   --set-secrets="IBKR_FLEX_TOKEN=ibkr-flex-token:latest,IBKR_FLEX_QUERY_ID=ibkr-flex-query-id:latest"
   --tasks=1
   --max-retries=1
-  --task-timeout=1800s
+  --task-timeout=7200s
 )
 
 if gcloud run jobs describe "${JOB_NAME}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then

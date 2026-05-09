@@ -25,17 +25,40 @@ IBKR_FLEX_QUERY_ID  Secret Manager: ibkr-flex-query-id:latest
 IBKR_RAW_BUCKET     options-portfolio-ibkr-raw-595990983720
 ```
 
-Default behavior uses the Flex query's configured period. For scheduled imports,
-prefer an explicit rolling window that ends yesterday because IBKR can reject
-current-day statements before they are available:
+Default scheduled behavior is coverage-aware. When `IBKR_IMPORT_INCEPTION_DATE`
+is set and no explicit `IBKR_IMPORT_FROM` / `IBKR_IMPORT_TO` range is supplied,
+the job inspects successful `ibkr_import_runs`, imports missing coverage from
+inception through yesterday, and re-imports a recent overlap window to catch
+late IBKR corrections.
 
 ```text
-IBKR_IMPORT_LAST_DAYS=14
+IBKR_IMPORT_INCEPTION_DATE=2022-11-01
+IBKR_IMPORT_RECENT_OVERLAP_DAYS=14
 IBKR_IMPORT_TO_OFFSET_DAYS=1
 ```
 
-With those settings, a job running on `2026-05-09` requests `2026-04-25`
-through `2026-05-08`.
+With those settings, a job running on `2026-05-09` guarantees coverage from
+`2022-11-01` through `2026-05-08`. If Firestore is empty, it splits the full
+range into IBKR-safe chunks of 365 days or less. If history is already covered,
+it re-imports only the last 14 days ending `2026-05-08`.
+
+Progress is written as newline-delimited JSON in Cloud Run logs:
+
+```text
+auto_plan
+chunk_started
+chunk_succeeded
+chunk_failed
+auto_summary
+```
+
+Each chunk has its own import run, raw GCS object, Firestore write counts, and
+refresh audit record. A failed chunk is logged with its date range and error,
+and the job exits failed after reporting the summary.
+
+The prepared job timeout is 7,200 seconds so a reset or empty Firestore database
+can complete a multi-year backfill in one run while still emitting per-chunk
+progress.
 
 Manual date overrides are available and take precedence over the rolling window:
 
@@ -49,6 +72,9 @@ or:
 IBKR_IMPORT_FROM=YYYY-MM-DD
 IBKR_IMPORT_TO=YYYY-MM-DD
 ```
+
+For old rolling-window behavior without coverage diagnosis, set
+`IBKR_IMPORT_LAST_DAYS`.
 
 ## Service Account
 

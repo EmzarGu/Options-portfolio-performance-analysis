@@ -9,7 +9,7 @@ import pytest
 from portfolio_backend.ibkr.dedupe import dedupe_key, raw_row_id
 from portfolio_backend.ibkr.flex_client import DateRange, plan_backfill_ranges, processing_message
 from portfolio_backend.ibkr.flex_parser import count_trade_asset_categories, parse_flex_xml_file
-from portfolio_backend.ibkr.import_job import _date_range_from_args
+from portfolio_backend.ibkr.import_job import _auto_target_range_from_args, _date_range_from_args, plan_missing_import_ranges
 from portfolio_backend.ibkr.importer import IbkrImportService, LocalJsonImportStore, LocalRawReportStore
 from portfolio_backend.ibkr.normalization import normalize_transactions, redacted_preview
 from portfolio_backend.ibkr.persisted_report import LocalJsonFlexReportRepository
@@ -196,6 +196,54 @@ def test_import_job_can_build_rolling_range(monkeypatch):
     assert date_range == DateRange(date(2026, 4, 25), date(2026, 5, 8))
 
 
+def test_import_job_can_build_auto_target_range(monkeypatch):
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            import datetime as dt
+
+            return dt.datetime(2026, 5, 9, tzinfo=tz)
+
+    monkeypatch.setattr("portfolio_backend.ibkr.import_job.datetime", FixedDateTime)
+
+    date_range = _auto_target_range_from_args(
+        SimpleNamespace(
+            inception_date="2022-11-01",
+            to_offset_days=1,
+        )
+    )
+
+    assert date_range == DateRange(date(2022, 11, 1), date(2026, 5, 8))
+
+
+def test_plan_missing_import_ranges_backfills_gaps_and_recent_overlap():
+    planned = plan_missing_import_ranges(
+        target=DateRange(date(2022, 11, 1), date(2026, 5, 8)),
+        existing=[
+            DateRange(date(2022, 11, 1), date(2023, 10, 31)),
+            DateRange(date(2024, 11, 1), date(2026, 5, 1)),
+        ],
+        recent_overlap_days=14,
+    )
+
+    assert planned == [
+        DateRange(date(2023, 11, 1), date(2024, 10, 30)),
+        DateRange(date(2024, 10, 31), date(2024, 10, 31)),
+        DateRange(date(2026, 4, 25), date(2026, 5, 1)),
+        DateRange(date(2026, 5, 2), date(2026, 5, 8)),
+    ]
+
+
+def test_plan_missing_import_ranges_only_recent_overlap_when_coverage_complete():
+    planned = plan_missing_import_ranges(
+        target=DateRange(date(2022, 11, 1), date(2026, 5, 8)),
+        existing=[DateRange(date(2022, 1, 1), date(2026, 5, 8))],
+        recent_overlap_days=14,
+    )
+
+    assert planned == [DateRange(date(2026, 4, 25), date(2026, 5, 8))]
+
+
 def test_backfill_split_helpers_isolate_unavailable_ranges():
     chunk = DateRange(date(2025, 6, 24), date(2025, 12, 20))
     left, right = _split_range(chunk)
@@ -242,6 +290,18 @@ def test_local_ibkr_import_service_writes_raw_rows_and_transactions(tmp_path):
     assert Path(first.raw_report.local_path).exists()
     assert len(list((tmp_path / "firestore_sim" / "ibkr_raw_rows").glob("*.json"))) == 6
     assert len(list((tmp_path / "firestore_sim" / "ibkr_transactions").glob("*.json"))) == 3
+
+
+def test_local_import_store_reports_successful_import_ranges(tmp_path):
+    service = IbkrImportService(
+        LocalRawReportStore(tmp_path / "raw"),
+        LocalJsonImportStore(tmp_path / "firestore_sim"),
+    )
+    service.import_xml(FIXTURE.read_bytes(), query_id="1503002", run_id="run-1")
+
+    ranges = LocalJsonImportStore(tmp_path / "firestore_sim").successful_import_ranges(query_id="1503002")
+
+    assert ranges == [DateRange(date(2026, 1, 1), date(2026, 1, 31))]
 
 
 def test_local_persisted_report_repository_rebuilds_flex_report(tmp_path):
