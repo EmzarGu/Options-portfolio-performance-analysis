@@ -378,19 +378,19 @@ Comparison command:
 | Year | Source | Option P&L | Stock realized P&L | Net dividends | Realized strategy cash P&L |
 |---|---|---:|---:|---:|---:|
 | 2024 | Current sheet | 12,670.46 | -3,150.00 | 90.00 | 9,610.46 |
-| 2024 | IBKR-native | 12,523.79 | -900.00 | 118.15 | 11,741.95 |
+| 2024 | IBKR-native | 12,428.84 | -900.00 | 118.15 | 11,646.99 |
 | 2025 | Current sheet | 24,771.73 | 2,600.00 | 616.60 | 27,988.33 |
-| 2025 | IBKR-native | 28,965.26 | 2,600.00 | 524.13 | 32,089.38 |
+| 2025 | IBKR-native | 28,672.78 | 2,600.00 | 524.13 | 31,796.91 |
 | 2026 YTD | Current sheet | 18,213.80 | 3,900.00 | 87.00 | 22,200.80 |
-| 2026 YTD | IBKR-native | 20,684.44 | 3,900.00 | 22.95 | 24,607.40 |
+| 2026 YTD | IBKR-native | 20,301.27 | 3,900.00 | 22.95 | 24,224.22 |
 
 The option P&L differences are now plausible:
 
 | Year | IBKR option cashflow - sheet option P&L | Main reasons |
 |---|---:|---|
-| 2024 | -146.67 | ABR covered-call cash is now excluded because there was no prior put assignment. Other basic option mapping is very close. |
-| 2025 | 4,193.53 | Mostly year-boundary option cash and execution-level roll differences, after excluding non-wheel covered calls such as ABR/IIPR. |
-| 2026 YTD | 2,470.64 | Mostly open/unexpired option cash already received by IBKR, while the sheet realizes at expiry/assignment. |
+| 2024 | -241.62 | ABR covered-call cash is now excluded because there was no prior put assignment. Other basic option mapping is very close. |
+| 2025 | 3,901.05 | Mostly year-boundary option cash and execution-level roll differences, after excluding non-wheel covered calls such as ABR/IIPR. |
+| 2026 YTD | 2,087.47 | Mostly timing/bucket differences for rolls and still-open positions. Do not classify ZM as missing from the sheet: sheet mode has an active `ZM` 99 put position, while IBKR represents the same exposure as a 2026-05-06 roll from 82.5 puts into three 99 puts. Current branch total ZM option P&L is `594.563932`, matching the sheet's `594.56` apart from rounding. |
 
 The stock and dividend rows are now scoped to the wheel strategy. The prior
 whole-portfolio stock/dividend view was intentionally removed because it mixed in
