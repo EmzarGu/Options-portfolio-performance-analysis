@@ -174,8 +174,10 @@ def stock_realized_from_report(report: IbkrFlexReport) -> list[IbkrStockRealized
 
 
 def wheel_stock_movements_from_rows(option_eae_rows: Iterable[IbkrRawRow]) -> list[WheelStockMovement]:
+    rows = list(option_eae_rows)
+    assignment_links = _wheel_assignment_stock_links(rows)
     movements: list[WheelStockMovement] = []
-    for row in option_eae_rows:
+    for row in rows:
         attrs = row.attrs
         if attrs.get("assetCategory") != "STK":
             continue
@@ -190,19 +192,91 @@ def wheel_stock_movements_from_rows(option_eae_rows: Iterable[IbkrRawRow]) -> li
             continue
         proceeds = _float_or_zero(attrs.get("proceeds"))
         price = abs(proceeds) / shares if shares else 0.0
+        matched_shares = _consume_assignment_stock_link(
+            assignment_links,
+            date=pd.to_datetime(date).normalize(),
+            ticker=(_blank_to_none(attrs.get("symbol")) or "").upper(),
+            side="BUY" if transaction_type == "Buy" else "SELL",
+            shares=shares,
+            price=price,
+        )
+        if matched_shares <= 1e-9:
+            continue
+        ratio = matched_shares / shares
         movements.append(
             WheelStockMovement(
                 date=pd.to_datetime(date).normalize(),
                 ticker=(_blank_to_none(attrs.get("symbol")) or "").upper(),
                 side="BUY" if transaction_type == "Buy" else "SELL",
-                shares=shares,
+                shares=matched_shares,
                 price=price,
-                proceeds=proceeds,
+                proceeds=proceeds * ratio,
                 source=f"Option Assignment {transaction_type}",
                 trade_id=_blank_to_none(attrs.get("tradeID")),
             )
         )
     return sorted(movements, key=lambda row: (row.date, row.ticker, row.side, row.trade_id or ""))
+
+
+def _wheel_assignment_stock_links(option_eae_rows: Iterable[IbkrRawRow]) -> list[dict]:
+    links: list[dict] = []
+    for row in option_eae_rows:
+        attrs = row.attrs
+        if attrs.get("assetCategory") != "OPT":
+            continue
+        if str(attrs.get("transactionType", "")).title() != "Assignment":
+            continue
+        put_call = str(attrs.get("putCall", "")).upper()
+        if put_call not in {"P", "C"}:
+            continue
+        date = _date_or_nat(attrs.get("date"))
+        if pd.isna(date):
+            continue
+        quantity = abs(_float_or_zero(attrs.get("quantity")))
+        multiplier = _float_or_zero(attrs.get("multiplier")) or 100.0
+        shares = quantity * multiplier
+        if shares <= 1e-9:
+            continue
+        ticker = (_blank_to_none(attrs.get("underlyingSymbol")) or _blank_to_none(attrs.get("symbol")) or "").upper()
+        links.append(
+            {
+                "date": pd.to_datetime(date).normalize(),
+                "ticker": ticker,
+                "side": "BUY" if put_call == "P" else "SELL",
+                "shares": shares,
+                "remaining": shares,
+                "price": abs(_float_or_zero(attrs.get("strike"))),
+            }
+        )
+    return links
+
+
+def _consume_assignment_stock_link(
+    links: list[dict],
+    *,
+    date: pd.Timestamp,
+    ticker: str,
+    side: str,
+    shares: float,
+    price: float,
+) -> float:
+    remaining = shares
+    matched = 0.0
+    for link in links:
+        if remaining <= 1e-9:
+            break
+        if link["remaining"] <= 1e-9:
+            continue
+        if link["date"] != date or link["ticker"] != ticker or link["side"] != side:
+            continue
+        link_price = float(link.get("price") or 0.0)
+        if link_price > 1e-9 and price > 1e-9 and abs(link_price - price) > 1e-6:
+            continue
+        take = min(remaining, link["remaining"])
+        link["remaining"] -= take
+        remaining -= take
+        matched += take
+    return matched
 
 
 def wheel_stock_movements_from_report(report: IbkrFlexReport) -> list[WheelStockMovement]:

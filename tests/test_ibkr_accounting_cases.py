@@ -103,6 +103,17 @@ def _stock_eae(**overrides) -> IbkrRawRow:
     return IbkrRawRow("OptionEAE", attrs)
 
 
+def _call_assignment_eae(**overrides) -> IbkrRawRow:
+    attrs = {
+        "symbol": "ABC  260117C00100000",
+        "description": "ABC 17JAN26 100 C",
+        "conid": "2001",
+        "putCall": "C",
+    }
+    attrs.update(overrides)
+    return _option_eae(**attrs)
+
+
 def _report(rows_by_section) -> IbkrFlexReport:
     return IbkrFlexReport(
         root_tag="FlexQueryResponse",
@@ -218,7 +229,9 @@ def test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_unco
     report = _report(
         {
             "OptionEAE": [
+                _option_eae(date="20260117", quantity="-1", strike="100", putCall="P"),
                 _stock_eae(date="20260117", transactionType="Buy", quantity="100", tradePrice="100", proceeds="-10000"),
+                _call_assignment_eae(date="20260220", quantity="-1", strike="110", expiry="20260220"),
                 _stock_eae(
                     tradeID="S2",
                     date="20260220",
@@ -226,6 +239,17 @@ def test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_unco
                     quantity="-100",
                     tradePrice="110",
                     proceeds="11000",
+                ),
+                _call_assignment_eae(
+                    symbol="XYZ  260220C00050000",
+                    underlyingSymbol="XYZ",
+                    description="XYZ 20FEB26 50 C",
+                    conid="9001",
+                    tradeID="TCXYZ",
+                    date="20260220",
+                    quantity="-1",
+                    strike="50",
+                    expiry="20260220",
                 ),
                 _stock_eae(
                     symbol="XYZ",
@@ -249,6 +273,53 @@ def test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_unco
     assert issues == [
         "Ignored 100 assigned-call sold shares of XYZ on 2026-02-20 because no assignment-derived stock inventory was available."
     ]
+
+
+def test_ibkr_stock_side_buy_without_put_assignment_does_not_seed_wheel_call_inventory():
+    covered_call = _trade(
+        symbol="ABC  260220C00110000",
+        description="ABC 20FEB26 110 C",
+        conid="2001",
+        tradeID="TC1",
+        transactionID="XC1",
+        ibExecID="EC1",
+        tradeDate="20260120",
+        dateTime="20260120;154500",
+        expiry="20260220",
+        strike="110",
+        putCall="C",
+        quantity="-1",
+        tradePrice="1.00",
+        proceeds="100",
+        ibCommission="-1",
+        netCash="99",
+    )
+    report = _report(
+        {
+            "Trade": [covered_call],
+            "OptionEAE": [
+                # This could be a long-option exercise or other non-put stock receipt.
+                # It must not make later calls eligible for wheel P&L.
+                _stock_eae(date="20260117", transactionType="Buy", quantity="100", tradePrice="100", proceeds="-10000")
+            ],
+        }
+    )
+
+    state = build_ibkr_base_pipeline(
+        report,
+        as_of=pd.Timestamp("2026-01-31").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert state.stock_txns == []
+    assert state.ending_inventory == []
+    assert state.open_options.empty
+    assert state.realized_option_events == []
+    assert any(
+        issue == "Excluded ABC call execution on 2026-01-20 because no prior put-assignment stock inventory was held."
+        for issue in state.issues
+    )
 
 
 def test_ibkr_partial_covered_call_keeps_uncovered_assigned_stock_inventory_open():
@@ -334,6 +405,125 @@ def test_ibkr_partial_covered_call_keeps_uncovered_assigned_stock_inventory_open
         ("EMN", "Put", 4, pytest.approx(796.0), "assignment")
     ]
     assert not [issue for issue in state.issues if "EMN call" in issue or "assigned-call sold shares of EMN" in issue]
+
+
+def test_ibkr_multiple_calls_can_share_one_prior_assigned_put_inventory_pool():
+    put_open = _trade(
+        symbol="EMN  260117P00070000",
+        underlyingSymbol="EMN",
+        description="EMN 17JAN26 70 P",
+        conid="7001",
+        tradeID="TP1",
+        transactionID="XP1",
+        ibExecID="EP1",
+        tradeDate="20260110",
+        dateTime="20260110;154500",
+        expiry="20260117",
+        strike="70",
+        putCall="P",
+        quantity="-4",
+        tradePrice="2.00",
+        proceeds="800",
+        ibCommission="-4",
+        netCash="796",
+    )
+    put_assignment = _option_eae(
+        symbol="EMN  260117P00070000",
+        underlyingSymbol="EMN",
+        description="EMN 17JAN26 70 P",
+        conid="7001",
+        tradeID="TP1",
+        date="20260117",
+        expiry="20260117",
+        strike="70",
+        putCall="P",
+        quantity="-4",
+        realizedPnl="796",
+    )
+    assigned_buy = _stock_eae(
+        symbol="EMN",
+        tradeID="SP1",
+        date="20260117",
+        transactionType="Buy",
+        quantity="400",
+        tradePrice="70",
+        proceeds="-28000",
+    )
+    call_70_a = _trade(
+        symbol="EMN  260320C00070000",
+        underlyingSymbol="EMN",
+        description="EMN 20MAR26 70 C",
+        conid="7501",
+        tradeID="TC1",
+        transactionID="XC1",
+        ibExecID="EC1",
+        tradeDate="20260201",
+        dateTime="20260201;154500",
+        expiry="20260320",
+        strike="70",
+        putCall="C",
+        quantity="-1",
+        tradePrice="1.00",
+        proceeds="100",
+        ibCommission="-1",
+        netCash="99",
+    )
+    call_70_b = _trade(
+        symbol="EMN  260320C00070000",
+        underlyingSymbol="EMN",
+        description="EMN 20MAR26 70 C",
+        conid="7501",
+        tradeID="TC2",
+        transactionID="XC2",
+        ibExecID="EC2",
+        tradeDate="20260202",
+        dateTime="20260202;154500",
+        expiry="20260320",
+        strike="70",
+        putCall="C",
+        quantity="-1",
+        tradePrice="1.10",
+        proceeds="110",
+        ibCommission="-1",
+        netCash="109",
+    )
+    call_75 = _trade(
+        symbol="EMN  260320C00075000",
+        underlyingSymbol="EMN",
+        description="EMN 20MAR26 75 C",
+        conid="7502",
+        tradeID="TC3",
+        transactionID="XC3",
+        ibExecID="EC3",
+        tradeDate="20260203",
+        dateTime="20260203;154500",
+        expiry="20260320",
+        strike="75",
+        putCall="C",
+        quantity="-2",
+        tradePrice="1.50",
+        proceeds="300",
+        ibCommission="-2",
+        netCash="298",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report({"Trade": [put_open, call_70_a, call_70_b, call_75], "OptionEAE": [put_assignment, assigned_buy]}),
+        as_of=pd.Timestamp("2026-02-15").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(row["ticker"], row["type"], row["strike"], row["qty"]) for _, row in state.open_options.iterrows()] == [
+        ("EMN", "Call", 70.0, 1),
+        ("EMN", "Call", 70.0, 1),
+        ("EMN", "Call", 75.0, 2),
+    ]
+    assert sum(row["qty"] for _, row in state.open_options.iterrows()) == 4
+    assert [(lot.ticker, lot.shares_remaining, lot.cost_per_share) for lot in state.ending_inventory] == [
+        ("EMN", 400, 70.0)
+    ]
+    assert not [issue for issue in state.issues if "EMN call" in issue]
 
 
 def test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_remaining_inventory():
@@ -476,7 +666,8 @@ def test_ibkr_wheel_options_dataframe_preserves_prorated_call_execution():
                 )
             ],
             "OptionEAE": [
-                _stock_eae(date="20260117", transactionType="Buy", quantity="100", tradePrice="100", proceeds="-10000")
+                _option_eae(date="20260117", quantity="-1", strike="100", putCall="P"),
+                _stock_eae(date="20260117", transactionType="Buy", quantity="100", tradePrice="100", proceeds="-10000"),
             ],
         }
     )
@@ -888,7 +1079,12 @@ def test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_co
         ibCommission="0",
         netCash="0",
     )
-    report = _report({"Trade": [open_old, close_old, open_new, expire_new], "OptionEAE": [_stock_eae(date="20250101")]})
+    report = _report(
+        {
+            "Trade": [open_old, close_old, open_new, expire_new],
+            "OptionEAE": [_option_eae(date="20250101"), _stock_eae(date="20250101")],
+        }
+    )
 
     state = build_ibkr_base_pipeline(
         report,
@@ -954,7 +1150,12 @@ def test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized
         ibCommission="-1",
         netCash="5299",
     )
-    report = _report({"Trade": [open_old, close_old, open_new], "OptionEAE": [_stock_eae(date="20250101")]})
+    report = _report(
+        {
+            "Trade": [open_old, close_old, open_new],
+            "OptionEAE": [_option_eae(date="20250101"), _stock_eae(date="20250101")],
+        }
+    )
 
     state = build_ibkr_base_pipeline(
         report,
@@ -1042,7 +1243,12 @@ def test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open():
         ibCommission="-1",
         netCash="5299",
     )
-    report = _report({"Trade": [open_old, close_old, open_new], "OptionEAE": [_stock_eae(date="20250101")]})
+    report = _report(
+        {
+            "Trade": [open_old, close_old, open_new],
+            "OptionEAE": [_option_eae(date="20250101"), _stock_eae(date="20250101")],
+        }
+    )
 
     state = build_ibkr_base_pipeline(
         report,
@@ -1320,7 +1526,12 @@ def test_ibkr_yearly_performance_combines_option_cash_stock_realized_and_net_div
         metadata={},
         rows_by_section={
             "Trade": [option_sell, unrelated_stock_sell],
-            "OptionEAE": [assigned_buy, assigned_sell],
+            "OptionEAE": [
+                _option_eae(date="20260117", quantity="-1", strike="100", putCall="P"),
+                assigned_buy,
+                _call_assignment_eae(date="20260131", quantity="-1", strike="110", expiry="20260131"),
+                assigned_sell,
+            ],
             "CashTransaction": [dividend],
         },
         section_counts={},
