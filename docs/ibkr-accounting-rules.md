@@ -3,6 +3,11 @@
 This document defines how IBKR activity should be interpreted before it is fed
 into the portfolio performance pipeline.
 
+Every production accounting change must also update
+`docs/ibkr-accounting-test-matrix.md`. That matrix is the acceptance gate: each
+rule needs an explicit expected behavior, regression coverage, and status before
+IBKR mode can be treated as production-ready.
+
 The current Google Sheet source is intentionally simplified. It records mostly
 short option activity, then derives stock transactions from manual assignment
 flags. IBKR is more complete: it contains option trades, option
