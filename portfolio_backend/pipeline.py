@@ -81,6 +81,7 @@ def build_base_pipeline(
     cache_bust: int = 1,
     timing_recorder: Optional[Callable[[str, float], None]] = None,
     stock_txns_override_fn: Optional[Callable[[List, pd.Timestamp], Tuple[List, List[str]]]] = None,
+    option_positions_override_fn: Optional[Callable[[List, pd.Timestamp], Tuple[List, List, List, List[str], List]]] = None,
 ) -> PipelineState:
     def record(phase: str, started_at: float) -> None:
         if timing_recorder is not None:
@@ -107,7 +108,13 @@ def build_base_pipeline(
     record("pipeline_build_option_trades_ms", started_at)
 
     started_at = perf_counter()
-    realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
+    if option_positions_override_fn is not None:
+        realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = option_positions_override_fn(
+            trades,
+            as_of_ts,
+        )
+    else:
+        realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
     issues.extend(trade_issues)
     if stock_txns_override_fn is not None:
         stock_txns, stock_override_issues = stock_txns_override_fn(stock_txns, as_of_ts)

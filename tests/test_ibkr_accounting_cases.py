@@ -21,7 +21,7 @@ from portfolio_backend.ibkr.performance import (
     yearly_performance_from_report,
 )
 from portfolio_backend.ibkr.source_adapter import option_trades_to_dataframe
-from portfolio_backend.ibkr.pipeline import wheel_stock_transactions_from_report
+from portfolio_backend.ibkr.pipeline import build_ibkr_base_pipeline, wheel_stock_transactions_from_report
 from portfolio_backend.ibkr.pipeline import wheel_options_dataframe_from_report
 
 
@@ -116,6 +116,14 @@ def _events_from_rows(trade_rows, eae_rows=(), *, as_of="2026-01-31"):
     df = option_trades_to_dataframe(trade_rows, eae_rows)
     trades = build_option_trades(df, [])
     return process_option_positions(trades, pd.Timestamp(as_of))
+
+
+def _empty_price_history(_tickers, _start, _end):
+    return {}, [], {"requested": 0, "fetched": 0}
+
+
+def _empty_benchmarks(_tickers, _months):
+    return {}
 
 
 def test_ibkr_short_put_expiration_books_premium_without_stock():
@@ -458,6 +466,240 @@ def test_ibkr_roll_is_accounted_as_close_old_and_open_new():
     assert len(open_lots) == 1
     assert open_lots[0].strike == 95.0
     assert open_lots[0].open_price == 4.49
+
+
+def test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_counting_replacement():
+    open_old = _trade(
+        putCall="C",
+        symbol="ABC  251219C00100000",
+        description="ABC 19DEC25 100 C",
+        tradeDate="20251101",
+        dateTime="20251101;154500",
+        expiry="20251219",
+        strike="100",
+        quantity="-1",
+        proceeds="1000",
+        ibCommission="-1",
+        netCash="999",
+    )
+    close_old = _trade(
+        putCall="C",
+        symbol="ABC  251219C00100000",
+        description="ABC 19DEC25 100 C",
+        tradeID="T2",
+        transactionID="X2",
+        ibExecID="00014247.ROLLFIX.03.01",
+        tradeDate="20251117",
+        dateTime="20251117;154500",
+        expiry="20251219",
+        strike="100",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        proceeds="-5000",
+        ibCommission="-1",
+        netCash="-5001",
+    )
+    open_new = _trade(
+        putCall="C",
+        symbol="ABC  260220C00110000",
+        description="ABC 20FEB26 110 C",
+        tradeID="T3",
+        transactionID="X3",
+        ibExecID="00014247.ROLLFIX.02.01",
+        tradeDate="20251117",
+        dateTime="20251117;154600",
+        expiry="20260220",
+        strike="110",
+        quantity="-1",
+        proceeds="5300",
+        ibCommission="-1",
+        netCash="5299",
+    )
+    expire_new = _trade(
+        putCall="C",
+        symbol="ABC  260220C00110000",
+        description="ABC 20FEB26 110 C",
+        tradeID="T4",
+        transactionID="X4",
+        ibExecID="",
+        tradeDate="20260220",
+        dateTime="20260220;154500",
+        expiry="20260220",
+        strike="110",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        proceeds="0",
+        ibCommission="0",
+        netCash="0",
+    )
+    report = _report({"Trade": [open_old, close_old, open_new, expire_new], "OptionEAE": [_stock_eae(date="20250101")]})
+
+    state = build_ibkr_base_pipeline(
+        report,
+        as_of=pd.Timestamp("2026-03-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    yearly = state.yearly.set_index("year")
+    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(1297.0)
+    assert 2026 not in yearly.index or yearly.loc[2026, "realized_options_pnl"] == pytest.approx(0.0)
+    assert [(event.date, event.pnl) for event in state.realized_option_events] == [
+        (pd.Timestamp("2025-11-17"), pytest.approx(1297.0)),
+        (pd.Timestamp("2026-02-20"), pytest.approx(0.0)),
+    ]
+
+
+def test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized_premium():
+    open_old = _trade(
+        putCall="C",
+        symbol="ABC  251219C00100000",
+        description="ABC 19DEC25 100 C",
+        tradeDate="20251101",
+        dateTime="20251101;154500",
+        expiry="20251219",
+        strike="100",
+        quantity="-1",
+        proceeds="1000",
+        ibCommission="-1",
+        netCash="999",
+    )
+    close_old = _trade(
+        putCall="C",
+        symbol="ABC  251219C00100000",
+        description="ABC 19DEC25 100 C",
+        tradeID="T2",
+        transactionID="X2",
+        ibExecID="00014247.ROLLOPEN.03.01",
+        tradeDate="20251117",
+        dateTime="20251117;154500",
+        expiry="20251219",
+        strike="100",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        proceeds="-5000",
+        ibCommission="-1",
+        netCash="-5001",
+    )
+    open_new = _trade(
+        putCall="C",
+        symbol="ABC  260220C00110000",
+        description="ABC 20FEB26 110 C",
+        tradeID="T3",
+        transactionID="X3",
+        ibExecID="00014247.ROLLOPEN.02.01",
+        tradeDate="20251117",
+        dateTime="20251117;154600",
+        expiry="20260220",
+        strike="110",
+        quantity="-1",
+        proceeds="5300",
+        ibCommission="-1",
+        netCash="5299",
+    )
+    report = _report({"Trade": [open_old, close_old, open_new], "OptionEAE": [_stock_eae(date="20250101")]})
+
+    state = build_ibkr_base_pipeline(
+        report,
+        as_of=pd.Timestamp("2025-12-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert state.yearly.set_index("year").loc[2025, "realized_options_pnl"] == pytest.approx(1297.0)
+    assert len(state.open_options) == 1
+    open_row = state.open_options.iloc[0]
+    assert open_row["ticker"] == "ABC"
+    assert open_row["strike"] == 110.0
+    assert open_row["open_price"] == pytest.approx(0.0)
+
+
+def test_ibkr_pipeline_reports_non_rolled_option_on_close_or_expiration_year():
+    open_put = _trade(
+        tradeDate="20251220",
+        dateTime="20251220;154500",
+        expiry="20260117",
+        quantity="-1",
+        proceeds="300",
+        ibCommission="-1",
+        netCash="299",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report({"Trade": [open_put]}),
+        as_of=pd.Timestamp("2026-02-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    yearly = state.yearly.set_index("year")
+    assert 2025 not in yearly.index or yearly.loc[2025, "realized_options_pnl"] == pytest.approx(0.0)
+    assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(299.0)
+
+
+def test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open():
+    open_old = _trade(
+        putCall="C",
+        symbol="ABC  251219C00100000",
+        description="ABC 19DEC25 100 C",
+        tradeDate="20251101",
+        dateTime="20251101;154500",
+        expiry="20251219",
+        strike="100",
+        quantity="-1",
+        proceeds="1000",
+        ibCommission="-1",
+        netCash="999",
+    )
+    close_old = _trade(
+        putCall="C",
+        symbol="ABC  251219C00100000",
+        description="ABC 19DEC25 100 C",
+        tradeID="T2",
+        transactionID="X2",
+        ibExecID="00014247.UNRELATED_A.03.01",
+        tradeDate="20251117",
+        dateTime="20251117;154500",
+        expiry="20251219",
+        strike="100",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        proceeds="-5000",
+        ibCommission="-1",
+        netCash="-5001",
+    )
+    open_new = _trade(
+        putCall="C",
+        symbol="ABC  260220C00110000",
+        description="ABC 20FEB26 110 C",
+        tradeID="T3",
+        transactionID="X3",
+        ibExecID="00014247.UNRELATED_B.02.01",
+        tradeDate="20251117",
+        dateTime="20251117;154600",
+        expiry="20260220",
+        strike="110",
+        quantity="-1",
+        proceeds="5300",
+        ibCommission="-1",
+        netCash="5299",
+    )
+    report = _report({"Trade": [open_old, close_old, open_new], "OptionEAE": [_stock_eae(date="20250101")]})
+
+    state = build_ibkr_base_pipeline(
+        report,
+        as_of=pd.Timestamp("2026-03-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    yearly = state.yearly.set_index("year")
+    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(-4002.0)
+    assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(5299.0)
 
 
 def test_ibkr_roll_cashflow_counts_close_debit_and_new_open_credit_together():
