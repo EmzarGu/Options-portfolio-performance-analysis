@@ -53,7 +53,18 @@
     "status": "below_target",
     "target_basis": "avg_capital",
     "target_pnl": 150.0,
-    "target_return": 0.015
+    "target_return": 0.015,
+    "realized_month_pnl": 100.0,
+    "realized_options_pnl": 100.0,
+    "realized_stock_pnl": 0.0,
+    "open_expiring_option_premium": 625.0,
+    "projected_month_pnl": 725.0,
+    "projected_return_roac": 0.0725,
+    "projected_return_ropc": 0.06041666666666667,
+    "projected_remaining_pnl": 0.0,
+    "monthly_target_status": "beat",
+    "includes_open_premium": true,
+    "projection_basis": "realized_plus_open_premium"
   },
   "open_option_short_preview": [
     {

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 import mobile_api
+from portfolio_backend.ibkr.importer import IbkrImportService, LocalJsonImportStore, LocalRawReportStore
+from portfolio_backend.mobile_api_service import MobileServiceDependencies
 
 
 def _request_payload(context):
@@ -129,12 +132,24 @@ def api_harness(monkeypatch):
             },
         }
 
-    def build_config(available_sheets, prefs, *, default_sheets, as_of_default):
+    def build_config(
+        available_sheets,
+        prefs,
+        *,
+        default_sheets,
+        as_of_default,
+        source_kind="local_excel",
+        source_name=None,
+        supports_selected_sheets=True,
+    ):
         calls.builders["config"] = {
             "available_sheets": available_sheets,
             "prefs": prefs,
             "default_sheets": default_sheets,
             "as_of_default": as_of_default,
+            "source_kind": source_kind,
+            "source_name": source_name,
+            "supports_selected_sheets": supports_selected_sheets,
         }
         return {
             "available_sheets": available_sheets,
@@ -227,7 +242,150 @@ def test_config_route_dispatches_available_sheets_and_defaults(api_harness):
         "prefs": {"selected_sheets": ["Options 2025"], "include_unrealized": True},
         "default_sheets": ["Options 2024", "Options 2025", "Options 2026"],
         "as_of_default": date.today(),
+        "source_kind": "google_sheet",
+        "source_name": "Google Sheets",
+        "supports_selected_sheets": True,
     }
+
+
+def test_ibkr_source_uses_ibkr_context_builder(monkeypatch):
+    mobile_api._clear_context_cache()
+    calls = SimpleNamespace(report_loaded=False, context=None)
+
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setattr(mobile_api.dashboard_app, "load_prefs", lambda: {"selected_sheets": []})
+    monkeypatch.setattr(mobile_api, "_dependencies", lambda: SimpleNamespace(name="deps"))
+
+    def load_report():
+        calls.report_loaded = True
+        return SimpleNamespace(metadata={"fromDate": "20240101", "toDate": "20260509", "sourceFiles": "5"})
+
+    def build_ibkr_context(request, dependencies, report, *, available_sheets=None):
+        calls.context = SimpleNamespace(
+            request=request,
+            dependencies=dependencies,
+            report=report,
+            available_sheets=list(available_sheets or []),
+        )
+        return calls.context
+
+    monkeypatch.setattr(mobile_api, "load_flex_report_from_env", load_report)
+    monkeypatch.setattr(mobile_api, "build_ibkr_mobile_payload_context", build_ibkr_context)
+
+    context = mobile_api._context(
+        as_of=date(2026, 5, 9),
+        include_unrealized=True,
+        selected_sheets=None,
+        cache_bust=42,
+    )
+
+    assert calls.report_loaded is True
+    assert context is calls.context
+    assert context.request.sheet_id == "ibkr-flex"
+    assert context.request.selected_sheets == ["IBKR Flex"]
+    assert context.available_sheets == ["IBKR Flex"]
+
+
+def test_ibkr_source_normalizes_old_ios_selected_sheets(monkeypatch):
+    mobile_api._clear_context_cache()
+    calls = SimpleNamespace(report_loaded=False, context=None)
+
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setattr(mobile_api.dashboard_app, "load_prefs", lambda: {"selected_sheets": []})
+    monkeypatch.setattr(mobile_api, "_dependencies", lambda: SimpleNamespace(name="deps"))
+    monkeypatch.setattr(mobile_api, "load_flex_report_from_env", lambda: SimpleNamespace(metadata={}))
+
+    def build_ibkr_context(request, dependencies, report, *, available_sheets=None):
+        calls.context = SimpleNamespace(
+            request=request,
+            dependencies=dependencies,
+            report=report,
+            available_sheets=list(available_sheets or []),
+        )
+        return calls.context
+
+    monkeypatch.setattr(mobile_api, "build_ibkr_mobile_payload_context", build_ibkr_context)
+
+    context = mobile_api._context(
+        as_of=date(2026, 5, 9),
+        include_unrealized=True,
+        selected_sheets=["Options 2024", "Options 2025", "Options 2026"],
+        cache_bust=43,
+    )
+
+    assert context.request.selected_sheets == ["IBKR Flex"]
+
+
+def test_ibkr_config_reports_single_source_partition(api_harness, monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setattr(mobile_api, "_available_sheets", lambda: ["IBKR Flex"])
+
+    response = api_harness.client.get("/v1/mobile/config")
+
+    assert response.status_code == 200
+    assert api_harness.calls.builders["config"] == {
+        "available_sheets": ["IBKR Flex"],
+        "prefs": {"selected_sheets": ["IBKR Flex"], "include_unrealized": True},
+        "default_sheets": ["IBKR Flex"],
+        "as_of_default": date.today(),
+        "source_kind": "ibkr_flex",
+        "source_name": "IBKR Flex",
+        "supports_selected_sheets": False,
+    }
+
+
+def test_ibkr_routes_build_from_persisted_local_json_store(tmp_path, monkeypatch):
+    service = IbkrImportService(
+        LocalRawReportStore(tmp_path / "raw"),
+        LocalJsonImportStore(tmp_path / "firestore_sim"),
+    )
+    fixture = Path(__file__).parent / "fixtures" / "ibkr_flex_sample.xml"
+    service.import_xml(fixture.read_bytes(), query_id="1503002", run_id="run-1")
+    mobile_api._clear_context_cache()
+    monkeypatch.delenv("MOBILE_API_KEY", raising=False)
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setenv("IBKR_REPORT_SOURCE", "local_json")
+    monkeypatch.setenv("IBKR_IMPORT_JSON_DIR", str(tmp_path / "firestore_sim"))
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "1503002")
+    monkeypatch.setattr(mobile_api.dashboard_app, "load_prefs", lambda: {"selected_sheets": ["Options 2026"], "include_unrealized": True})
+
+    def fetch_price_history(tickers, start, end):
+        return {}, [], {"requested": len(tickers), "fetched": 0}
+
+    def align_benchmarks(_tickers, _idx):
+        return {}
+
+    monkeypatch.setattr(
+        mobile_api,
+        "_dependencies",
+        lambda: MobileServiceDependencies(
+            load_options=lambda *_: None,
+            fetch_price_history=fetch_price_history,
+            collect_dividend_cashflows=lambda *_: None,
+            align_benchmarks_monthly=align_benchmarks,
+            fetch_current_prices=None,
+        ),
+    )
+    client = TestClient(mobile_api.app)
+
+    config = client.get("/v1/mobile/config")
+    dashboard = client.get(
+        "/v1/mobile/dashboard",
+        params=[
+            ("as_of", "2026-01-31"),
+            ("selected_sheets", "Options 2024"),
+            ("selected_sheets", "Options 2026"),
+        ],
+    )
+
+    assert config.status_code == 200
+    assert config.json()["default_selected_sheets"] == ["IBKR Flex"]
+    assert config.json()["capabilities"]["supports_selected_sheets"] is False
+    assert dashboard.status_code == 200
+    assert dashboard.json()["request"]["selected_sheets"] == ["IBKR Flex"]
+    assert dashboard.json()["data_freshness"]["source_sheets"] == [
+        {"name": "IBKR Flex", "status": "loaded", "rows": 1}
+    ]
 
 
 def test_dashboard_route_parses_common_query_and_repeated_selected_sheets(api_harness):

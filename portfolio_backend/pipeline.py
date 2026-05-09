@@ -80,6 +80,7 @@ def build_base_pipeline(
     align_benchmarks_monthly_fn: Callable[[Dict[str, str], pd.DatetimeIndex], Dict[str, pd.Series]],
     cache_bust: int = 1,
     timing_recorder: Optional[Callable[[str, float], None]] = None,
+    stock_txns_override_fn: Optional[Callable[[List, pd.Timestamp], Tuple[List, List[str]]]] = None,
 ) -> PipelineState:
     def record(phase: str, started_at: float) -> None:
         if timing_recorder is not None:
@@ -108,6 +109,9 @@ def build_base_pipeline(
     started_at = perf_counter()
     realized_option_events, open_option_lots, stock_txns, trade_issues, all_option_lots = process_option_positions(trades, as_of_ts)
     issues.extend(trade_issues)
+    if stock_txns_override_fn is not None:
+        stock_txns, stock_override_issues = stock_txns_override_fn(stock_txns, as_of_ts)
+        issues.extend(stock_override_issues)
     record("pipeline_process_option_positions_ms", started_at)
 
     started_at = perf_counter()

@@ -318,6 +318,8 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
             month_end,
             getattr(state, "as_of", None),
         ),
+        "includes_open_premium": bool(projection["includes_open_premium"]),
+        "projection_basis": projection["projection_basis"],
         "days_remaining": json_safe(days_remaining),
     }
 
@@ -1313,6 +1315,7 @@ def build_mobile_config(
     as_of_default: Optional[Any] = None,
     source_kind: str = "local_excel",
     source_name: Optional[str] = None,
+    supports_selected_sheets: bool = True,
 ) -> Dict[str, Any]:
     prefs = prefs or {}
     source_metadata = source_metadata or {}
@@ -1337,7 +1340,7 @@ def build_mobile_config(
         "capabilities": {
             "supports_price_refresh": True,
             "supports_data_rebuild": True,
-            "supports_selected_sheets": True,
+            "supports_selected_sheets": bool(supports_selected_sheets),
             "supports_as_of": True,
         },
     }

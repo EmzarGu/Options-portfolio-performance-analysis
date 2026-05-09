@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FlexQueryResponse>
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000000" fromDate="20260101" toDate="20260131" period="Last365CalendarDays">
+      <Trades>
+        <Trade accountId="U0000000" currency="USD" assetCategory="OPT" subCategory="P" symbol="ABC  260117P00100000" underlyingSymbol="ABC" description="ABC 17JAN26 100 P" conid="1001" tradeID="T1" transactionID="X1" ibExecID="E1" ibOrderID="O1" reportDate="20260115" expiry="20260117" dateTime="20260115;154500" putCall="P" tradeDate="20260115" settleDateTarget="20260116" transactionType="ExchTrade" exchange="SMART" quantity="-1" tradePrice="2.50" tradeMoney="-250" proceeds="250" taxes="0" ibCommission="-1.00" ibCommissionCurrency="USD" netCash="249" openCloseIndicator="O" fifoPnlRealized="0" mtmPnl="0" buySell="SELL" multiplier="100" strike="100" notes="O" />
+        <Trade accountId="U0000000" currency="USD" assetCategory="STK" subCategory="COMMON" symbol="ABC" description="ABC Corp" conid="2001" tradeID="T2" transactionID="X2" ibExecID="E2" ibOrderID="O2" reportDate="20260116" dateTime="20260116;153000" tradeDate="20260116" settleDateTarget="20260117" transactionType="ExchTrade" exchange="SMART" quantity="100" tradePrice="95" tradeMoney="9500" proceeds="-9500" taxes="0" ibCommission="-1.00" ibCommissionCurrency="USD" netCash="-9501" openCloseIndicator="O" fifoPnlRealized="0" mtmPnl="0" buySell="BUY" multiplier="1" notes="O" />
+      </Trades>
+      <OptionEAETrades>
+        <OptionEAE accountId="U0000000" currency="USD" assetCategory="OPT" subCategory="P" symbol="ABC  260117P00100000" underlyingSymbol="ABC" description="ABC 17JAN26 100 P" conid="1001" tradeID="A1" date="20260117" transactionType="Assignment" quantity="-1" tradePrice="0" proceeds="0" commisionsAndTax="0" costBasis="0" realizedPnl="249" mtmPnl="0" multiplier="100" strike="100" expiry="20260117" putCall="P" />
+      </OptionEAETrades>
+      <CashTransactions>
+        <CashTransaction accountId="U0000000" currency="USD" assetCategory="STK" symbol="ABC" conid="2001" dateTime="20260120;120000" amount="12.34" type="Dividends" transactionID="C1" actionID="CA1" levelOfDetail="Detail" />
+      </CashTransactions>
+      <OpenPositions>
+        <OpenPosition accountId="U0000000" currency="USD" assetCategory="OPT" subCategory="C" symbol="XYZ  260220C00050000" underlyingSymbol="XYZ" conid="3001" reportDate="20260131" position="-2" markPrice="1.20" positionValue="-240" openPrice="0.90" costBasisMoney="-180" fifoPnlUnrealized="-60" multiplier="100" strike="50" expiry="20260220" putCall="C" />
+      </OpenPositions>
+      <FinancialInstrumentInformation>
+        <SecurityInfo currency="USD" assetCategory="OPT" subCategory="P" symbol="ABC  260117P00100000" underlyingSymbol="ABC" conid="1001" description="ABC 17JAN26 100 P" multiplier="100" strike="100" expiry="20260117" putCall="P" />
+      </FinancialInstrumentInformation>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

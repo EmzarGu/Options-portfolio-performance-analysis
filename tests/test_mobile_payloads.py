@@ -577,6 +577,8 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "projected_return_ropc": 0.06041666666666667,
         "projected_remaining_pnl": 0.0,
         "monthly_target_status": "beat",
+        "includes_open_premium": True,
+        "projection_basis": "realized_plus_open_premium",
         "days_remaining": 28,
     }
     assert len(dashboard["open_option_short_preview"]) == 2

@@ -36,6 +36,8 @@ from portfolio_backend.mobile_api_service import (
     build_mobile_yearly_payload,
 )
 from portfolio_backend.mobile_payloads import build_mobile_config
+from portfolio_backend.ibkr.mobile_service import build_ibkr_mobile_payload_context
+from portfolio_backend.ibkr.repository import load_flex_report_from_env
 
 
 app = FastAPI(title="Options ROI Mobile API", version="0.1.0")
@@ -45,11 +47,13 @@ logger.setLevel(logging.INFO)
 MONTHLY_RANGES = {"3m", "6m", "ytd", "1y", "since_inception"}
 OPEN_OPTION_SORTS = {"moneyness_risk", "expiration", "ticker", "moneyness_pct"}
 SERVICE_NAME = "options-roi-mobile-api"
+DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
+DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
 PUBLIC_PATHS = {"/v1/mobile/health"}
 
 _context_cache_lock = threading.Lock()
-_context_cache: "OrderedDict[Tuple[str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
+_context_cache: "OrderedDict[Tuple[str, str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
 _active_cache_bust = 1
 
 
@@ -260,14 +264,31 @@ def _dependencies(source_metadata: Optional[Dict[str, Any]] = None) -> MobileSer
     )
 
 
+def _data_source() -> str:
+    value = os.getenv("OPTIONS_DATA_SOURCE", DATA_SOURCE_GOOGLE_SHEETS).strip().lower()
+    if value in {"ibkr", "ibkr_flex"}:
+        return DATA_SOURCE_IBKR
+    return DATA_SOURCE_GOOGLE_SHEETS
+
+
 def _available_sheets() -> List[str]:
+    if _data_source() == DATA_SOURCE_IBKR:
+        return ["IBKR Flex"]
     return dashboard_app.list_option_sheets(dashboard_app.SHEET_ID)
 
 
 def _default_selected_sheets(available_sheets: List[str]) -> List[str]:
+    if _data_source() == DATA_SOURCE_IBKR:
+        return ["IBKR Flex"]
     prefs = dashboard_app.load_prefs()
     saved_sheets = [sheet for sheet in prefs.get("selected_sheets", []) if sheet in available_sheets]
     return saved_sheets or [sheet for sheet in available_sheets if sheet in dashboard_app.SHEETS] or available_sheets
+
+
+def _normalize_selected_sheets(selected_sheets: Optional[List[str]], available_sheets: List[str]) -> List[str]:
+    if _data_source() == DATA_SOURCE_IBKR:
+        return ["IBKR Flex"]
+    return selected_sheets or _default_selected_sheets(available_sheets)
 
 
 def _common_request(
@@ -282,7 +303,7 @@ def _common_request(
     available = _available_sheets()
     if timing_recorder is not None:
         timing_recorder("sheet_load_ms", _elapsed_ms(started_at))
-    selected = selected_sheets or _default_selected_sheets(available)
+    selected = _normalize_selected_sheets(selected_sheets, available)
     if not selected:
         raise HTTPException(
             status_code=422,
@@ -294,7 +315,7 @@ def _common_request(
         )
     return (
         MobilePayloadRequest(
-            sheet_id=dashboard_app.SHEET_ID,
+            sheet_id="ibkr-flex" if _data_source() == DATA_SOURCE_IBKR else dashboard_app.SHEET_ID,
             as_of=as_of or date.today(),
             selected_sheets=selected,
             include_unrealized=include_unrealized,
@@ -311,8 +332,9 @@ def _resolve_cache_bust(cache_bust: Optional[int]) -> int:
         return int(_active_cache_bust)
 
 
-def _context_cache_key(request: MobilePayloadRequest) -> Tuple[str, str, bool, Tuple[str, ...], int]:
+def _context_cache_key(request: MobilePayloadRequest) -> Tuple[str, str, str, bool, Tuple[str, ...], int]:
     return (
+        _data_source(),
         request.sheet_id,
         request.as_of.isoformat(),
         bool(request.include_unrealized),
@@ -321,7 +343,7 @@ def _context_cache_key(request: MobilePayloadRequest) -> Tuple[str, str, bool, T
     )
 
 
-def _remember_context(key: Tuple[str, str, bool, Tuple[str, ...], int], context: Any) -> None:
+def _remember_context(key: Tuple[str, str, str, bool, Tuple[str, ...], int], context: Any) -> None:
     with _context_cache_lock:
         _context_cache[key] = context
         _context_cache.move_to_end(key)
@@ -391,16 +413,27 @@ def _context(
 
     started_at = perf_counter()
     source_metadata: Dict[str, Any] = {}
-    context_kwargs = {"available_sheets": available}
-    if _supports_keyword(build_mobile_payload_context, "source_metadata"):
-        context_kwargs["source_metadata"] = source_metadata
-    if timing_recorder is not None and _supports_timing_recorder(build_mobile_payload_context):
-        context_kwargs["timing_recorder"] = timing_recorder
-    context = build_mobile_payload_context(
-        request,
-        _resolve_dependencies(source_metadata),
-        **context_kwargs,
-    )
+    if _data_source() == DATA_SOURCE_IBKR:
+        context_kwargs = {"available_sheets": available}
+        if _supports_keyword(build_ibkr_mobile_payload_context, "source_metadata"):
+            context_kwargs["source_metadata"] = source_metadata
+        context = build_ibkr_mobile_payload_context(
+            request,
+            _resolve_dependencies(source_metadata),
+            load_flex_report_from_env(),
+            **context_kwargs,
+        )
+    else:
+        context_kwargs = {"available_sheets": available}
+        if _supports_keyword(build_mobile_payload_context, "source_metadata"):
+            context_kwargs["source_metadata"] = source_metadata
+        if timing_recorder is not None and _supports_timing_recorder(build_mobile_payload_context):
+            context_kwargs["timing_recorder"] = timing_recorder
+        context = build_mobile_payload_context(
+            request,
+            _resolve_dependencies(source_metadata),
+            **context_kwargs,
+        )
     if timing_recorder is not None:
         timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
     _remember_context(key, context)
@@ -473,11 +506,16 @@ def get_mobile_health() -> Dict[str, Any]:
 def get_mobile_config() -> Dict[str, Any]:
     available = _available_sheets()
     prefs = dashboard_app.load_prefs()
+    if _data_source() == DATA_SOURCE_IBKR:
+        prefs = {**prefs, "selected_sheets": ["IBKR Flex"]}
     return build_mobile_config(
         available,
         prefs,
-        default_sheets=dashboard_app.SHEETS,
+        default_sheets=available if _data_source() == DATA_SOURCE_IBKR else dashboard_app.SHEETS,
         as_of_default=date.today(),
+        source_kind="ibkr_flex" if _data_source() == DATA_SOURCE_IBKR else "google_sheet",
+        source_name="IBKR Flex" if _data_source() == DATA_SOURCE_IBKR else "Google Sheets",
+        supports_selected_sheets=_data_source() != DATA_SOURCE_IBKR,
     )
 
 
