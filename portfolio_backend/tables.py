@@ -10,7 +10,8 @@ if TYPE_CHECKING:
 
 
 def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFrame:
-    return pd.DataFrame(
+    columns = ["ticker", "type", "strike", "qty", "expiration", "trans_date", "open_price"]
+    df = pd.DataFrame(
         [
             {
                 "ticker": lot.ticker,
@@ -24,6 +25,32 @@ def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFram
             for lot in open_option_lots
         ]
     )
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    grouped_rows = []
+    group_cols = ["ticker", "type", "strike", "expiration"]
+    for keys, group in df.groupby(group_cols, dropna=False, sort=False):
+        qty = pd.to_numeric(group["qty"], errors="coerce").fillna(0)
+        open_prices = pd.to_numeric(group["open_price"], errors="coerce")
+        weights = qty.abs()
+        if weights.sum() > 0:
+            open_price = float((open_prices.fillna(0) * weights).sum() / weights.sum())
+        else:
+            open_price = float(open_prices.mean()) if open_prices.notna().any() else np.nan
+        ticker, option_type, strike, expiration = keys
+        grouped_rows.append(
+            {
+                "ticker": ticker,
+                "type": option_type,
+                "strike": strike,
+                "qty": int(round(float(qty.sum()))),
+                "expiration": expiration,
+                "trans_date": pd.to_datetime(group["trans_date"], errors="coerce").min(),
+                "open_price": open_price,
+            }
+        )
+    return pd.DataFrame(grouped_rows, columns=columns)
 
 
 def filter_df_to_range(df: pd.DataFrame, date_col: str, end: pd.Timestamp, range_choice: str) -> pd.DataFrame:

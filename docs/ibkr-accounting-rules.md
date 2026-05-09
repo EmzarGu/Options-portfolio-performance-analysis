@@ -193,6 +193,12 @@ Recommended defaults:
     call being bought to close when both legs share the same IBKR execution
     group. This prevents excluded call chains from re-entering wheel P&L later
     as standalone replacement premium.
+12. Keep execution-level option lots separate for audit and realized P&L
+    matching, but aggregate identical open contracts for Streamlit/iOS position
+    display. Same ticker, option type, strike, and expiration should render as
+    one open position with summed quantity and weighted-average open price.
+    Example: two IBKR fills of `CCJ 18JUN26 120 C`, quantity 1 each, display as
+    one open call position with quantity 2.
 
 ## Open Decisions
 

@@ -515,8 +515,7 @@ def test_ibkr_multiple_calls_can_share_one_prior_assigned_put_inventory_pool():
     )
 
     assert [(row["ticker"], row["type"], row["strike"], row["qty"]) for _, row in state.open_options.iterrows()] == [
-        ("EMN", "Call", 70.0, 1),
-        ("EMN", "Call", 70.0, 1),
+        ("EMN", "Call", 70.0, 2),
         ("EMN", "Call", 75.0, 2),
     ]
     assert sum(row["qty"] for _, row in state.open_options.iterrows()) == 4

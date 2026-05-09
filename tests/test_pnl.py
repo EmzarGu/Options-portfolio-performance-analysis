@@ -943,6 +943,45 @@ def test_build_open_options_frame_preserves_expected_fields():
     }
 
 
+def test_build_open_options_frame_groups_same_contract_lots():
+    lots = [
+        OptionLot(
+            ticker="CCJ",
+            otype="Call",
+            strike=120.0,
+            qty=1,
+            open_date=pd.Timestamp("2026-04-24 14:36:57"),
+            expiration=pd.Timestamp("2026-06-18"),
+            open_price=13.159191298,
+            comment="",
+            assigned=False,
+        ),
+        OptionLot(
+            ticker="CCJ",
+            otype="Call",
+            strike=120.0,
+            qty=1,
+            open_date=pd.Timestamp("2026-04-24 14:37:44"),
+            expiration=pd.Timestamp("2026-06-18"),
+            open_price=13.082717946,
+            comment="",
+            assigned=False,
+        ),
+    ]
+
+    df = build_open_options_frame(lots)
+
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["ticker"] == "CCJ"
+    assert row["type"] == "Call"
+    assert row["strike"] == 120.0
+    assert row["qty"] == 2
+    assert row["expiration"] == pd.Timestamp("2026-06-18")
+    assert row["trans_date"] == pd.Timestamp("2026-04-24 14:36:57")
+    assert row["open_price"] == pytest.approx((13.159191298 + 13.082717946) / 2)
+
+
 def test_filter_df_to_range_applies_ytd_window():
     df = pd.DataFrame(
         {
