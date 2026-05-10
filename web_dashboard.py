@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import hmac
 import json
 import math
@@ -14,6 +15,8 @@ from urllib.parse import parse_qs
 import pandas as pd
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 
 import mobile_api
 from portfolio_backend.charts import build_benchmark_growth_chart_data
@@ -32,7 +35,7 @@ from portfolio_backend.mobile_api_service import (
 app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
 
 COOKIE_NAME = "options_roi_web_session"
-SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
+DEFAULT_SESSION_DAYS = 90
 
 
 def _truthy_env(name: str, default: bool) -> bool:
@@ -50,32 +53,99 @@ def _dashboard_password() -> Optional[str]:
     return os.getenv("WEB_DASHBOARD_PASSWORD") or os.getenv("MOBILE_API_KEY")
 
 
+def _google_client_id() -> Optional[str]:
+    value = os.getenv("WEB_GOOGLE_CLIENT_ID", "").strip()
+    return value or None
+
+
+def _allowed_google_emails() -> set[str]:
+    raw = os.getenv("WEB_AUTH_ALLOWED_EMAILS", "")
+    return {email.strip().lower() for email in raw.split(",") if email.strip()}
+
+
+def _cookie_secret_configured() -> bool:
+    return bool(os.getenv("WEB_DASHBOARD_COOKIE_SECRET") or _dashboard_password())
+
+
 def _cookie_secret() -> str:
     return os.getenv("WEB_DASHBOARD_COOKIE_SECRET") or _dashboard_password() or "local-dev-dashboard-secret"
 
 
-def _sign_session(issued_at: int) -> str:
-    payload = str(int(issued_at)).encode("utf-8")
+def _google_auth_configured() -> bool:
+    return bool(_google_client_id() and _allowed_google_emails() and _cookie_secret_configured())
+
+
+def _auth_configured() -> bool:
+    return bool(_dashboard_password() or _google_auth_configured())
+
+
+def _session_max_age_seconds() -> int:
+    raw = os.getenv("WEB_SESSION_DAYS")
+    if raw:
+        try:
+            days = max(int(raw), 1)
+        except ValueError:
+            days = DEFAULT_SESSION_DAYS
+    else:
+        days = DEFAULT_SESSION_DAYS
+    return days * 24 * 60 * 60
+
+
+def _b64_json(data: Dict[str, Any]) -> str:
+    raw = json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _unb64_json(value: str) -> Dict[str, Any]:
+    padded = value + "=" * (-len(value) % 4)
+    decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+    data = json.loads(decoded.decode("utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def _sign_value(value: str) -> str:
+    payload = value.encode("utf-8")
     digest = hmac.new(_cookie_secret().encode("utf-8"), payload, hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
-def _session_token() -> str:
-    issued_at = int(time())
-    return f"{issued_at}.{_sign_session(issued_at)}"
+def _session_token(*, email: Optional[str] = None, auth_method: str = "key") -> str:
+    payload = _b64_json(
+        {
+            "iat": int(time()),
+            "email": email,
+            "auth": auth_method,
+        }
+    )
+    return f"{payload}.{_sign_value(payload)}"
+
+
+def _session_info(token: str) -> Optional[Dict[str, Any]]:
+    if not token or "." not in token:
+        return None
+    payload, signature = token.split(".", 1)
+    if payload.isdigit():
+        # Backward compatibility for the previous timestamp-only cookie shape.
+        if not hmac.compare_digest(signature, _sign_value(payload)):
+            return None
+        issued_at = int(payload)
+        return {"iat": issued_at, "email": None, "auth": "legacy_key"}
+    if not hmac.compare_digest(signature, _sign_value(payload)):
+        return None
+    try:
+        info = _unb64_json(payload)
+    except Exception:
+        return None
+    issued_at = info.get("iat")
+    if not isinstance(issued_at, int):
+        return None
+    if issued_at < int(time()) - _session_max_age_seconds():
+        return None
+    return info
 
 
 def _valid_session(token: str) -> bool:
-    if not token or "." not in token:
-        return False
-    issued_raw, signature = token.split(".", 1)
-    try:
-        issued_at = int(issued_raw)
-    except ValueError:
-        return False
-    if issued_at < int(time()) - SESSION_MAX_AGE_SECONDS:
-        return False
-    return hmac.compare_digest(signature, _sign_session(issued_at))
+    return _session_info(token) is not None
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -84,8 +154,49 @@ def _is_authenticated(request: Request) -> bool:
     return _valid_session(request.cookies.get(COOKIE_NAME, ""))
 
 
+def _authenticated_user(request: Request) -> Optional[str]:
+    info = _session_info(request.cookies.get(COOKIE_NAME, ""))
+    if not info:
+        return None
+    email = info.get("email")
+    return str(email) if email else None
+
+
 def _redirect_to_login() -> RedirectResponse:
     return RedirectResponse(url="/login", status_code=303)
+
+
+def _set_session_cookie(response: Response, *, email: Optional[str], auth_method: str) -> None:
+    response.set_cookie(
+        COOKIE_NAME,
+        _session_token(email=email, auth_method=auth_method),
+        max_age=_session_max_age_seconds(),
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+
+
+def _verify_google_credential(credential: str) -> Dict[str, Any]:
+    client_id = _google_client_id()
+    if not client_id:
+        raise ValueError("Google sign-in is not configured.")
+    claims = google_id_token.verify_oauth2_token(
+        credential,
+        google_auth_requests.Request(),
+        client_id,
+    )
+    if not claims.get("email_verified"):
+        raise PermissionError("Google account email is not verified.")
+    email = str(claims.get("email") or "").strip().lower()
+    if not email:
+        raise PermissionError("Google account did not include an email address.")
+    allowed = _allowed_google_emails()
+    if not allowed:
+        raise PermissionError("No Google account allowlist is configured.")
+    if email not in allowed:
+        raise PermissionError("This Google account is not allowed for this dashboard.")
+    return {**claims, "email": email}
 
 
 def _json_safe(value: Any) -> Any:
@@ -244,7 +355,7 @@ def health() -> Dict[str, Any]:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page() -> HTMLResponse:
-    if _auth_enabled() and not _dashboard_password():
+    if _auth_enabled() and not _auth_configured():
         return HTMLResponse(_configuration_error_html(), status_code=500)
     return HTMLResponse(_login_html())
 
@@ -261,14 +372,32 @@ async def login(request: Request) -> Response:
     if not hmac.compare_digest(submitted, expected):
         return HTMLResponse(_login_html("Invalid password or API key."), status_code=401)
     response = RedirectResponse(url="/", status_code=303)
-    response.set_cookie(
-        COOKIE_NAME,
-        _session_token(),
-        max_age=SESSION_MAX_AGE_SECONDS,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-    )
+    _set_session_cookie(response, email=None, auth_method="key")
+    return response
+
+
+@app.post("/auth/google")
+async def google_login(request: Request) -> Response:
+    if not _auth_enabled():
+        return RedirectResponse(url="/", status_code=303)
+    body = (await request.body()).decode("utf-8")
+    fields = parse_qs(body)
+    credential = fields.get("credential", [""])[0]
+    body_csrf = fields.get("g_csrf_token", [""])[0]
+    cookie_csrf = request.cookies.get("g_csrf_token", "")
+    if body_csrf or cookie_csrf:
+        if not body_csrf or not cookie_csrf or not hmac.compare_digest(body_csrf, cookie_csrf):
+            return HTMLResponse(_login_html("Google sign-in failed CSRF validation."), status_code=400)
+    if not credential:
+        return HTMLResponse(_login_html("Google sign-in did not return a credential."), status_code=400)
+    try:
+        claims = _verify_google_credential(credential)
+    except PermissionError as exc:
+        return HTMLResponse(_login_html(str(exc)), status_code=403)
+    except Exception:
+        return HTMLResponse(_login_html("Google sign-in could not be verified."), status_code=401)
+    response = RedirectResponse(url="/", status_code=303)
+    _set_session_cookie(response, email=str(claims["email"]), auth_method="google")
     return response
 
 
@@ -304,14 +433,17 @@ def dashboard_page(request: Request) -> Response:
     except Exception as exc:
         return HTMLResponse(_error_html(str(exc)), status_code=500)
     data_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).replace("</", "<\\/")
-    return HTMLResponse(DASHBOARD_HTML.replace("__DASHBOARD_DATA__", data_json))
+    user = html.escape(_authenticated_user(request) or "")
+    return HTMLResponse(
+        DASHBOARD_HTML.replace("__DASHBOARD_DATA__", data_json).replace("__AUTH_USER__", user)
+    )
 
 
 def _configuration_error_html() -> str:
     return """<!doctype html>
 <html><head><title>Options ROI</title><style>{css}</style></head>
 <body><main class="login"><h1>Dashboard is not configured</h1>
-<p>Set WEB_DASHBOARD_PASSWORD or MOBILE_API_KEY on the Cloud Run service.</p></main></body></html>""".format(
+<p>Set WEB_GOOGLE_CLIENT_ID with WEB_AUTH_ALLOWED_EMAILS and a cookie secret, or set WEB_DASHBOARD_PASSWORD / MOBILE_API_KEY.</p></main></body></html>""".format(
         css=BASE_CSS
     )
 
@@ -333,19 +465,52 @@ BASE_CSS = """
 a{color:var(--accent)}button,input{font:inherit}.login{max-width:520px;margin:14vh auto;padding:32px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
 .login h1{margin:0 0 8px;font-size:32px}.login p{color:var(--muted)}.login input{width:100%;padding:13px 14px;background:#0c120f;color:var(--text);border:1px solid var(--line);border-radius:8px;margin:12px 0}
 .login button,.primary{background:var(--accent);color:#06201b;border:0;border-radius:8px;padding:12px 16px;font-weight:750;cursor:pointer}.secondary{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:10px 13px;cursor:pointer}
+.signin-block{margin:18px 0}.fallback-login{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.fallback-login summary{cursor:pointer;color:var(--muted);font-weight:750}.auth-user{color:var(--muted);font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .error{color:var(--bad);font-weight:700}.error-panel{border-color:#5d2a2d;background:#211113}
 """
 
 
 def _login_html(error: str = "") -> str:
     safe_error = error.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return LOGIN_TEMPLATE.replace("__BASE_CSS__", BASE_CSS).replace("__ERROR__", safe_error)
+    google_signin = _google_signin_html()
+    fallback_open = "false" if google_signin else "true"
+    fallback_label = "Use API key instead" if google_signin else "Use API key"
+    return (
+        LOGIN_TEMPLATE.replace("__BASE_CSS__", BASE_CSS)
+        .replace("__ERROR__", safe_error)
+        .replace("__GOOGLE_SIGNIN__", google_signin)
+        .replace("__FALLBACK_OPEN__", " open" if fallback_open == "true" else "")
+        .replace("__FALLBACK_LABEL__", fallback_label)
+    )
+
+
+def _google_signin_html() -> str:
+    client_id = _google_client_id()
+    if not client_id:
+        return ""
+    safe_client_id = html.escape(client_id, quote=True)
+    return f"""
+<div class="signin-block">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <div id="g_id_onload"
+       data-client_id="{safe_client_id}"
+       data-login_uri="/auth/google"
+       data-auto_prompt="false"></div>
+  <div class="g_id_signin"
+       data-type="standard"
+       data-theme="filled_black"
+       data-size="large"
+       data-text="signin_with"
+       data-shape="rectangular"
+       data-logo_alignment="left"></div>
+</div>"""
 
 
 LOGIN_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Options ROI</title><style>__BASE_CSS__</style></head>
-<body><main class="login"><h1>Options ROI Dashboard</h1><p>Enter the dashboard password or mobile API key.</p>
-<p class="error">__ERROR__</p><form method="post" action="/login"><input name="password" type="password" autocomplete="current-password" autofocus placeholder="Password or API key"><button type="submit">Open dashboard</button></form></main></body></html>"""
+<body><main class="login"><h1>Options ROI Dashboard</h1><p>Sign in with your allowed Google account. This browser will stay signed in.</p>
+<p class="error">__ERROR__</p>__GOOGLE_SIGNIN__
+<details class="fallback-login"__FALLBACK_OPEN__><summary>__FALLBACK_LABEL__</summary><form method="post" action="/login"><input name="password" type="password" autocomplete="current-password" autofocus placeholder="Password or API key"><button type="submit">Open dashboard</button></form></details></main></body></html>"""
 
 
 DASHBOARD_HTML = """<!doctype html>
@@ -371,7 +536,7 @@ table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}th,td{
 </style>
 </head>
 <body>
-<div class="topbar"><div class="topbar-inner"><div class="brand">Options ROI</div><nav class="nav" id="nav"></nav><div class="actions"><form method="post" action="/refresh"><button class="primary" type="submit">Refresh</button></form><form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form></div></div></div>
+<div class="topbar"><div class="topbar-inner"><div class="brand">Options ROI</div><nav class="nav" id="nav"></nav><div class="actions"><span class="auth-user">__AUTH_USER__</span><form method="post" action="/refresh"><button class="primary" type="submit">Refresh</button></form><form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form></div></div></div>
 <main class="shell">
 <section class="header"><div class="title"><h1>Portfolio Dashboard</h1><div class="sub" id="subtitle"></div></div><div class="status-strip" id="statusStrip"></div></section>
 <section id="overview" class="section active"></section>

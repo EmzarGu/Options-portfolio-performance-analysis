@@ -136,6 +136,18 @@ def test_web_dashboard_login_accepts_mobile_api_key(monkeypatch):
     assert "Portfolio Dashboard" in dashboard_response.text
 
 
+def test_web_dashboard_login_sets_long_lived_session(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    client = TestClient(web_dashboard.app, base_url="https://testserver")
+
+    response = client.post("/login", data={"password": "secret"}, follow_redirects=False)
+
+    cookie = COOKIE_HEADER(response)
+    assert response.status_code == 303
+    assert "Max-Age=7776000" in cookie
+
+
 def test_web_dashboard_login_rejects_wrong_key(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("MOBILE_API_KEY", "secret")
@@ -145,6 +157,74 @@ def test_web_dashboard_login_rejects_wrong_key(monkeypatch):
 
     assert response.status_code == 401
     assert "Invalid password or API key." in response.text
+
+
+def test_web_dashboard_login_page_renders_google_sign_in_when_configured(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
+    monkeypatch.delenv("MOBILE_API_KEY", raising=False)
+    monkeypatch.delenv("WEB_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret")
+    monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
+    monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
+    client = TestClient(web_dashboard.app, base_url="https://testserver")
+
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert "https://accounts.google.com/gsi/client" in response.text
+    assert 'data-client_id="client-id.apps.googleusercontent.com"' in response.text
+    assert "Use API key instead" in response.text
+
+
+def test_web_dashboard_login_page_requires_google_allowlist(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
+    monkeypatch.delenv("MOBILE_API_KEY", raising=False)
+    monkeypatch.delenv("WEB_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret")
+    monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
+    monkeypatch.delenv("WEB_AUTH_ALLOWED_EMAILS", raising=False)
+    client = TestClient(web_dashboard.app, base_url="https://testserver")
+
+    response = client.get("/login")
+
+    assert response.status_code == 500
+    assert "Dashboard is not configured" in response.text
+
+
+def test_web_dashboard_google_login_accepts_allowed_verified_email(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
+    monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
+    monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setattr(
+        web_dashboard,
+        "_verify_google_credential",
+        lambda credential: {"email": "user@example.com"} if credential == "good" else {},
+    )
+    client = TestClient(web_dashboard.app, base_url="https://testserver")
+
+    response = client.post("/auth/google", data={"credential": "good"}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert COOKIE_HEADER(response).startswith(f"{web_dashboard.COOKIE_NAME}=")
+
+
+def test_web_dashboard_google_login_rejects_disallowed_email(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
+    monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
+    monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
+    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+
+    def reject(_credential):
+        raise PermissionError("This Google account is not allowed for this dashboard.")
+
+    monkeypatch.setattr(web_dashboard, "_verify_google_credential", reject)
+    client = TestClient(web_dashboard.app, base_url="https://testserver")
+
+    response = client.post("/auth/google", data={"credential": "good"})
+
+    assert response.status_code == 403
+    assert "This Google account is not allowed for this dashboard." in response.text
 
 
 def COOKIE_HEADER(response) -> str:

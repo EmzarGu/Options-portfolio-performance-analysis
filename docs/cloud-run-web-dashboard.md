@@ -28,7 +28,35 @@ Secrets:
 MOBILE_API_KEY=mobile-api-key:latest
 ```
 
-`WEB_DASHBOARD_PASSWORD` may be added later if the browser dashboard should use a password distinct from the mobile API key.
+`MOBILE_API_KEY` is also used as the fallback browser password and cookie-signing secret. `WEB_DASHBOARD_PASSWORD` may be added if the browser dashboard should use a password distinct from the mobile API key.
+
+## Browser Authentication
+
+The dashboard supports Google Sign-In plus an API-key fallback. Sessions are signed with an HTTP-only cookie and default to 90 days.
+
+Google Sign-In environment variables:
+
+```text
+WEB_GOOGLE_CLIENT_ID=<web-oauth-client-id>.apps.googleusercontent.com
+WEB_AUTH_ALLOWED_EMAILS=<allowed-google-email-1>,<allowed-google-email-2>
+WEB_SESSION_DAYS=90
+```
+
+The Google OAuth client should be configured with these authorized JavaScript origins:
+
+```text
+https://options-roi-web-595990983720.europe-west6.run.app
+https://options-roi-web-htdlrf6zjq-oa.a.run.app
+```
+
+If the OAuth setup asks for redirect/login URIs, add:
+
+```text
+https://options-roi-web-595990983720.europe-west6.run.app/auth/google
+https://options-roi-web-htdlrf6zjq-oa.a.run.app/auth/google
+```
+
+Do not remove `MOBILE_API_KEY` unless `WEB_DASHBOARD_COOKIE_SECRET` is configured; Google client IDs are public and must not be used as cookie secrets.
 
 ## Smoke Test
 
