@@ -188,6 +188,7 @@ def process_option_positions(trades: List[OptionTrade], as_of: pd.Timestamp):
             close_date=close_date,
             close_price=close_price,
             close_reason=close_reason,
+            roll_adjusted_open_price=lot.roll_adjusted_open_price,
         )
 
     for t in sorted(trades, key=lambda x: (x.date, x.ticker)):

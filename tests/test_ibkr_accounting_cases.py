@@ -23,6 +23,7 @@ from portfolio_backend.ibkr.performance import (
 from portfolio_backend.ibkr.source_adapter import option_trades_to_dataframe
 from portfolio_backend.ibkr.pipeline import build_ibkr_base_pipeline, wheel_stock_transactions_from_report
 from portfolio_backend.ibkr.pipeline import wheel_options_dataframe_from_report
+from portfolio_backend.mobile_payloads import build_monthly_performance_rows
 
 
 def _trade(**overrides) -> IbkrRawRow:
@@ -1579,6 +1580,85 @@ def test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized
     assert open_row["ticker"] == "ABC"
     assert open_row["strike"] == 110.0
     assert open_row["open_price"] == pytest.approx(0.0)
+
+
+def test_ibkr_monthly_projection_reports_incremental_and_roll_adjusted_open_premium():
+    open_old = _trade(
+        underlyingSymbol="ZM",
+        symbol="ZM   260515P00080000",
+        description="ZM 15MAY26 80 P",
+        tradeDate="20260410",
+        dateTime="20260410;154500",
+        expiry="20260515",
+        strike="80",
+        quantity="-1",
+        proceeds="1000",
+        ibCommission="-1",
+        netCash="999",
+    )
+    close_old = _trade(
+        underlyingSymbol="ZM",
+        symbol="ZM   260515P00080000",
+        description="ZM 15MAY26 80 P",
+        tradeID="T2",
+        transactionID="X2",
+        ibExecID="00014247.ZMROLL.03.01",
+        tradeDate="20260504",
+        dateTime="20260504;154500",
+        expiry="20260515",
+        strike="80",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        proceeds="-600",
+        ibCommission="-1",
+        netCash="-601",
+    )
+    open_replacement = _trade(
+        underlyingSymbol="ZM",
+        symbol="ZM   260515P00075000",
+        description="ZM 15MAY26 75 P",
+        tradeID="T3",
+        transactionID="X3",
+        ibExecID="00014247.ZMROLL.02.01",
+        tradeDate="20260504",
+        dateTime="20260504;154600",
+        expiry="20260515",
+        strike="75",
+        quantity="-1",
+        proceeds="500",
+        ibCommission="-1",
+        netCash="499",
+    )
+    report = _report(
+        {
+            "Trade": [open_old, close_old, open_replacement],
+            "OptionEAE": [_option_eae(date="20250101"), _stock_eae(date="20250101")],
+        }
+    )
+
+    state = build_ibkr_base_pipeline(
+        report,
+        as_of=pd.Timestamp("2026-05-10").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(event.ticker, event.pnl) for event in state.realized_option_events] == [("ZM", pytest.approx(897.0))]
+    assert len(state.open_options) == 1
+    assert state.open_options.iloc[0]["ticker"] == "ZM"
+    assert state.open_options.iloc[0]["open_price"] == pytest.approx(0.0)
+    open_lots = [lot for lot in state.lots if lot.close_date is None]
+    assert len(open_lots) == 1
+    assert open_lots[0].roll_adjusted_open_price == pytest.approx(8.97)
+
+    rows = build_monthly_performance_rows(state, target_return=0.015, monthly_range="ytd")
+    may = next(row for row in rows if row["month"] == "2026-05-31")
+    assert may["realized_options_pnl"] == pytest.approx(897.0)
+    assert may["open_expiring_option_premium"] == pytest.approx(0.0)
+    assert may["open_expiring_incremental_premium"] == pytest.approx(0.0)
+    assert may["open_expiring_roll_adjusted_premium"] == pytest.approx(897.0)
+    assert may["projected_month_pnl"] == pytest.approx(may["realized_month_pnl"])
 
 
 def test_ibkr_pipeline_reports_non_rolled_option_on_close_or_expiration_year():

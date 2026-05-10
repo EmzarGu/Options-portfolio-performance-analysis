@@ -211,13 +211,13 @@ def _monthly_target_status(current_return: Optional[float], target_return: float
     return "beat" if current_return >= target_return else "below_target"
 
 
-def _open_expiring_option_premium(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
-    if month_end is None:
-        return None
-    open_options = getattr(state, "open_options", pd.DataFrame())
-    if open_options is None or open_options.empty:
-        return 0.0
-    required_columns = {"expiration", "open_price", "qty"}
+def _sum_open_expiring_premium_from_frame(
+    open_options: pd.DataFrame,
+    month_end: pd.Timestamp,
+    *,
+    price_column: str,
+) -> float:
+    required_columns = {"expiration", price_column, "qty"}
     if not required_columns.issubset(open_options.columns):
         return 0.0
 
@@ -231,10 +231,49 @@ def _open_expiring_option_premium(state, month_end: Optional[pd.Timestamp]) -> O
     if expiring.empty:
         return 0.0
 
-    open_prices = pd.to_numeric(expiring["open_price"], errors="coerce")
+    open_prices = pd.to_numeric(expiring[price_column], errors="coerce")
     quantities = pd.to_numeric(expiring["qty"], errors="coerce").abs()
     premium = (open_prices * quantities * CONTRACT_MULTIPLIER).dropna()
     return float(premium.sum()) if not premium.empty else 0.0
+
+
+def _open_expiring_incremental_premium(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
+    if month_end is None:
+        return None
+    open_options = getattr(state, "open_options", pd.DataFrame())
+    if open_options is None or open_options.empty:
+        return 0.0
+    return _sum_open_expiring_premium_from_frame(open_options, month_end, price_column="open_price")
+
+
+def _open_expiring_roll_adjusted_premium(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
+    if month_end is None:
+        return None
+    lots = getattr(state, "lots", None)
+    if lots is not None:
+        total = 0.0
+        found = False
+        for lot in lots:
+            if getattr(lot, "close_date", None) is not None:
+                continue
+            expiration = pd.to_datetime(getattr(lot, "expiration", None), errors="coerce")
+            if pd.isna(expiration) or expiration.to_period("M") != month_end.to_period("M"):
+                continue
+            qty = abs(_number(getattr(lot, "qty", None)) or 0.0)
+            roll_price = getattr(lot, "roll_adjusted_open_price", None)
+            price = _number(roll_price if roll_price is not None else getattr(lot, "open_price", None))
+            if price is None:
+                continue
+            total += price * qty * CONTRACT_MULTIPLIER
+            found = True
+        if found:
+            return float(total)
+
+    open_options = getattr(state, "open_options", pd.DataFrame())
+    if open_options is None or open_options.empty:
+        return 0.0
+    price_column = "roll_adjusted_open_price" if "roll_adjusted_open_price" in open_options.columns else "open_price"
+    return _sum_open_expiring_premium_from_frame(open_options, month_end, price_column=price_column)
 
 
 def _monthly_projection_values(
@@ -246,11 +285,13 @@ def _monthly_projection_values(
     avg_capital = _number(row.get("avg_capital"))
     peak_capital = _number(row.get("peak_capital"))
     realized_month_pnl = _number(row.get("total_realized_pnl"))
-    open_expiring_option_premium = _open_expiring_option_premium(state, month_end)
+    open_expiring_incremental_premium = _open_expiring_incremental_premium(state, month_end)
+    open_expiring_roll_adjusted_premium = _open_expiring_roll_adjusted_premium(state, month_end)
+    open_expiring_option_premium = open_expiring_incremental_premium
 
     projected_month_pnl = None
-    if realized_month_pnl is not None and open_expiring_option_premium is not None:
-        projected_month_pnl = realized_month_pnl + open_expiring_option_premium
+    if realized_month_pnl is not None and open_expiring_incremental_premium is not None:
+        projected_month_pnl = realized_month_pnl + open_expiring_incremental_premium
 
     projected_return_roac = None
     if projected_month_pnl is not None and avg_capital not in (None, 0):
@@ -264,11 +305,13 @@ def _monthly_projection_values(
     projected_remaining_pnl = None
     if target_pnl is not None and projected_month_pnl is not None:
         projected_remaining_pnl = max(target_pnl - projected_month_pnl, 0.0)
-    includes_open_premium = bool((open_expiring_option_premium or 0.0) > 0.0)
+    includes_open_premium = bool((open_expiring_incremental_premium or 0.0) > 0.0)
 
     return {
         "realized_month_pnl": realized_month_pnl,
         "open_expiring_option_premium": open_expiring_option_premium,
+        "open_expiring_incremental_premium": open_expiring_incremental_premium,
+        "open_expiring_roll_adjusted_premium": open_expiring_roll_adjusted_premium,
         "includes_open_premium": includes_open_premium,
         "projection_basis": "realized_plus_open_premium" if includes_open_premium else "realized_only",
         "projected_month_pnl": projected_month_pnl,
@@ -309,6 +352,8 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
         "realized_options_pnl": json_safe(_number(row.get("realized_options_pnl"))),
         "realized_stock_pnl": json_safe(_number(row.get("realized_stock_pnl"))),
         "open_expiring_option_premium": json_safe(projection["open_expiring_option_premium"]),
+        "open_expiring_incremental_premium": json_safe(projection["open_expiring_incremental_premium"]),
+        "open_expiring_roll_adjusted_premium": json_safe(projection["open_expiring_roll_adjusted_premium"]),
         "projected_month_pnl": json_safe(projection["projected_month_pnl"]),
         "projected_return_roac": json_safe(projection["projected_return_roac"]),
         "projected_return_ropc": json_safe(projection["projected_return_ropc"]),
@@ -400,6 +445,8 @@ def _mobile_month_row(
     if state is not None:
         out["realized_month_pnl"] = json_safe(projection["realized_month_pnl"])
         out["open_expiring_option_premium"] = json_safe(projection["open_expiring_option_premium"])
+        out["open_expiring_incremental_premium"] = json_safe(projection["open_expiring_incremental_premium"])
+        out["open_expiring_roll_adjusted_premium"] = json_safe(projection["open_expiring_roll_adjusted_premium"])
         out["includes_open_premium"] = bool(projection["includes_open_premium"])
         out["projection_basis"] = projection["projection_basis"]
         out["projected_month_pnl"] = json_safe(projection["projected_month_pnl"])
@@ -452,6 +499,8 @@ def build_current_month_performance(
             "realized_options_pnl": None,
             "realized_stock_pnl": None,
             "open_expiring_option_premium": None,
+            "open_expiring_incremental_premium": None,
+            "open_expiring_roll_adjusted_premium": None,
             "includes_open_premium": False,
             "projection_basis": "realized_only",
             "projected_month_pnl": None,
@@ -477,6 +526,8 @@ def build_current_month_performance(
         "realized_options_pnl": month_row["realized_options_pnl"],
         "realized_stock_pnl": month_row["realized_stock_pnl"],
         "open_expiring_option_premium": month_row["open_expiring_option_premium"],
+        "open_expiring_incremental_premium": month_row["open_expiring_incremental_premium"],
+        "open_expiring_roll_adjusted_premium": month_row["open_expiring_roll_adjusted_premium"],
         "includes_open_premium": month_row["includes_open_premium"],
         "projection_basis": month_row["projection_basis"],
         "projected_month_pnl": month_row["projected_month_pnl"],

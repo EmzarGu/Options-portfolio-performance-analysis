@@ -139,6 +139,8 @@ Response:
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
     "open_expiring_option_premium": 5200.0,
+    "open_expiring_incremental_premium": 5200.0,
+    "open_expiring_roll_adjusted_premium": 5890.0,
     "includes_open_premium": true,
     "projection_basis": "realized_plus_open_premium",
     "projected_month_pnl": 8410.0,
@@ -585,6 +587,8 @@ Response:
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
     "open_expiring_option_premium": 5200.0,
+    "open_expiring_incremental_premium": 5200.0,
+    "open_expiring_roll_adjusted_premium": 5890.0,
     "projected_month_pnl": 8410.0,
     "projected_return_roac": 0.016,
     "projected_return_ropc": 0.0131,
@@ -613,6 +617,8 @@ Response:
       "status": "beat",
       "realized_month_pnl": 11840.0,
       "open_expiring_option_premium": 0.0,
+      "open_expiring_incremental_premium": 0.0,
+      "open_expiring_roll_adjusted_premium": 0.0,
       "includes_open_premium": false,
       "projection_basis": "realized_only",
       "projected_month_pnl": 11840.0,
@@ -637,6 +643,8 @@ Response:
       "status": "miss",
       "realized_month_pnl": -3920.0,
       "open_expiring_option_premium": 2500.0,
+      "open_expiring_incremental_premium": 2500.0,
+      "open_expiring_roll_adjusted_premium": 2500.0,
       "includes_open_premium": true,
       "projection_basis": "realized_plus_open_premium",
       "projected_month_pnl": -1420.0,
@@ -655,10 +663,12 @@ Nullability:
 - Month row `id` is mandatory and must follow the stable row ID rules above.
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
-- `open_expiring_option_premium` is assigned by option expiration month for still-open short options.
+- `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting same-expiration rolls already recognized in realized P&L.
+- `open_expiring_option_premium` is a backward-compatible legacy alias of `open_expiring_incremental_premium`.
+- `open_expiring_roll_adjusted_premium` is a display/reconciliation value for premium attached to currently open expiring chains, including same-expiration roll history. It is not used in `projected_month_pnl`.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
 - `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
-- `projected_month_pnl` is `realized_month_pnl + open_expiring_option_premium`.
+- `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the target-monitoring fields iOS should prefer.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `status` allowed values: `beat`, `miss`, `below_target`, `on_track`, `unavailable`.
@@ -669,7 +679,8 @@ Nullability:
 Backend source today:
 
 - `state.monthly_cycles`
-- `state.open_options` for expiration-month open short premium projection.
+- `state.open_options` for expiration-month incremental open short premium projection.
+- `state.lots` for roll-adjusted open short premium display where source accounting provides roll metadata.
 - `state.monthly_returns_covered`
 - `state.first_incomplete_return_month`
 - `state.last_complete_return_month`

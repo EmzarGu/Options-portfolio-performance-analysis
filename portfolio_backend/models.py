@@ -34,6 +34,7 @@ class OptionLot:
     close_date: Optional[pd.Timestamp] = None
     close_price: Optional[float] = None
     close_reason: Optional[str] = None
+    roll_adjusted_open_price: Optional[float] = None
 
 
 @dataclass
@@ -174,4 +175,3 @@ class PipelineState:
 
     def __contains__(self, key: str) -> bool:
         return key in self.keys()
-
