@@ -598,6 +598,7 @@ def build_ibkr_base_pipeline(
     align_benchmarks_monthly_fn: AlignBenchmarksMonthlyFn,
     selected_sheets: Optional[List[str]] = None,
     cache_bust: int = 1,
+    timing_recorder: Optional[Callable[[str, float], None]] = None,
 ) -> PipelineState:
     as_of_ts = pd.Timestamp(as_of).normalize()
     selected = selected_sheets or ["IBKR Flex"]
@@ -624,6 +625,7 @@ def build_ibkr_base_pipeline(
         collect_dividends,
         align_benchmarks_monthly_fn,
         cache_bust=cache_bust,
+        timing_recorder=timing_recorder,
         stock_txns_override_fn=override_stock_txns,
         option_positions_override_fn=override_option_positions,
     )
@@ -648,6 +650,7 @@ def build_ibkr_pipeline(
     selected_sheets: Optional[List[str]] = None,
     cache_bust: int = 1,
     price_updated_at: Optional[str] = None,
+    timing_recorder: Optional[Callable[[str, float], None]] = None,
 ) -> PipelineState:
     state = build_ibkr_base_pipeline(
         report,
@@ -656,6 +659,7 @@ def build_ibkr_pipeline(
         align_benchmarks_monthly_fn=align_benchmarks_monthly_fn,
         selected_sheets=selected_sheets,
         cache_bust=cache_bust,
+        timing_recorder=timing_recorder,
     )
     if fetch_current_prices_fn is not None:
         tickers = list(current_price_tickers_for_state(state))

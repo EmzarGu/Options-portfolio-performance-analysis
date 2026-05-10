@@ -1,9 +1,11 @@
 import json
+import logging
 import os
 import subprocess
 import uuid
 from datetime import date, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 try:
     import tomllib  # py311+
@@ -31,6 +33,8 @@ from data_sources import (
     load_options_from_excel_bytes,
     option_sheet_names_from_excel_bytes,
 )
+
+logger = logging.getLogger(__name__)
 from portfolio_backend.calculations import (
     assess_capital_history_coverage,
     build_capital_timeline,
@@ -654,11 +658,11 @@ def render_issue_status_banner(issues: List[str], price_errors: List[str], price
 
     total_issues = len(actionable_issues) + len(price_errors) + (1 if coverage_problem else 0)
     if total_issues == 0:
-        msg = "0 actionable issues detected (Logs tab)"
+        msg = "0 actionable issues detected (Diagnostics tab)"
         if audit_issues:
             msg += f" · {len(audit_issues)} audit note(s)"
     else:
-        msg = f"{total_issues} actionable issue(s) detected — check Logs tab"
+        msg = f"{total_issues} actionable issue(s) detected — check Diagnostics tab"
 
     color = {"success": "#22c55e", "warning": "#f59e0b", "error": "#ef4444"}[severity]
     st.markdown(f"<div style='font-weight:600; color:{color}; margin: 4px 0;'>{msg}</div>", unsafe_allow_html=True)
@@ -691,14 +695,26 @@ def build_base_pipeline(
 ) -> PipelineState:
     sync_streamlit_secrets_to_env()
     source_mode = source_mode or data_source_mode()
+    def record_pipeline_phase(phase: str, elapsed_ms: float) -> None:
+        logger.warning(
+            "streamlit_pipeline_phase source=%s phase=%s elapsed_ms=%.1f",
+            source_mode,
+            phase,
+            elapsed_ms,
+        )
+
     if source_mode == DATA_SOURCE_IBKR:
+        started_at = perf_counter()
+        report = load_flex_report_from_env()
+        record_pipeline_phase("ibkr_load_report_ms", (perf_counter() - started_at) * 1000)
         return _backend_build_ibkr_base_pipeline(
-            load_flex_report_from_env(),
+            report,
             as_of=as_of,
             fetch_price_history_fn=fetch_price_history_yf,
             align_benchmarks_monthly_fn=align_benchmarks_monthly,
             selected_sheets=[IBKR_SOURCE_LABEL],
             cache_bust=cache_bust,
+            timing_recorder=record_pipeline_phase,
         )
     return _backend_build_base_pipeline(
         SHEET_ID,
@@ -709,6 +725,7 @@ def build_base_pipeline(
         collect_dividend_cashflows,
         align_benchmarks_monthly,
         cache_bust=cache_bust,
+        timing_recorder=record_pipeline_phase,
     )
 
 
@@ -1447,11 +1464,16 @@ def _render_logs_tab(
 ) -> None:
     st.markdown("##### Data source / connectivity issues")
     st.write(f"Build version: {APP_BUILD_VERSION}")
-    st.caption(
-        "Secrets key used for Google Sheets mode: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
-        "private sheets need a service account. Offline fallback for Sheets mode: set env "
-        "`LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
-    )
+    if data_source_mode() == DATA_SOURCE_IBKR:
+        st.caption(
+            "Active source: `IBKR Flex` from Firestore. Price history, imported IBKR rows, and audit diagnostics are backend-owned."
+        )
+    else:
+        st.caption(
+            "Secrets key used for Google Sheets mode: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
+            "private sheets need a service account. Offline fallback for Sheets mode: set env "
+            "`LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
+        )
     actionable_issues, audit_issues = split_actionable_and_audit_issues(issues)
     coverage_problem = price_summary and (
         price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
@@ -1534,7 +1556,8 @@ def _render_logs_tab(
         st.success("No actionable issues detected.")
     if audit_issues:
         st.info("Wheel audit notes: expected IBKR exclusions that are not counted as data-health warnings.")
-        st.dataframe(pd.DataFrame({"message": audit_issues}), width="stretch")
+        with st.expander(f"Show {len(audit_issues)} audit notes", expanded=False):
+            st.dataframe(pd.DataFrame({"message": audit_issues}), width="stretch")
     if state.get("stock_prices"):
         st.write("Stock prices used:")
         st.dataframe(
@@ -1551,6 +1574,20 @@ def _render_logs_tab(
     if state.get("sheet_counts") is not None:
         st.markdown("##### Loaded rows by data source")
         st.dataframe(state["sheet_counts"], width="stretch")
+    if data_source_mode() == DATA_SOURCE_IBKR:
+        st.markdown("##### IBKR reconciliation notes")
+        st.caption("Latest documented sheet-vs-IBKR reconciliation found no accounting blockers before switching Streamlit.")
+        st.write(
+            pd.DataFrame(
+                [
+                    {"case": "FTNT", "status": "Matched", "explanation": "Open 95C expiring 2026-09-18 caps assigned holding at 100 covered shares."},
+                    {"case": "CCJ/NVDA April", "status": "Expected difference", "explanation": "IBKR uses lifecycle-date roll/close recognition; sheet periodization differs."},
+                    {"case": "AAPL April", "status": "Expected difference", "explanation": "IBKR realized assignment economics in prior roll events instead of April assignment date."},
+                    {"case": "SPY/ABR", "status": "Excluded", "explanation": "Excluded from wheel P&L by accounting rules."},
+                    {"case": "ZM monthly premium", "status": "Matched semantics", "explanation": "Incremental open premium is separate from roll-adjusted display premium."},
+                ]
+            )
+        )
     st.markdown("---")
     st.markdown("##### Debug / raw data")
     st.write("Options raw", state["df_opts"].head())
@@ -1586,13 +1623,158 @@ def _render_methodology_tab() -> None:
 - No true option MTM; no external deposit/withdrawal modeling.
 - Date parsing depends on source date fields being parseable; bad rows go to Issues.
 - Mixed legs (“Put/Call”, “Call/Put”) infer the short leg via type/comment heuristics.
-            """
+        """
     )
 
 
-def main():
+def _load_dashboard_state_for_ui(
+    *,
+    as_of_input: date,
+    include_unrealized: bool,
+    selected_sheets: List[str],
+    source_mode: str,
+) -> Tuple[PipelineState, Any]:
+    reload_token = _get_pipeline_reload_token()
+    pipeline_cache_key = build_pipeline_cache_key(
+        as_of_input,
+        include_unrealized,
+        selected_sheets,
+        reload_token,
+        source_mode=source_mode,
+    )
+    price_refresh_token = _get_price_refresh_cache_token(as_of_input, include_unrealized, selected_sheets)
+    base_state = get_cached_pipeline(*pipeline_cache_key)
+    priced_state = apply_live_price_overlay(base_state, price_refresh_token)
+    state = apply_unrealized_adjusted_display(priced_state, include_unrealized)
+    return state, build_dashboard_view_model(state, include_unrealized)
+
+
+def _render_ibkr_app(source_mode: str) -> None:
     st.title("Options ROI Dashboard")
+    st.caption("Live from IBKR Flex with Streamlit")
+
+    prefs = load_prefs()
+    top_left, top_mid, top_right = st.columns([1.2, 1.4, 2.4])
+    with top_left:
+        as_of_input = st.date_input("As of date", value=date.today(), key="ibkr_as_of")
+    with top_mid:
+        include_unrealized = st.checkbox(
+            "Include current unrealized snapshot",
+            value=bool(prefs.get("include_unrealized", True)),
+            key="include_unrealized",
+        )
+    with top_right:
+        st.caption("Source: IBKR Flex")
+        st.caption("Google Sheet selection is disabled in IBKR mode. Historical prices and IBKR rows are read from Firestore.")
+
+    selected_sheets = [IBKR_SOURCE_LABEL]
+    new_prefs = {
+        "include_unrealized": bool(st.session_state.get("include_unrealized", False)),
+        "selected_sheets": prefs.get("selected_sheets", []),
+    }
+    if new_prefs != prefs:
+        save_prefs(new_prefs)
+
+    try:
+        state, view_model = _load_dashboard_state_for_ui(
+            as_of_input=as_of_input,
+            include_unrealized=include_unrealized,
+            selected_sheets=selected_sheets,
+            source_mode=source_mode,
+        )
+    except Exception as e:
+        st.error(
+            "Could not load IBKR Flex data from Firestore. Confirm Streamlit secrets include "
+            "`GOOGLE_SERVICE_ACCOUNT_JSON` or `FIRESTORE_SERVICE_ACCOUNT_JSON`, and that "
+            "`FIRESTORE_PROJECT_ID` is set to `options-performance-dashboard`. "
+            f"Details: {e}"
+        )
+        st.stop()
+
+    _render_snapshot(
+        st.container(),
+        state,
+        include_unrealized,
+        view_model.unrealized_blocked,
+        view_model.ytd_total,
+        view_model.realized_total,
+        view_model.as_of_year,
+        view_model.capital_history_affected_years,
+        view_model.ytd_twr,
+        view_model.missing_required_price_tickers,
+        view_model.capital_history_incomplete,
+        view_model.capital_history_coverage_issues,
+        view_model.dividend_warning_note,
+        view_model.issues,
+        view_model.price_errors,
+        view_model.price_summary,
+    )
+
+    tabs = ["Dashboard", "Monthly", "Tickers", "Positions", "Diagnostics", "Methodology"]
+    tab_dashboard, tab_monthly, tab_ticker, tab_positions, tab_logs, tab_method = st.tabs(tabs)
+
+    with tab_dashboard:
+        _render_yearly_tab(
+            state,
+            view_model.yearly,
+            include_unrealized,
+            view_model.dividend_warning_note,
+            view_model.covered_period_note,
+            view_model.capital_history_incomplete,
+            view_model.monthly_returns_covered,
+            view_model.return_series_truncated,
+        )
+
+    with tab_monthly:
+        _render_monthly_tab(
+            view_model.monthly_cycles,
+            view_model.monthly_returns_covered,
+            view_model.dividend_warning_note,
+            view_model.return_series_truncated,
+            view_model.covered_period_note,
+            view_model.capital_history_incomplete,
+        )
+
+    with tab_ticker:
+        _render_ticker_tab(state, view_model.unrealized_blocked)
+
+    with tab_positions:
+        _render_positions_tab(state)
+
+    with tab_logs:
+        col_refresh, col_status = st.columns([1, 3])
+        with col_refresh:
+            if st.button("Rebuild cached data", key="ibkr_rebuild_pipeline"):
+                _increment_pipeline_reload_token()
+                _clear_data_caches()
+                _rerun_app()
+        with col_status:
+            st.caption(f"Build version: {APP_BUILD_VERSION}")
+            st.caption(_format_price_status(state))
+        _render_logs_tab(
+            state,
+            view_model.issues,
+            view_model.price_errors,
+            view_model.price_summary,
+            view_model.unrealized_blocked,
+            view_model.capital_history_incomplete,
+            view_model.capital_history_coverage_issues,
+            view_model.dividend_coverage_complete,
+            view_model.dividend_errors,
+            view_model.dividend_warning_note,
+        )
+
+    with tab_method:
+        _render_methodology_tab()
+
+
+def main():
     source_mode = streamlit_app_source_mode()
+    if source_mode == DATA_SOURCE_IBKR:
+        _render_ibkr_app(source_mode)
+        return
+
+    st.title("Options ROI Dashboard")
     st.caption(f"Live from {source_label_for_mode(source_mode)} with Streamlit")
 
     col_side, col_main = st.columns([1, 4])

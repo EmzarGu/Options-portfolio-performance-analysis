@@ -411,18 +411,22 @@ def align_benchmarks_monthly(
         return {}
     start = idx.min() - pd.DateOffset(months=2)
     end = idx.max() + pd.DateOffset(days=1)
-    all_tickers_list = list(tickers.values())
     try:
-        px_data = yf_module.download(all_tickers_list, start=start, end=end, progress=False, auto_adjust=True)
-        if px_data.empty:
-            return {}
-        px_data = px_data["Close"] if "Close" in px_data.columns else px_data
-    except Exception:
+        price_history, _errors, _summary = fetch_price_history_yf(
+            set(tickers.values()),
+            pd.to_datetime(start).normalize(),
+            pd.to_datetime(end).normalize(),
+            yf_module,
+        )
+    except Exception as exc:
+        logger.warning("benchmark_price_history_fetch_failed error=%s", exc)
         return {}
     aligned = {}
     for name, ticker in tickers.items():
         try:
-            px = px_data[ticker] if len(all_tickers_list) > 1 else px_data
+            px = price_history.get(ticker)
+            if px is None:
+                continue
             px = px.dropna()
             if px.empty:
                 continue
