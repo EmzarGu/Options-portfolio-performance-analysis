@@ -218,6 +218,8 @@ def _sum_open_expiring_premium_from_frame(
     price_column: str,
 ) -> float:
     required_columns = {"expiration", price_column, "qty"}
+    if price_column == "roll_adjusted_open_price":
+        required_columns = {"expiration", "qty"}
     if not required_columns.issubset(open_options.columns):
         return 0.0
 
@@ -231,7 +233,15 @@ def _sum_open_expiring_premium_from_frame(
     if expiring.empty:
         return 0.0
 
-    open_prices = pd.to_numeric(expiring[price_column], errors="coerce")
+    if price_column == "roll_adjusted_open_price":
+        if "roll_adjusted_open_price" in expiring.columns:
+            open_prices = pd.to_numeric(expiring["roll_adjusted_open_price"], errors="coerce")
+        else:
+            open_prices = pd.Series(pd.NA, index=expiring.index, dtype="Float64")
+        if "open_price" in expiring.columns:
+            open_prices = open_prices.fillna(pd.to_numeric(expiring["open_price"], errors="coerce"))
+    else:
+        open_prices = pd.to_numeric(expiring[price_column], errors="coerce")
     quantities = pd.to_numeric(expiring["qty"], errors="coerce").abs()
     premium = (open_prices * quantities * CONTRACT_MULTIPLIER).dropna()
     return float(premium.sum()) if not premium.empty else 0.0
@@ -482,6 +492,62 @@ def build_monthly_performance_rows(
     return rows
 
 
+def _open_option_counts_by_expiration_month(state) -> Dict[pd.Timestamp, int]:
+    open_options = getattr(state, "open_options", pd.DataFrame())
+    if open_options is None or open_options.empty or "expiration" not in open_options.columns:
+        return {}
+    options = open_options.copy()
+    options["expiration"] = pd.to_datetime(options["expiration"], errors="coerce")
+    options = options.loc[options["expiration"].notna()]
+    if options.empty:
+        return {}
+    options["month"] = options["expiration"].dt.to_period("M").dt.to_timestamp("M")
+    return {month: int(count) for month, count in options.groupby("month").size().items()}
+
+
+def build_future_monthly_performance_rows(
+    state,
+    *,
+    target_return: float = 0.015,
+) -> List[Dict[str, Any]]:
+    as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
+    if pd.isna(as_of_ts):
+        return []
+    current_month = as_of_ts.to_period("M").to_timestamp("M")
+    counts_by_month = _open_option_counts_by_expiration_month(state)
+    rows = []
+    for month_end in sorted(month for month in counts_by_month if month > current_month):
+        row = {
+            "total_realized_pnl": 0.0,
+            "realized_options_pnl": 0.0,
+            "realized_stock_pnl": 0.0,
+            "dividends": 0.0,
+            "avg_capital": None,
+            "peak_capital": None,
+            "roac": None,
+            "ropc": None,
+        }
+        projection = _monthly_projection_values(state, row, month_end, target_return)
+        rows.append(
+            {
+                "id": f"month:{json_safe(month_end)}",
+                "month": json_safe(month_end),
+                "open_option_count": int(counts_by_month.get(month_end, 0)),
+                "open_expiring_option_premium": json_safe(projection["open_expiring_option_premium"]),
+                "open_expiring_incremental_premium": json_safe(projection["open_expiring_incremental_premium"]),
+                "open_expiring_roll_adjusted_premium": json_safe(projection["open_expiring_roll_adjusted_premium"]),
+                "projected_month_pnl": json_safe(projection["projected_month_pnl"]),
+                "projected_return_roac": None,
+                "projected_return_ropc": None,
+                "target_pnl": None,
+                "projected_remaining_pnl": None,
+                "includes_open_premium": bool(projection["includes_open_premium"]),
+                "projection_basis": projection["projection_basis"],
+            }
+        )
+    return rows
+
+
 def build_current_month_performance(
     state,
     *,
@@ -577,6 +643,7 @@ def build_mobile_monthly_performance(
             target_return=target_return,
             monthly_range=monthly_range,
         ),
+        "future_months": build_future_monthly_performance_rows(state, target_return=target_return),
     }
 
 

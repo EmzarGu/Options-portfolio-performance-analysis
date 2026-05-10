@@ -19,6 +19,7 @@ from portfolio_backend.mobile_payloads import (
     build_mobile_refresh,
     build_mobile_tickers,
     build_mobile_yearly_performance,
+    build_future_monthly_performance_rows,
     build_monthly_performance_rows,
     build_open_option_short_rows,
     build_inventory_rows,
@@ -283,6 +284,31 @@ def _mobile_state():
         dividend_summary={"attempted": 2, "failed": 1},
         dividend_errors=["DIVMISS: dividend history returned no usable data"],
     )
+
+
+def _mobile_state_with_future_september():
+    state = _mobile_state()
+    state.open_options = pd.concat(
+        [
+            state.open_options,
+            pd.DataFrame(
+                [
+                    {
+                        "ticker": "SEPT",
+                        "type": "Put",
+                        "strike": 100.0,
+                        "qty": 1,
+                        "expiration": pd.Timestamp("2026-09-18"),
+                        "trans_date": pd.Timestamp("2026-05-01"),
+                        "open_price": 3.0,
+                        "roll_adjusted_open_price": 3.5,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    return state
 
 
 def test_mobile_request_echoes_normalized_inputs():
@@ -929,9 +955,46 @@ def test_monthly_performance_rows_support_ranges_and_missing_capital():
         build_monthly_performance_rows(state, monthly_range="unsupported")
 
 
+def test_future_monthly_performance_rows_emit_open_expiry_months():
+    rows = build_future_monthly_performance_rows(_mobile_state_with_future_september(), target_return=0.015)
+
+    assert rows == [
+        {
+            "id": "month:2026-06-30",
+            "month": "2026-06-30",
+            "open_option_count": 1,
+            "open_expiring_option_premium": 200.0,
+            "open_expiring_incremental_premium": 200.0,
+            "open_expiring_roll_adjusted_premium": 200.0,
+            "projected_month_pnl": 200.0,
+            "projected_return_roac": None,
+            "projected_return_ropc": None,
+            "target_pnl": None,
+            "projected_remaining_pnl": None,
+            "includes_open_premium": True,
+            "projection_basis": "realized_plus_open_premium",
+        },
+        {
+            "id": "month:2026-09-30",
+            "month": "2026-09-30",
+            "open_option_count": 1,
+            "open_expiring_option_premium": 300.0,
+            "open_expiring_incremental_premium": 300.0,
+            "open_expiring_roll_adjusted_premium": 350.0,
+            "projected_month_pnl": 300.0,
+            "projected_return_roac": None,
+            "projected_return_ropc": None,
+            "target_pnl": None,
+            "projected_remaining_pnl": None,
+            "includes_open_premium": True,
+            "projection_basis": "realized_plus_open_premium",
+        },
+    ]
+
+
 def test_mobile_monthly_performance_composes_contract_payload():
     monthly = build_mobile_monthly_performance(
-        _mobile_state(),
+        _mobile_state_with_future_september(),
         {
             "as_of": pd.Timestamp("2026-05-03"),
             "include_unrealized": True,
@@ -955,6 +1018,7 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "return_metric",
         "current_month",
         "months",
+        "future_months",
     }
     assert monthly["current_month"] == {
         "id": "month:2026-05-31",
@@ -983,11 +1047,12 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "days_remaining": 28,
     }
     assert [row["id"] for row in monthly["months"]] == ["month:2026-04-30", "month:2026-05-31"]
+    assert [row["id"] for row in monthly["future_months"]] == ["month:2026-06-30", "month:2026-09-30"]
 
 
 def test_mobile_monthly_performance_matches_contract_fixture():
     monthly = build_mobile_monthly_performance(
-        _mobile_state(),
+        _mobile_state_with_future_september(),
         {
             "as_of": pd.Timestamp("2026-05-03"),
             "include_unrealized": True,

@@ -303,6 +303,23 @@ Response:
       "risk_label": "Expires this week",
       "missing_price": false
     }
+  ],
+  "future_months": [
+    {
+      "id": "month:2026-06-30",
+      "month": "2026-06-30",
+      "open_option_count": 3,
+      "open_expiring_option_premium": 2600.0,
+      "open_expiring_incremental_premium": 2600.0,
+      "open_expiring_roll_adjusted_premium": 3100.0,
+      "projected_month_pnl": 2600.0,
+      "projected_return_roac": null,
+      "projected_return_ropc": null,
+      "target_pnl": null,
+      "projected_remaining_pnl": null,
+      "includes_open_premium": true,
+      "projection_basis": "realized_plus_open_premium"
+    }
   ]
 }
 ```
@@ -674,6 +691,8 @@ Nullability:
 - `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the target-monitoring fields iOS should prefer.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
+- `future_months` contains future expiration months for currently open short options. Future rows use the same premium semantics, but return/target fields are `null` until a meaningful future capital denominator exists.
+- `future_months.open_option_count` counts current open short option rows/lots expiring in that month.
 - `status` allowed values: `beat`, `miss`, `below_target`, `on_track`, `unavailable`.
 - `monthly_target_status` uses the same allowed values as `status`, but is based on projected RoAC.
 - `target_basis` allowed values: `avg_capital`, `peak_capital`. Initial mobile target uses `avg_capital`.

@@ -134,6 +134,7 @@ def test_mobile_payload_wrappers_emit_expected_top_level_shapes(monkeypatch):
         "return_metric",
         "current_month",
         "months",
+        "future_months",
     }
     assert set(build_mobile_yearly_payload(context)) == {"request", "data_freshness", "years"}
     assert set(build_mobile_issues_payload(context)) == {

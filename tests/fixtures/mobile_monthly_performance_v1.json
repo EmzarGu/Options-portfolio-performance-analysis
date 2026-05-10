@@ -114,5 +114,37 @@
       "projected_remaining_pnl": 0.0,
       "monthly_target_status": "beat"
     }
+  ],
+  "future_months": [
+    {
+      "id": "month:2026-06-30",
+      "month": "2026-06-30",
+      "open_option_count": 1,
+      "open_expiring_option_premium": 200.0,
+      "open_expiring_incremental_premium": 200.0,
+      "open_expiring_roll_adjusted_premium": 200.0,
+      "projected_month_pnl": 200.0,
+      "projected_return_roac": null,
+      "projected_return_ropc": null,
+      "target_pnl": null,
+      "projected_remaining_pnl": null,
+      "includes_open_premium": true,
+      "projection_basis": "realized_plus_open_premium"
+    },
+    {
+      "id": "month:2026-09-30",
+      "month": "2026-09-30",
+      "open_option_count": 1,
+      "open_expiring_option_premium": 300.0,
+      "open_expiring_incremental_premium": 300.0,
+      "open_expiring_roll_adjusted_premium": 350.0,
+      "projected_month_pnl": 300.0,
+      "projected_return_roac": null,
+      "projected_return_ropc": null,
+      "target_pnl": null,
+      "projected_remaining_pnl": null,
+      "includes_open_premium": true,
+      "projection_basis": "realized_plus_open_premium"
+    }
   ]
 }

@@ -100,6 +100,7 @@ def api_harness(monkeypatch):
             "return_metric": "roac",
             "current_month": {},
             "months": [],
+            "future_months": [],
         }
 
     def build_yearly(context):
@@ -601,6 +602,7 @@ def test_monthly_route_parses_target_and_range(api_harness):
         "return_metric",
         "current_month",
         "months",
+        "future_months",
     }
     builder_call = api_harness.calls.builders["monthly"]
     assert builder_call["target_return"] == pytest.approx(0.02)
