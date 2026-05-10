@@ -21,6 +21,10 @@ IBKR_REPORT_SOURCE=firestore
 IBKR_RAW_BUCKET=options-portfolio-ibkr-raw-595990983720
 ```
 
+Current IBKR Activity Flex Query ID: `1504277`. This is the lean production
+query containing only `Trades`, `Option Exercises, Assignments and Expirations`,
+and `Cash Transactions`.
+
 ## Persistent Storage
 
 - Firestore Native `(default)`, location `europe-west6`
