@@ -19,7 +19,7 @@ from portfolio_backend.ibkr.import_job import (
 )
 from portfolio_backend.ibkr.importer import IbkrImportService, LocalJsonImportStore, LocalRawReportStore
 from portfolio_backend.ibkr.normalization import normalize_transactions, redacted_preview
-from portfolio_backend.ibkr.persisted_report import LocalJsonFlexReportRepository
+from portfolio_backend.ibkr.persisted_report import FirestoreRestFlexReportRepository, LocalJsonFlexReportRepository
 from portfolio_backend.ibkr.repository import combine_flex_reports, load_flex_report_from_env, resolve_local_flex_xml_paths
 from portfolio_backend.ibkr.source_adapter import options_dataframe_from_report, summarize_options_frame
 from scripts.ibkr_backfill import _is_statement_unavailable, _split_range
@@ -43,6 +43,57 @@ def test_parse_flex_xml_sections_and_metadata():
     assert len(report.rows("OpenPosition")) == 1
     assert len(report.rows("SecurityInfo")) == 1
     assert count_trade_asset_categories(report.rows("Trade")) == {"OPT": 1, "STK": 1}
+
+
+def test_firestore_rest_repository_decodes_raw_rows():
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [
+                {
+                    "document": {
+                        "fields": {
+                            "section": {"stringValue": "Trade"},
+                            "query_id": {"stringValue": "1503002"},
+                            "run_id": {"stringValue": "run-1"},
+                            "report_from_date": {"stringValue": "20260101"},
+                            "report_to_date": {"stringValue": "20260131"},
+                            "raw": {
+                                "mapValue": {
+                                    "fields": {
+                                        "tradeDate": {"stringValue": "20260115"},
+                                        "symbol": {"stringValue": "ABC"},
+                                        "assetCategory": {"stringValue": "OPT"},
+                                        "quantity": {"integerValue": "-1"},
+                                        "netCash": {"doubleValue": 249.0},
+                                    }
+                                }
+                            },
+                        }
+                    }
+                }
+            ]
+
+    class FakeSession:
+        def __init__(self):
+            self.body = None
+
+        def post(self, url, *, json, timeout):
+            self.url = url
+            self.body = json
+            self.timeout = timeout
+            return FakeResponse()
+
+    session = FakeSession()
+    report = FirestoreRestFlexReportRepository(project="project-1", session=session).load_report(query_id="1503002")
+
+    assert "documents:runQuery" in session.url
+    assert session.body["structuredQuery"]["where"]["fieldFilter"]["value"] == {"stringValue": "1503002"}
+    assert report.metadata["queryId"] == "1503002"
+    assert report.metadata["fromDate"] == "20260101"
+    assert report.rows("Trade")[0].attrs["netCash"] == "249.0"
 
 
 def test_dedupe_prefers_ibkr_trade_identifiers():

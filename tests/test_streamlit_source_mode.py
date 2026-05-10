@@ -36,19 +36,19 @@ def test_streamlit_app_source_mode_defaults_to_ibkr(monkeypatch):
     monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
-    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "firestore"
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == streamlit_app.DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE
     assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") == streamlit_app.DEFAULT_FIRESTORE_PROJECT_ID
     assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") == streamlit_app.DEFAULT_IBKR_FLEX_QUERY_ID
 
 
-def test_streamlit_ibkr_source_mode_defaults_report_source_to_firestore(monkeypatch):
+def test_streamlit_ibkr_source_mode_defaults_report_source_to_firestore_rest(monkeypatch):
     monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
     monkeypatch.delenv("IBKR_REPORT_SOURCE", raising=False)
     monkeypatch.delenv("FIRESTORE_PROJECT_ID", raising=False)
     monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
-    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "firestore"
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == streamlit_app.DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE
     assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") == streamlit_app.DEFAULT_FIRESTORE_PROJECT_ID
     assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") == streamlit_app.DEFAULT_IBKR_FLEX_QUERY_ID
 
@@ -60,7 +60,7 @@ def test_streamlit_ibkr_source_mode_replaces_blank_hosting_defaults(monkeypatch)
     monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "")
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
-    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "firestore"
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == streamlit_app.DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE
     assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") == streamlit_app.DEFAULT_FIRESTORE_PROJECT_ID
     assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") == streamlit_app.DEFAULT_IBKR_FLEX_QUERY_ID
 

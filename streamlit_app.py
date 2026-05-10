@@ -138,6 +138,7 @@ DATA_SOURCE_IBKR = "ibkr"
 IBKR_SOURCE_LABEL = "IBKR Flex"
 DEFAULT_FIRESTORE_PROJECT_ID = "options-performance-dashboard"
 DEFAULT_IBKR_FLEX_QUERY_ID = "1503002"
+DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE = "firestore_rest"
 STREAMLIT_ENV_SECRET_KEYS = (
     "OPTIONS_DATA_SOURCE",
     "IBKR_REPORT_SOURCE",
@@ -508,13 +509,13 @@ def data_source_mode() -> str:
 def streamlit_app_source_mode() -> str:
     sync_streamlit_secrets_to_env()
     if not os.getenv("OPTIONS_DATA_SOURCE"):
-        _set_env_default_if_blank("IBKR_REPORT_SOURCE", "firestore")
+        _set_env_default_if_blank("IBKR_REPORT_SOURCE", DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE)
         _set_env_default_if_blank("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
         _set_env_default_if_blank("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
         return DATA_SOURCE_IBKR
     mode = data_source_mode()
     if mode == DATA_SOURCE_IBKR:
-        _set_env_default_if_blank("IBKR_REPORT_SOURCE", "firestore")
+        _set_env_default_if_blank("IBKR_REPORT_SOURCE", DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE)
         _set_env_default_if_blank("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
         _set_env_default_if_blank("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
     return mode

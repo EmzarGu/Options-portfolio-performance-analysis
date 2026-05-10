@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from urllib.parse import quote
 
 from portfolio_backend.ibkr.flex_parser import IbkrFlexReport, IbkrRawRow
 
@@ -117,12 +119,123 @@ class FirestoreFlexReportRepository:
         return report_from_raw_row_documents(docs)
 
 
+class FirestoreRestFlexReportRepository:
+    def __init__(
+        self,
+        *,
+        project: Optional[str] = None,
+        database: str = "(default)",
+        raw_rows_collection: str = "ibkr_raw_rows",
+        session: Any = None,
+        timeout: int = 60,
+    ) -> None:
+        self.project = project
+        self.database = database
+        self.raw_rows_collection = raw_rows_collection
+        self.session = session or _firestore_rest_session()
+        self.timeout = timeout
+
+    def load_report(
+        self,
+        *,
+        query_id: Optional[str] = None,
+        sections: Optional[Iterable[str]] = None,
+    ) -> IbkrFlexReport:
+        wanted_sections = {str(section) for section in sections} if sections is not None else None
+        project = self.project or _firestore_project()
+        url = (
+            f"https://firestore.googleapis.com/v1/projects/{quote(project)}/"
+            f"databases/{quote(self.database, safe='')}/documents:runQuery"
+        )
+        structured_query: dict[str, Any] = {
+            "from": [{"collectionId": self.raw_rows_collection}],
+        }
+        if query_id is not None:
+            structured_query["where"] = {
+                "fieldFilter": {
+                    "field": {"fieldPath": "query_id"},
+                    "op": "EQUAL",
+                    "value": {"stringValue": str(query_id)},
+                }
+            }
+        response = self.session.post(
+            url,
+            json={"structuredQuery": structured_query},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        docs = []
+        for item in response.json():
+            fields = item.get("document", {}).get("fields")
+            if not fields:
+                continue
+            doc = _decode_firestore_fields(fields)
+            if wanted_sections is not None and str(doc.get("section")) not in wanted_sections:
+                continue
+            docs.append(doc)
+        if not docs:
+            raise FileNotFoundError(_empty_report_message(query_id=query_id, sections=wanted_sections))
+        return report_from_raw_row_documents(docs)
+
+
 def _firestore_client():
     try:
         from portfolio_backend.gcp import firestore_client
     except ImportError as exc:
         raise RuntimeError("Install google-cloud-firestore to load IBKR reports from Firestore.") from exc
     return firestore_client()
+
+
+def _firestore_rest_session():
+    try:
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+
+        from portfolio_backend.gcp import service_account_credentials_from_config
+    except ImportError as exc:
+        raise RuntimeError("Install google-auth to load IBKR reports from Firestore REST.") from exc
+
+    credentials, _ = service_account_credentials_from_config()
+    if credentials is None:
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    return AuthorizedSession(credentials)
+
+
+def _firestore_project() -> str:
+    try:
+        from portfolio_backend.gcp import service_account_credentials_from_config
+
+        _, credential_project = service_account_credentials_from_config()
+    except Exception:
+        credential_project = None
+    project = os.getenv("FIRESTORE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or credential_project
+    if not project:
+        raise RuntimeError("FIRESTORE_PROJECT_ID is required for Firestore REST IBKR report loading.")
+    return str(project)
+
+
+def _decode_firestore_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    return {key: _decode_firestore_value(value) for key, value in fields.items()}
+
+
+def _decode_firestore_value(value: dict[str, Any]) -> Any:
+    if "stringValue" in value:
+        return value["stringValue"]
+    if "integerValue" in value:
+        return int(value["integerValue"])
+    if "doubleValue" in value:
+        return float(value["doubleValue"])
+    if "booleanValue" in value:
+        return bool(value["booleanValue"])
+    if "nullValue" in value:
+        return None
+    if "timestampValue" in value:
+        return value["timestampValue"]
+    if "mapValue" in value:
+        return _decode_firestore_fields(value.get("mapValue", {}).get("fields", {}))
+    if "arrayValue" in value:
+        return [_decode_firestore_value(item) for item in value.get("arrayValue", {}).get("values", [])]
+    return None
 
 
 def _empty_report_message(*, query_id: Optional[str], sections: Optional[set[str]]) -> str:

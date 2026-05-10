@@ -7,7 +7,11 @@ from typing import Iterable, Optional
 from portfolio_backend.ibkr.dedupe import dedupe_key
 from portfolio_backend.ibkr.flex_client import load_env
 from portfolio_backend.ibkr.flex_parser import IbkrFlexReport, IbkrRawRow, parse_flex_xml_file
-from portfolio_backend.ibkr.persisted_report import FirestoreFlexReportRepository, LocalJsonFlexReportRepository
+from portfolio_backend.ibkr.persisted_report import (
+    FirestoreFlexReportRepository,
+    FirestoreRestFlexReportRepository,
+    LocalJsonFlexReportRepository,
+)
 
 
 def combine_flex_reports(paths: Iterable[str | Path]) -> IbkrFlexReport:
@@ -109,4 +113,6 @@ def load_flex_report_from_env(*, env_path: Optional[str | Path] = ".env") -> Ibk
         return LocalJsonFlexReportRepository(root_dir).load_report(query_id=query_id)
     if source in {"firestore", "gcp"}:
         return FirestoreFlexReportRepository().load_report(query_id=query_id)
+    if source in {"firestore_rest", "firestore-rest", "rest"}:
+        return FirestoreRestFlexReportRepository().load_report(query_id=query_id)
     return load_local_flex_report(query_id=query_id, env_path=env_path)
