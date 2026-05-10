@@ -53,6 +53,18 @@ def test_streamlit_ibkr_source_mode_defaults_report_source_to_firestore(monkeypa
     assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") == streamlit_app.DEFAULT_IBKR_FLEX_QUERY_ID
 
 
+def test_streamlit_ibkr_source_mode_replaces_blank_hosting_defaults(monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setenv("IBKR_REPORT_SOURCE", "")
+    monkeypatch.setenv("FIRESTORE_PROJECT_ID", "   ")
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "")
+
+    assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "firestore"
+    assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") == streamlit_app.DEFAULT_FIRESTORE_PROJECT_ID
+    assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") == streamlit_app.DEFAULT_IBKR_FLEX_QUERY_ID
+
+
 def test_streamlit_ibkr_source_mode_preserves_explicit_report_source(monkeypatch):
     monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
     monkeypatch.setenv("IBKR_REPORT_SOURCE", "local_json")

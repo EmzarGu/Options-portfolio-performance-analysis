@@ -490,6 +490,11 @@ def sync_streamlit_secrets_to_env() -> None:
         pass
 
 
+def _set_env_default_if_blank(key: str, value: str) -> None:
+    if not str(os.getenv(key, "")).strip():
+        os.environ[key] = value
+
+
 def data_source_mode() -> str:
     sync_streamlit_secrets_to_env()
     value = os.getenv("OPTIONS_DATA_SOURCE", DATA_SOURCE_GOOGLE_SHEETS).strip().lower()
@@ -503,15 +508,15 @@ def data_source_mode() -> str:
 def streamlit_app_source_mode() -> str:
     sync_streamlit_secrets_to_env()
     if not os.getenv("OPTIONS_DATA_SOURCE"):
-        os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
-        os.environ.setdefault("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
-        os.environ.setdefault("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
+        _set_env_default_if_blank("IBKR_REPORT_SOURCE", "firestore")
+        _set_env_default_if_blank("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
+        _set_env_default_if_blank("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
         return DATA_SOURCE_IBKR
     mode = data_source_mode()
     if mode == DATA_SOURCE_IBKR:
-        os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
-        os.environ.setdefault("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
-        os.environ.setdefault("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
+        _set_env_default_if_blank("IBKR_REPORT_SOURCE", "firestore")
+        _set_env_default_if_blank("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
+        _set_env_default_if_blank("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
     return mode
 
 
