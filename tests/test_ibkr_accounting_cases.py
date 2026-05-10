@@ -21,7 +21,7 @@ from portfolio_backend.ibkr.performance import (
     yearly_performance_from_report,
 )
 from portfolio_backend.ibkr.source_adapter import option_trades_to_dataframe
-from portfolio_backend.ibkr.pipeline import build_ibkr_base_pipeline, wheel_stock_transactions_from_report
+from portfolio_backend.ibkr.pipeline import build_ibkr_base_pipeline, build_ibkr_pipeline, wheel_stock_transactions_from_report
 from portfolio_backend.ibkr.pipeline import wheel_options_dataframe_from_report
 from portfolio_backend.mobile_payloads import build_monthly_performance_rows
 
@@ -638,6 +638,272 @@ def test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_rem
         ("EMN", "Call", 2, pytest.approx(298.0), "assignment"),
     ]
     assert not [issue for issue in state.issues if "EMN call" in issue or "assigned-call sold shares of EMN" in issue]
+
+
+def test_ibkr_same_day_covered_call_roll_replacement_reuses_released_assignment_inventory():
+    put_open = _trade(
+        symbol="FTNT  250815P00097500",
+        underlyingSymbol="FTNT",
+        description="FTNT 15AUG25 97.5 P",
+        conid="FTNT-PUT",
+        tradeID="FTNT-PUT-OPEN",
+        transactionID="FTNT-PUT-X1",
+        ibExecID="FTNT-PUT-E1",
+        tradeDate="20250721",
+        dateTime="20250721;154500",
+        expiry="20250815",
+        strike="97.5",
+        putCall="P",
+        quantity="-1",
+        tradePrice="2.25",
+        proceeds="225",
+        ibCommission="-1",
+        netCash="224",
+    )
+    put_assignment = _option_eae(
+        symbol="FTNT  250815P00097500",
+        underlyingSymbol="FTNT",
+        description="FTNT 15AUG25 97.5 P",
+        conid="FTNT-PUT",
+        tradeID="FTNT-PUT-OPEN",
+        date="20250808",
+        expiry="20250815",
+        strike="97.5",
+        putCall="P",
+        quantity="-1",
+        realizedPnl="224",
+    )
+    assigned_buy = _stock_eae(
+        symbol="FTNT",
+        tradeID="FTNT-STOCK-BUY",
+        date="20250808",
+        transactionType="Buy",
+        quantity="100",
+        tradePrice="97.5",
+        proceeds="-9750",
+    )
+    call_open_85 = _trade(
+        symbol="FTNT  260220C00085000",
+        underlyingSymbol="FTNT",
+        description="FTNT 20FEB26 85 C",
+        conid="FTNT-C85-FEB",
+        tradeID="FTNT-CALL-1",
+        transactionID="FTNT-XC1",
+        ibExecID="FTNT-CALL-E1",
+        tradeDate="20260203",
+        dateTime="20260203;154500",
+        expiry="20260220",
+        strike="85",
+        putCall="C",
+        quantity="-1",
+        tradePrice="1.94",
+        proceeds="194",
+        ibCommission="-1",
+        netCash="193",
+    )
+    close_85 = _trade(
+        symbol="FTNT  260220C00085000",
+        underlyingSymbol="FTNT",
+        description="FTNT 20FEB26 85 C",
+        conid="FTNT-C85-FEB",
+        tradeID="FTNT-CALL-2",
+        transactionID="FTNT-XC2",
+        ibExecID="00014247.FTNT1.02.01",
+        tradeDate="20260209",
+        dateTime="20260209;154500",
+        expiry="20260220",
+        strike="85",
+        putCall="C",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        tradePrice="2.36",
+        proceeds="-236",
+        ibCommission="-1",
+        netCash="-237",
+    )
+    open_87_5 = _trade(
+        symbol="FTNT  260320C00087500",
+        underlyingSymbol="FTNT",
+        description="FTNT 20MAR26 87.5 C",
+        conid="FTNT-C875-MAR",
+        tradeID="FTNT-CALL-3",
+        transactionID="FTNT-XC3",
+        ibExecID="00014247.FTNT1.03.01",
+        tradeDate="20260209",
+        dateTime="20260209;154600",
+        expiry="20260320",
+        strike="87.5",
+        putCall="C",
+        quantity="-1",
+        tradePrice="2.96",
+        proceeds="296",
+        ibCommission="-1",
+        netCash="295",
+    )
+    close_87_5 = _trade(
+        symbol="FTNT  260320C00087500",
+        underlyingSymbol="FTNT",
+        description="FTNT 20MAR26 87.5 C",
+        conid="FTNT-C875-MAR",
+        tradeID="FTNT-CALL-4",
+        transactionID="FTNT-XC4",
+        ibExecID="0000f84c.FTNT2.03.01",
+        tradeDate="20260211",
+        dateTime="20260211;154500",
+        expiry="20260320",
+        strike="87.5",
+        putCall="C",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        tradePrice="4.01",
+        proceeds="-401",
+        ibCommission="-1",
+        netCash="-402",
+    )
+    open_100 = _trade(
+        symbol="FTNT  260717C00100000",
+        underlyingSymbol="FTNT",
+        description="FTNT 17JUL26 100 C",
+        conid="FTNT-C100-JUL",
+        tradeID="FTNT-CALL-5",
+        transactionID="FTNT-XC5",
+        ibExecID="0000f84c.FTNT2.02.01",
+        tradeDate="20260211",
+        dateTime="20260211;154600",
+        expiry="20260717",
+        strike="100",
+        putCall="C",
+        quantity="-1",
+        tradePrice="4.34",
+        proceeds="434",
+        ibCommission="-1",
+        netCash="433",
+    )
+    open_85_may = _trade(
+        symbol="FTNT  260515C00085000",
+        underlyingSymbol="FTNT",
+        description="FTNT 15MAY26 85 C",
+        conid="FTNT-C85-MAY",
+        tradeID="FTNT-CALL-7",
+        transactionID="FTNT-XC7",
+        ibExecID="00014247.FTNT3.03.01",
+        tradeDate="20260223",
+        dateTime="20260223;154600",
+        expiry="20260515",
+        strike="85",
+        putCall="C",
+        quantity="-1",
+        tradePrice="3.13",
+        proceeds="313",
+        ibCommission="-1",
+        netCash="312",
+    )
+    close_100 = _trade(
+        symbol="FTNT  260717C00100000",
+        underlyingSymbol="FTNT",
+        description="FTNT 17JUL26 100 C",
+        conid="FTNT-C100-JUL",
+        tradeID="FTNT-CALL-6",
+        transactionID="FTNT-XC6",
+        ibExecID="00014247.FTNT3.02.01",
+        tradeDate="20260223",
+        dateTime="20260223;154500",
+        expiry="20260717",
+        strike="100",
+        putCall="C",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        tradePrice="1.57",
+        proceeds="-157",
+        ibCommission="-1",
+        netCash="-158",
+    )
+    close_85_may = _trade(
+        symbol="FTNT  260515C00085000",
+        underlyingSymbol="FTNT",
+        description="FTNT 15MAY26 85 C",
+        conid="FTNT-C85-MAY",
+        tradeID="FTNT-CALL-8",
+        transactionID="FTNT-XC8",
+        ibExecID="0000f84c.FTNT4.02.01",
+        tradeDate="20260505",
+        dateTime="20260505;154500",
+        expiry="20260515",
+        strike="85",
+        putCall="C",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        tradePrice="7.46",
+        proceeds="-746",
+        ibCommission="-1",
+        netCash="-747",
+    )
+    open_95_sep = _trade(
+        symbol="FTNT  260918C00095000",
+        underlyingSymbol="FTNT",
+        description="FTNT 18SEP26 95 C",
+        conid="FTNT-C95-SEP",
+        tradeID="FTNT-CALL-9",
+        transactionID="FTNT-XC9",
+        ibExecID="0000f84c.FTNT4.03.01",
+        tradeDate="20260505",
+        dateTime="20260505;154600",
+        expiry="20260918",
+        strike="95",
+        putCall="C",
+        quantity="-1",
+        tradePrice="8.17",
+        proceeds="817",
+        ibCommission="-1",
+        netCash="816",
+    )
+
+    def current_prices(tickers):
+        return {ticker: 114.07 for ticker in tickers}, [], {"requested": len(tickers), "fetched": len(tickers)}
+
+    state = build_ibkr_pipeline(
+        _report(
+            {
+                "Trade": [
+                    put_open,
+                    call_open_85,
+                    close_85,
+                    open_87_5,
+                    close_87_5,
+                    open_100,
+                    # Intentionally listed sell/open before buy/close by strike/expiry
+                    # to reproduce the raw IBKR ordering that previously broke FTNT.
+                    open_85_may,
+                    close_100,
+                    close_85_may,
+                    open_95_sep,
+                ],
+                "OptionEAE": [put_assignment, assigned_buy],
+            }
+        ),
+        as_of=pd.Timestamp("2026-05-10").date(),
+        include_unrealized_current_year=True,
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+        fetch_current_prices_fn=current_prices,
+    )
+
+    assert [(row["ticker"], row["type"], row["strike"], row["expiration"], row["qty"]) for _, row in state.open_options.iterrows()] == [
+        ("FTNT", "Call", 95.0, pd.Timestamp("2026-09-18"), 1)
+    ]
+    ftnt_inventory = state.inv_df.loc[state.inv_df["ticker"].eq("FTNT")].iloc[0]
+    assert ftnt_inventory["shares"] == 100
+    assert ftnt_inventory["cost_per_share"] == 97.5
+    assert ftnt_inventory["covered_shares"] == 100
+    assert ftnt_inventory["covered_strike"] == 95.0
+    assert ftnt_inventory["unrealized_pnl"] == pytest.approx(-250.0)
+    ftnt_total = state.per_ticker_totals.loc[state.per_ticker_totals["ticker"].eq("FTNT")].iloc[0]
+    assert ftnt_total["unrealized_pnl"] == pytest.approx(-250.0)
+    assert not [issue for issue in state.issues if "FTNT call" in issue]
 
 
 def test_ibkr_assignment_book_trade_stock_sell_is_not_double_counted():

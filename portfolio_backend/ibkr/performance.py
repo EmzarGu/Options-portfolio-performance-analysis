@@ -487,7 +487,19 @@ def wheel_option_executions(
     assigned put. Calls without that inventory are covered-call trades, not
     wheel trades for this dashboard.
     """
-    all_executions = list(executions)
+    indexed_executions = list(enumerate(executions))
+    roll_group_first_index: dict[tuple, int] = {}
+    for index, execution in indexed_executions:
+        group = _roll_group_key_for_ordering(execution)
+        if group is not None:
+            roll_group_first_index.setdefault(group, index)
+    all_executions = [
+        execution
+        for _, execution in sorted(
+            indexed_executions,
+            key=lambda item: _wheel_execution_order_key(item[0], item[1], roll_group_first_index),
+        )
+    ]
     segments = list(holding_segments)
     included: list[IbkrOptionExecution] = []
     excluded: list[IbkrOptionExecution] = []
@@ -749,6 +761,22 @@ def _execution_key(execution: IbkrOptionExecution) -> tuple:
         execution.transaction_id,
         execution.ib_exec_id,
     )
+
+
+def _roll_group_key_for_ordering(execution: IbkrOptionExecution) -> Optional[tuple]:
+    group = _ibkr_roll_execution_group(execution.ib_exec_id)
+    if group is None:
+        return None
+    return (execution.date, execution.ticker, execution.otype, group)
+
+
+def _wheel_execution_order_key(index: int, execution: IbkrOptionExecution, roll_group_first_index: dict[tuple, int]) -> tuple:
+    group_key = _roll_group_key_for_ordering(execution)
+    group_index = roll_group_first_index[group_key] if group_key is not None else index
+    roll_leg_order = 0 if execution.action == "Buy" and execution.open_close == "C" else 1
+    if group_key is None:
+        roll_leg_order = 0
+    return (execution.date, execution.ticker, group_index, roll_leg_order, index)
 
 
 def _vertical_spread_short_open_quantities(executions: Iterable[IbkrOptionExecution]) -> dict[tuple, float]:
