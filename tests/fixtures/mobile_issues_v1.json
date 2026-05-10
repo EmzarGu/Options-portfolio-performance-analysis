@@ -100,6 +100,12 @@
       "action": "refresh_data"
     }
   ],
+  "audit_summary": {
+    "total_count": 0,
+    "by_category": {},
+    "by_severity": {}
+  },
+  "audit_notes": [],
   "coverage": {
     "current_prices": {
       "requested": 4,

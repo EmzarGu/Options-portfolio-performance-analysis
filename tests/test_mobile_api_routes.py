@@ -113,6 +113,8 @@ def api_harness(monkeypatch):
             "data_freshness": {},
             "summary": {},
             "issues": [],
+            "audit_summary": {},
+            "audit_notes": [],
             "coverage": {},
         }
 
@@ -553,7 +555,7 @@ def test_refresh_updates_default_read_cache_bust(api_harness):
         ),
         (
             "/v1/mobile/issues",
-            {"request", "data_freshness", "summary", "issues", "coverage"},
+            {"request", "data_freshness", "summary", "issues", "audit_summary", "audit_notes", "coverage"},
             "issues",
         ),
     ],

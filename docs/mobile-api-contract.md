@@ -830,6 +830,21 @@ Response:
       "action": "fix_workbook_row"
     },
     {
+      "id": "wheel-warning-1",
+      "category": "wheel_warning",
+      "severity": "warning",
+      "message": "Prorated ABC call execution on 2026-01-20 to 100 wheel-held shares out of 200 required shares.",
+      "tickers": ["ABC"],
+      "action": "review_source_data"
+    }
+  ],
+  "audit_summary": {
+    "total_count": 241,
+    "by_category": { "wheel_audit": 241 },
+    "by_severity": { "info": 241 }
+  },
+  "audit_notes": [
+    {
       "id": "wheel-audit-1",
       "category": "wheel_audit",
       "severity": "info",
@@ -878,7 +893,7 @@ Backend source today:
 Recommended backend shape change:
 
 - Convert plain issue strings into typed issue DTOs at the backend boundary. Keep original message for display, but add category/severity/action/tickers.
-- Expected IBKR wheel exclusions use `category: "wheel_audit"` and `severity: "info"`. They are included for auditability but are not counted in `summary.total_count` and do not make the source unhealthy.
+- `issues` contains only actionable warning/error/problem rows. Expected IBKR wheel exclusions use `category: "wheel_audit"` and `severity: "info"` and are returned under `audit_notes` with compact counts in `audit_summary`. They are not counted in `summary.total_count` and do not make the source unhealthy.
 - IBKR warnings that need review use categories such as `wheel_warning` for partially included/prorated wheel lots and `missing_basis` for closes without a known open lot.
 
 ## Endpoint 8: Configuration

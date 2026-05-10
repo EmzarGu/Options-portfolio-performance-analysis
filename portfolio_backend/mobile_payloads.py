@@ -1239,6 +1239,21 @@ def build_mobile_coverage(state) -> Dict[str, Any]:
     }
 
 
+def build_mobile_audit_summary(audit_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_category: Dict[str, int] = {}
+    by_severity: Dict[str, int] = {}
+    for row in audit_rows:
+        category = str(row.get("category") or "unknown")
+        severity = str(row.get("severity") or "info")
+        by_category[category] = by_category.get(category, 0) + 1
+        by_severity[severity] = by_severity.get(severity, 0) + 1
+    return {
+        "total_count": len(audit_rows),
+        "by_category": by_category,
+        "by_severity": by_severity,
+    }
+
+
 def build_mobile_issues(
     state,
     request: Dict[str, Any],
@@ -1252,6 +1267,8 @@ def build_mobile_issues(
     include_unrealized = bool(_request_value(request, "include_unrealized", False))
     as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     issue_rows = build_mobile_issue_rows(state)
+    actionable_rows = [row for row in issue_rows if row.get("severity") in {"warning", "error"}]
+    audit_rows = [row for row in issue_rows if row.get("severity") == "info"]
     return {
         "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
         "data_freshness": build_data_freshness(
@@ -1263,7 +1280,9 @@ def build_mobile_issues(
             prices_updated_at=prices_updated_at,
         ),
         "summary": build_mobile_issue_summary(state, issue_rows),
-        "issues": issue_rows,
+        "issues": actionable_rows,
+        "audit_summary": build_mobile_audit_summary(audit_rows),
+        "audit_notes": audit_rows,
         "coverage": build_mobile_coverage(state),
     }
 

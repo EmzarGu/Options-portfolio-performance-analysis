@@ -1175,6 +1175,14 @@ def test_mobile_issue_rows_classify_expected_ibkr_wheel_exclusions_as_info():
         "capital_history_incomplete": False,
         "dividend_coverage_complete": True,
     }
+    payload = build_mobile_issues(state, {"selected_sheets": ["IBKR Flex"], "include_unrealized": True})
+    assert payload["issues"] == []
+    assert len(payload["audit_notes"]) == 3
+    assert payload["audit_summary"] == {
+        "total_count": 3,
+        "by_category": {"wheel_audit": 3},
+        "by_severity": {"info": 3},
+    }
 
 
 def test_mobile_issue_rows_classify_actionable_ibkr_accounting_warnings():
@@ -1217,7 +1225,15 @@ def test_mobile_issues_composes_contract_payload():
         },
     )
 
-    assert set(issues) == {"request", "data_freshness", "summary", "issues", "coverage"}
+    assert set(issues) == {
+        "request",
+        "data_freshness",
+        "summary",
+        "issues",
+        "audit_summary",
+        "audit_notes",
+        "coverage",
+    }
     assert issues["summary"] == {
         "severity": "warning",
         "total_count": 6,
@@ -1244,6 +1260,8 @@ def test_mobile_issues_composes_contract_payload():
             "errors": ["DIVMISS: dividend history returned no usable data"],
         },
     }
+    assert issues["audit_summary"] == {"total_count": 0, "by_category": {}, "by_severity": {}}
+    assert issues["audit_notes"] == []
 
 
 def test_mobile_issues_matches_contract_fixture():

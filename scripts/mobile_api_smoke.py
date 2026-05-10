@@ -41,7 +41,15 @@ READ_ENDPOINTS = {
         "months",
     },
     "/v1/mobile/performance/yearly": {"request", "data_freshness", "years"},
-    "/v1/mobile/issues": {"request", "data_freshness", "summary", "issues", "coverage"},
+    "/v1/mobile/issues": {
+        "request",
+        "data_freshness",
+        "summary",
+        "issues",
+        "audit_summary",
+        "audit_notes",
+        "coverage",
+    },
 }
 
 REFRESH_KEYS = {"request", "data_freshness", "refresh"}
