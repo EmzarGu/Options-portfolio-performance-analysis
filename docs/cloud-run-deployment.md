@@ -18,9 +18,20 @@ runs containers, scales to zero, and gives a stable HTTPS endpoint.
 Set these as environment variables or Secret Manager secrets in Cloud Run:
 
 - `GOOGLE_SERVICE_ACCOUNT_JSON`: raw service account JSON with read access to
-  the Google Sheet used by `streamlit_app.SHEET_ID`.
+  the Google Sheet used by `streamlit_app.SHEET_ID` when sheet/local mode is
+  used.
 - `MOBILE_API_KEY`: shared development API key required by all mobile endpoints
   except `/v1/mobile/health`.
+- `IBKR_FLEX_TOKEN`: Secret Manager secret `ibkr-flex-token:latest`.
+- `IBKR_FLEX_QUERY_ID`: Secret Manager secret `ibkr-flex-query-id:latest`.
+- `IBKR_RAW_BUCKET`: `options-portfolio-ibkr-raw-595990983720`.
+
+Production currently runs the mobile API in IBKR-backed mode:
+
+```text
+OPTIONS_DATA_SOURCE=ibkr
+IBKR_REPORT_SOURCE=firestore
+```
 
 The service also uses Firestore Native mode in project
 `options-performance-dashboard` for persistent yfinance historical price and
@@ -69,8 +80,12 @@ Dividend history uses the same pattern. Cached records are stored in
 
 Mobile refresh audit records are also written to Firestore on a best-effort
 basis. Refresh runs are stored in `refresh_runs`; source metadata snapshots are
-stored in `source_snapshots`. These records are operational/audit data only:
-Google Sheets remains the transaction source of truth.
+stored in `source_snapshots`.
+
+Production portfolio transactions are currently sourced from IBKR Flex imports
+persisted in Firestore. Google Sheets/local Excel mode remains available as a
+fallback/development path, but it is not the production source for the Cloud Run
+mobile API.
 
 Runtime selection:
 

@@ -64,9 +64,11 @@ counts, and refresh audit record. A deferred trailing chunk has a refresh audit
 record with `status=deferred`. Non-deferred failed chunks are logged with their
 date range and error, and the job exits failed after reporting the summary.
 
-The prepared job timeout is 7,200 seconds so a reset or empty Firestore database
-can complete a multi-year backfill in one run while still emitting per-chunk
-progress.
+The production job timeout is 1,800 seconds. The historical backfill has already
+been loaded, so normal scheduled runs should only import missing coverage plus
+the recent overlap window. If Firestore is reset and a full multi-year backfill
+is needed again, temporarily increase the timeout before running the reset
+backfill.
 
 Manual date overrides are available and take precedence over the rolling window:
 

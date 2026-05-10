@@ -1,6 +1,7 @@
 # Cloud Run Web Dashboard
 
-The production web dashboard is a separate FastAPI entrypoint from the Streamlit backup app.
+The production web dashboard is a separate FastAPI entrypoint from the Streamlit
+backup app.
 
 ## Entrypoint
 
@@ -8,7 +9,9 @@ The production web dashboard is a separate FastAPI entrypoint from the Streamlit
 uvicorn web_dashboard:app --host 0.0.0.0 --port ${PORT:-8080}
 ```
 
-The service reuses the same IBKR backend context and mobile DTO builders as the iOS API. Streamlit Cloud remains the Google Sheets backup/control dashboard.
+The service reuses the same IBKR backend context and mobile DTO builders as the
+iOS API. Streamlit remains a backup/testing surface while the browser dashboard
+is the production web UI.
 
 ## Required Runtime Config
 
@@ -42,7 +45,13 @@ WEB_AUTH_ALLOWED_EMAILS=<allowed-google-email-1>,<allowed-google-email-2>
 WEB_SESSION_DAYS=90
 ```
 
-When Google Sign-In is configured, the password fallback is hidden by default. Set `WEB_PASSWORD_FALLBACK_VISIBLE=1` only for emergency troubleshooting.
+When Google Sign-In is configured, the password fallback is hidden by default.
+Set `WEB_PASSWORD_FALLBACK_VISIBLE=1` only for emergency troubleshooting.
+
+The login page uses a first-party redirect link to `/auth/google/start`, which
+then redirects to Google OAuth. This avoids embedded-browser iframe issues with
+the Google Identity Services button while preserving the same OAuth client and
+backend allowlist checks.
 
 The Google OAuth client should be configured with these authorized JavaScript origins:
 

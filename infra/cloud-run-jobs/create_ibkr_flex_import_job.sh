@@ -31,7 +31,7 @@ COMMON_FLAGS=(
   --set-secrets="IBKR_FLEX_TOKEN=ibkr-flex-token:latest,IBKR_FLEX_QUERY_ID=ibkr-flex-query-id:latest"
   --tasks=1
   --max-retries=1
-  --task-timeout=7200s
+  --task-timeout=1800s
 )
 
 if gcloud run jobs describe "${JOB_NAME}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
