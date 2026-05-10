@@ -879,6 +879,7 @@ Recommended backend shape change:
 
 - Convert plain issue strings into typed issue DTOs at the backend boundary. Keep original message for display, but add category/severity/action/tickers.
 - Expected IBKR wheel exclusions use `category: "wheel_audit"` and `severity: "info"`. They are included for auditability but are not counted in `summary.total_count` and do not make the source unhealthy.
+- IBKR warnings that need review use categories such as `wheel_warning` for partially included/prorated wheel lots and `missing_basis` for closes without a known open lot.
 
 ## Endpoint 8: Configuration
 

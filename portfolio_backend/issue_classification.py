@@ -55,8 +55,6 @@ def classify_backend_issue(message: str) -> IssueClassification:
 
 
 def _is_expected_wheel_audit(message: str) -> bool:
-    if message.startswith("Prorated ") and "wheel-held shares out of" in message:
-        return True
     if "Excluded " not in message and "Ignored " not in message:
         return False
     return any(pattern in message for pattern in _EXPECTED_WHEEL_AUDIT_PATTERNS)

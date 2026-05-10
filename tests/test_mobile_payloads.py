@@ -1152,7 +1152,6 @@ def test_mobile_issue_rows_classify_expected_ibkr_wheel_exclusions_as_info():
             "Excluded ABC call execution on 2026-01-20 because no prior put-assignment stock inventory was held.",
             "Excluded ABC call roll replacement on 2026-01-20 because the closed call lot was non-wheel.",
             "Ignored 100 assigned-call sold shares of XYZ on 2026-02-20 because no assignment-derived stock inventory was available.",
-            "Prorated ABC call execution on 2026-01-20 to 100 wheel-held shares out of 200 required shares.",
         ],
         price_errors=[],
         price_summary={},
@@ -1165,17 +1164,41 @@ def test_mobile_issue_rows_classify_expected_ibkr_wheel_exclusions_as_info():
 
     rows = build_mobile_issue_rows(state)
 
-    assert [row["category"] for row in rows] == ["wheel_audit", "wheel_audit", "wheel_audit", "wheel_audit"]
-    assert [row["severity"] for row in rows] == ["info", "info", "info", "info"]
-    assert [row["action"] for row in rows] == [None, None, None, None]
+    assert [row["category"] for row in rows] == ["wheel_audit", "wheel_audit", "wheel_audit"]
+    assert [row["severity"] for row in rows] == ["info", "info", "info"]
+    assert [row["action"] for row in rows] == [None, None, None]
     assert build_mobile_issues(state, {"selected_sheets": ["IBKR Flex"], "include_unrealized": True})["summary"] == {
         "severity": "ok",
         "total_count": 0,
-        "info_count": 4,
+        "info_count": 3,
         "unrealized_blocked": False,
         "capital_history_incomplete": False,
         "dividend_coverage_complete": True,
     }
+
+
+def test_mobile_issue_rows_classify_actionable_ibkr_accounting_warnings():
+    state = SimpleNamespace(
+        issues=[
+            "Prorated GOOGL call execution on 2022-10-05 to 100 wheel-held shares out of 200 required shares.",
+            "Buy ASAN Put 25.0 on 2022-05-20 had no open short to close.",
+            "Unmatched buy quantity for ASAN Put 25.0 on 2022-05-20: 1 remaining.",
+        ],
+        price_errors=[],
+        price_summary={},
+        historical_price_errors=[],
+        historical_price_summary={},
+        dividend_errors=[],
+        dividend_summary={},
+        capital_history_coverage_issues=[],
+    )
+
+    rows = build_mobile_issue_rows(state)
+
+    assert [row["id"] for row in rows] == ["wheel-warning-1", "missing-basis-2", "missing-basis-3"]
+    assert [row["category"] for row in rows] == ["wheel_warning", "missing_basis", "missing_basis"]
+    assert [row["severity"] for row in rows] == ["warning", "warning", "warning"]
+    assert [row["action"] for row in rows] == ["review_source_data", "review_source_data", "review_source_data"]
 
 
 def test_mobile_issues_composes_contract_payload():
