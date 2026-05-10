@@ -140,6 +140,7 @@ DEFAULT_FIRESTORE_PROJECT_ID = "options-performance-dashboard"
 DEFAULT_IBKR_FLEX_QUERY_ID = "1503002"
 DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE = "firestore_rest"
 STREAMLIT_ENV_SECRET_KEYS = (
+    "STREAMLIT_DASHBOARD_SOURCE",
     "OPTIONS_DATA_SOURCE",
     "IBKR_REPORT_SOURCE",
     "IBKR_FLEX_QUERY_ID",
@@ -524,13 +525,12 @@ def data_source_mode() -> str:
 
 def streamlit_app_source_mode() -> str:
     sync_streamlit_secrets_to_env()
-    if not os.getenv("OPTIONS_DATA_SOURCE"):
-        _set_env_default_if_blank("IBKR_REPORT_SOURCE", DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE)
-        _normalize_streamlit_ibkr_report_source()
-        _set_env_default_if_blank("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
-        _set_env_default_if_blank("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
-        return DATA_SOURCE_IBKR
-    mode = data_source_mode()
+    # The Streamlit-hosted dashboard is the Google Sheets backup/control surface.
+    # It intentionally does not follow OPTIONS_DATA_SOURCE, which is owned by
+    # Cloud Run/mobile API deployments. Set STREAMLIT_DASHBOARD_SOURCE=ibkr only
+    # for a dedicated IBKR web deployment.
+    value = _clean_secret_token(os.getenv("STREAMLIT_DASHBOARD_SOURCE", DATA_SOURCE_GOOGLE_SHEETS)).lower()
+    mode = DATA_SOURCE_IBKR if value in {DATA_SOURCE_IBKR, "ibkr_flex"} else DATA_SOURCE_GOOGLE_SHEETS
     if mode == DATA_SOURCE_IBKR:
         _set_env_default_if_blank("IBKR_REPORT_SOURCE", DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE)
         _normalize_streamlit_ibkr_report_source()
