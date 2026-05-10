@@ -708,27 +708,27 @@ __BASE_CSS__
 :root{--bg2:#0c1114;--panel3:#10161a;--panel4:#151f23;--line2:#26383b;--blue:#7aa7ff;--amber:#f6c25b;--red:#ff6f78;--green:#7ee092;--teal:#45d2c5}
 body{background:#080c0f;color:var(--text)}
 .topbar{position:sticky;top:0;z-index:40;background:rgba(8,12,15,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line2)}
-.topbar-inner{max-width:1540px;margin:0 auto;padding:10px 22px;display:flex;gap:16px;align-items:center;justify-content:space-between}
+.topbar-inner{max-width:1420px;margin:0 auto;padding:9px 18px;display:flex;gap:14px;align-items:center;justify-content:space-between}
 .brand{font-size:18px;font-weight:850;letter-spacing:.01em;white-space:nowrap}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:650;margin-top:-2px}
-.nav{display:flex;gap:4px;flex:1;justify-content:center;min-width:0}.nav button,.segmented button{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 11px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active,.segmented button.active{color:#061a18;background:var(--accent);border-color:transparent}
-.actions{display:flex;gap:8px;align-items:center}.actions form{margin:0}.auth-user{color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.shell{max-width:1540px;margin:0 auto;padding:22px 22px 64px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:4px 0 16px}
+.nav{display:flex;gap:3px;flex:1;justify-content:center;min-width:0;overflow:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}.nav button,.segmented button{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active,.segmented button.active{color:#061a18;background:var(--accent);border-color:transparent}
+.actions{display:flex;gap:7px;align-items:center;flex:0 0 auto}.actions form{margin:0}.actions .primary,.actions .secondary{padding:9px 11px}.auth-user{display:none;color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shell{max-width:1420px;margin:0 auto;padding:22px 18px 64px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:4px 0 16px}
 .hero h1{font-size:34px;line-height:1.05;margin:0 0 8px}.sub{color:var(--muted);font-size:14px}.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:#111a1d;border-radius:999px;padding:5px 9px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap}.badge.good{color:#c6f6ce;border-color:#2f6941}.badge.warn{color:#ffe3a3;border-color:#73551d}.badge.bad{color:#ffc0c5;border-color:#70303b}.badge.blue{color:#cfe0ff;border-color:#355189}
-.control-strip{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#0d1417;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;margin:0 0 16px}.control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}
+.control-strip{display:flex;gap:12px;align-items:center;justify-content:flex-start;flex-wrap:wrap;background:#0d1417;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;margin:0 0 16px}.control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}#workflowStrip{display:none}
 .grid{display:grid;gap:12px}.metrics{grid-template-columns:repeat(4,minmax(180px,1fr))}.two{grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr)}.two-even{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .card,.panel{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.card{padding:14px}.panel{padding:16px}
 .metric-label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:25px;font-weight:900;margin-top:5px;line-height:1.08}.metric-note{color:var(--muted);font-size:12px;margin-top:5px}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.warn-text{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}
 h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
 .table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:#11191c}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-.table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#b6c4c1;font-size:11px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.empty{padding:18px;color:var(--muted)}
+.table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.empty{padding:18px;color:var(--muted)}
 .risk-row-itm td{background:rgba(255,111,120,.12)}.risk-row-near td{background:rgba(246,194,91,.11)}.risk-row-clear td{background:rgba(69,210,197,.07)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--red)}.dot-warn{background:var(--amber)}.dot-good{background:var(--green)}.dot-blue{background:var(--blue)}
-.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;gap:8px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{font-size:11px;border-radius:999px;padding:3px 7px;background:#1c2a2d;color:var(--muted);font-weight:850}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
-.chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:12px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:15px}.chart{width:100%;height:290px;display:block}.chart text{fill:#a9b7b4;font-size:11px}.axis{stroke:#31464a;stroke-width:1}.grid-line{stroke:#1f2d30;stroke-width:1}.line{fill:none;stroke-width:2.4}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:12px;color:var(--muted);display:inline-flex;gap:5px;align-items:center}.legend-swatch{width:10px;height:10px;border-radius:2px}
+.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
+.chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
-@media(max-width:1100px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.nav{justify-content:flex-start;overflow:auto}.topbar-inner{align-items:flex-start;flex-direction:column}.actions{width:100%;justify-content:space-between}.auth-user{max-width:48vw}.shell{padding-left:14px;padding-right:14px}.hero h1{font-size:28px}.chart{height:250px}}
-@media(max-width:620px){.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.control-strip{align-items:flex-start}.metric-value{font-size:22px}}
+@media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.chart{height:270px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
+@media(max-width:760px){.topbar-inner{align-items:flex-start;flex-direction:column}.actions{width:100%;justify-content:space-between}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.control-strip{align-items:flex-start}.metric-value{font-size:22px}.chart{height:250px}}
 </style>
 </head>
 <body>
@@ -793,6 +793,15 @@ const numeric = (v) => v === null || v === undefined || v === "" || Number.isNaN
 const fmtMoney = (v, digits=0) => {
   const places = Number.isInteger(digits) ? digits : 0;
   return numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:places,maximumFractionDigits:places}).format(Number(v));
+};
+const fmtCompactMoney = (v) => {
+  if (numeric(v) === null) return "n/a";
+  const n = Number(v);
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1000000) return `${sign}$${(abs/1000000).toFixed(1)}m`;
+  if (abs >= 1000) return `${sign}$${(abs/1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
+  return `${sign}$${abs.toFixed(0)}`;
 };
 const fmtPct = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1}).format(Number(v));
 const fmtNum = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{maximumFractionDigits:0}).format(Number(v));
@@ -894,7 +903,7 @@ function rangeFiltered(rows, dateKey){
 function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
   const clean = (rows || []).filter(r => numeric(get(r,yKey)) !== null && get(r,xKey));
   if (clean.length < 2) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
-  const w=900,h=310,pad={l:54,r:18,t:18,b:38};
+  const w=640,h=300,pad={l:62,r:18,t:20,b:44};
   const dates=[...new Set(clean.map(r => fmtDate(get(r,xKey))))].sort();
   const yVals=clean.map(r=>numeric(get(r,yKey))).filter(v=>v!==null);
   let yMin=Math.min(...yVals), yMax=Math.max(...yVals);
@@ -902,31 +911,41 @@ function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
   const sx=(v)=> pad.l + (dates.indexOf(fmtDate(v)) / Math.max(dates.length-1,1)) * (w-pad.l-pad.r);
   const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
   const groups={}; clean.forEach(r => { const name = get(r,seriesKey) || "Series"; (groups[name] ||= []).push(r); });
-  const grid=[0,.25,.5,.75,1].map(t => { const y=pad.t+t*(h-pad.t-pad.b); const value=yMax-t*(yMax-yMin); return `<line class="grid-line" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}"></line><text x="8" y="${y+4}">${safe(yFormat(value))}</text>`; }).join("");
+  const grid=[0,.25,.5,.75,1].map(t => { const y=pad.t+t*(h-pad.t-pad.b); const value=yMax-t*(yMax-yMin); return `<line class="grid-line" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}"></line><text x="10" y="${y+5}">${safe(yFormat(value))}</text>`; }).join("");
   const paths=Object.entries(groups).map(([name,vals],i) => {
     vals.sort((a,b)=>String(get(a,xKey)).localeCompare(String(get(b,xKey))));
     return `<path class="line" stroke="${colors[i%colors.length]}" d="${vals.map((r,j)=>(j?"L":"M")+sx(get(r,xKey))+","+sy(numeric(get(r,yKey)))).join(" ")}"><title>${safe(name)}</title></path>`;
   }).join("");
   const labels=Object.keys(groups).map((name,i)=>`<span class="legend-item"><span class="legend-swatch" style="background:${colors[i%colors.length]}"></span>${safe(name)}</span>`).join("");
   const first=dates[0], last=dates[dates.length-1];
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${paths}<text x="${pad.l}" y="${h-10}">${safe(first)}</text><text x="${w-pad.r-84}" y="${h-10}">${safe(last)}</text></svg><div class="legend">${labels}</div></div>`;
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${paths}<text x="${pad.l}" y="${h-10}">${safe(first)}</text><text x="${w-pad.r}" y="${h-10}" text-anchor="end">${safe(last)}</text></svg><div class="legend">${labels}</div></div>`;
 }
 function barChart(title, rows, xKey, yKey){
   const clean=(rows || []).filter(r=>numeric(get(r,yKey))!==null);
   if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
-  const w=900,h=300,pad={l:58,r:18,t:18,b:48};
+  const w=640,h=300,pad={l:62,r:18,t:24,b:54};
   const vals=clean.map(r=>numeric(get(r,yKey)) || 0);
-  const max=Math.max(...vals.map(v=>Math.abs(v)),1);
-  const zero=pad.t+(h-pad.t-pad.b)/2;
+  let yMin=Math.min(0,...vals), yMax=Math.max(0,...vals);
+  const span = yMax - yMin || 1;
+  const yPad = span * 0.12;
+  yMin = yMin < 0 ? yMin - yPad : 0;
+  yMax = yMax > 0 ? yMax + yPad : 0;
+  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
+  const zero=sy(0);
   const slot=(w-pad.l-pad.r)/clean.length;
   const bw=Math.max(8,slot*.68);
   const bars=clean.map((r,i)=>{
     const v=numeric(get(r,yKey)) || 0; const x=pad.l+i*slot+(slot-bw)/2;
-    const bh=Math.abs(v)/max*((h-pad.t-pad.b)/2-8); const y=v>=0?zero-bh:zero;
-    const label=clean.length<=14?`<text x="${x}" y="${h-18}" transform="rotate(35 ${x} ${h-18})">${safe(monthName(get(r,xKey)).split(" ")[0])}</text>`:"";
-    return `<rect class="${v>=0?"bar-pos":"bar-neg"}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(get(r,xKey)))}: ${safe(fmtMoney(v))}</title></rect>${label}`;
+    const y= v >= 0 ? sy(v) : zero;
+    const bh=Math.abs(sy(v)-zero);
+    const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
+    const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(get(r,xKey)).split(" ")[0])}</text>`:"";
+    const valueLabel=clean.length<=12 && Math.abs(v)>0 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtCompactMoney(v))}</text>` : "";
+    return `<rect class="${v>=0?"bar-pos":"bar-neg"}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(get(r,xKey)))}: ${safe(fmtMoney(v))}</title></rect>${valueLabel}${xLabel}`;
   }).join("");
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet"><line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line><text x="8" y="${pad.t+8}">${safe(fmtMoney(max))}</text><text x="8" y="${h-pad.b}">${safe(fmtMoney(-max))}</text>${bars}</svg></div>`;
+  const gridVals = yMin < 0 && yMax > 0 ? [yMax, 0, yMin] : [yMax, (yMax+yMin)/2, yMin];
+  const grid = gridVals.map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg></div>`;
 }
 function growthFromReturns(rows){
   let growth=1;
@@ -1001,9 +1020,6 @@ function renderHeader(){
     badge(`App ${String(data.app?.revision || "local").replace(/^options-roi-web-/,"")}`)
   ].join("");
   $("workflowStrip").innerHTML = [
-    badge("Dashboard: monitor current month"),
-    badge("Positions: inventory first"),
-    badge("Diagnostics: data quality")
   ].join("");
   $("rangeControl").innerHTML = rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}">${safe(o)}</button>`).join("");
 }
