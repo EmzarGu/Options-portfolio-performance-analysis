@@ -50,7 +50,8 @@ def _auth_enabled() -> bool:
 
 
 def _dashboard_password() -> Optional[str]:
-    return os.getenv("WEB_DASHBOARD_PASSWORD")
+    value = os.getenv("WEB_DASHBOARD_PASSWORD")
+    return value.strip() if value else None
 
 
 def _google_client_id() -> Optional[str]:
