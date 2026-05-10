@@ -31,6 +31,7 @@ from portfolio_backend.mobile_api_service import (
     build_mobile_tickers_payload,
     build_mobile_yearly_payload,
 )
+from portfolio_backend.mobile_payloads import build_mobile_snapshot, build_yearly_performance_rows
 from portfolio_backend.performance import expectancies
 
 
@@ -394,7 +395,10 @@ def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebui
 
 
 def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: bool = True) -> Dict[str, Any]:
-    context, _ = _get_context(as_of=as_of, include_unrealized=include_unrealized)
+    # The web UI can switch realized/unrealized presentation without a server
+    # round trip, so build the full unrealized-capable context once and include
+    # both presentation views in the payload.
+    context, _ = _get_context(as_of=as_of, include_unrealized=True)
     state = context.state
     dashboard = build_mobile_dashboard_payload(context)
     positions = build_mobile_positions_payload(context)
@@ -419,6 +423,9 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
                 "revision": os.getenv("K_REVISION", "local"),
                 "restart_ts": os.getenv("WEB_RESTART_TS", ""),
             },
+            "web": {
+                "include_unrealized": bool(include_unrealized),
+            },
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "source": {
                 "label": "IBKR Flex",
@@ -432,6 +439,16 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
             "tickers": tickers,
             "monthly": monthly,
             "yearly": yearly,
+            "views": {
+                "snapshots": {
+                    "with_unrealized": build_mobile_snapshot(state, True),
+                    "realized_only": build_mobile_snapshot(state, False),
+                },
+                "yearly": {
+                    "with_unrealized": build_yearly_performance_rows(state, include_unrealized=True),
+                    "realized_only": build_yearly_performance_rows(state, include_unrealized=False),
+                },
+            },
             "issues": issues,
             "tables": {
                 "monthly_cycles": _frame_records(state.monthly_cycles, index_name="month"),
@@ -788,12 +805,14 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 .risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
 .chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
+.view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating{opacity:1;transform:translateY(0)}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
 @media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart{height:270px}}
 @media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.metric-value{font-size:22px}.chart{height:250px}}
 </style>
 </head>
 <body>
+<div class="view-updating" id="viewUpdating" aria-live="polite">Updating view...</div>
 <div class="topbar">
   <div class="topbar-inner">
     <div class="brand">Options ROI<small>IBKR dashboard</small></div>
@@ -831,12 +850,14 @@ const data = JSON.parse(document.getElementById("dashboard-data").textContent);
 const appState = {
   active: "dashboard",
   range: "YTD",
+  includeUnrealized: data.web?.include_unrealized !== false,
   openRisk: "all",
   openType: "all",
   openSearch: "",
   tickerSearch: "",
   tickerYear: "all",
-  sort: {}
+  sort: {},
+  renderTimer: null
 };
 const sections = [
   ["dashboard","Dashboard"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
@@ -899,12 +920,12 @@ function segmentedControl(control, options, selected){
 function rangePicker(){
   return `<div class="range-panel"><div class="control-label">Period</div><div class="segmented rangeControl">${rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}">${safe(o)}</button>`).join("")}</div></div>`;
 }
-function withQueryParam(key, value){
+function updateUrlState(){
   const url = new URL(window.location.href);
-  url.searchParams.set(key, value);
   url.searchParams.set("section", appState.active);
+  url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
   url.searchParams.delete("refreshed");
-  return `${url.pathname}${url.search}`;
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
 function renderBasisControl(){
   const target = $("basisControl");
@@ -912,8 +933,20 @@ function renderBasisControl(){
     target.innerHTML = "";
     return;
   }
-  const include = data.dashboard.request?.include_unrealized !== false;
-  target.innerHTML = `<div class="segmented"><a class="${include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","1"))}">With unrealized</a><a class="${!include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","0"))}">Realized only</a></div>`;
+  const include = appState.includeUnrealized;
+  target.innerHTML = `<div class="segmented" data-basis-control><button type="button" data-value="1" class="${include ? "active" : ""}">With unrealized</button><button type="button" data-value="0" class="${!include ? "active" : ""}">Realized only</button></div>`;
+}
+function currentSnapshot(){
+  const snapshots = data.views?.snapshots || {};
+  return appState.includeUnrealized
+    ? (snapshots.with_unrealized || data.dashboard.snapshot || {})
+    : (snapshots.realized_only || data.dashboard.snapshot || {});
+}
+function yearlyRows(){
+  const rows = data.views?.yearly || {};
+  return appState.includeUnrealized
+    ? (rows.with_unrealized || data.yearly.years || [])
+    : (rows.realized_only || data.yearly.years || []);
 }
 function riskTone(row){
   const band = String(row.moneyness_band || "").toLowerCase();
@@ -1116,10 +1149,10 @@ function renderHeader(){
   renderBasisControl();
 }
 function renderDashboard(){
-  const snap=data.dashboard.snapshot || {}, mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
+  const snap=currentSnapshot(), mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
   $("dashboard").innerHTML = `
     <div class="grid metrics">
-      ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), "Realized plus current unrealized snapshot", cls(snap.ytd_total_pnl))}
+      ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized plus current unrealized snapshot" : "Realized P&L only", cls(snap.ytd_total_pnl))}
       ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
       ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
@@ -1233,7 +1266,7 @@ function renderPerformance(){
   const pnlRows = rangeFiltered(data.tables.options_cycle_pnl || [], "Date");
   $("performance").innerHTML = `
     ${sectionHead("Yearly Performance", "Realized yearly table plus unrealized-adjusted current-year view.")}
-    ${dataTable("yearly-mobile", data.yearly.years || [], [
+    ${dataTable("yearly-mobile", yearlyRows(), [
       {key:"year",label:"Year",num:true},
       {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
       {key:"realized_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
@@ -1387,8 +1420,19 @@ function bindControls(){
   }
   const refreshForm = $("refreshForm");
   if (refreshForm) {
-    refreshForm.action = `/refresh?include_unrealized=${data.dashboard.request?.include_unrealized === false ? "0" : "1"}&section=${encodeURIComponent(appState.active)}`;
+    refreshForm.action = `/refresh?include_unrealized=${appState.includeUnrealized ? "1" : "0"}&section=${encodeURIComponent(appState.active)}`;
   }
+  document.querySelectorAll("[data-basis-control] button").forEach(btn => btn.addEventListener("click", () => {
+    const next = btn.dataset.value !== "0";
+    if (appState.includeUnrealized === next) return;
+    appState.includeUnrealized = next;
+    btn.closest("[data-basis-control]")?.querySelectorAll("button").forEach(button => {
+      button.disabled = true;
+      button.classList.toggle("active", (button.dataset.value !== "0") === next);
+    });
+    updateUrlState();
+    scheduleRender();
+  }));
   document.querySelectorAll(".rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
   document.querySelectorAll('[data-open-control="risk"] button').forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
   document.querySelectorAll('[data-open-control="type"] button').forEach(btn => btn.addEventListener("click", () => { appState.openType = btn.dataset.value; render(); }));
@@ -1400,17 +1444,33 @@ function bindControls(){
   });
   const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
 }
+const sectionRenderers = {
+  dashboard: renderDashboard,
+  monthly: renderMonthly,
+  tickers: renderTickers,
+  positions: renderPositions,
+  performance: renderPerformance,
+  diagnostics: renderDiagnostics,
+  methodology: renderMethodology
+};
+function setUpdating(isUpdating){
+  document.body.classList.toggle("is-rendering", Boolean(isUpdating));
+}
+function scheduleRender(){
+  window.clearTimeout(appState.renderTimer);
+  setUpdating(true);
+  appState.renderTimer = window.setTimeout(() => {
+    render();
+    setUpdating(false);
+  }, 20);
+}
 function render(){
+  const renderStarted = performance.now();
   try {
     renderHeader();
     [...$("nav").children].forEach(b => b.classList.toggle("active", b.dataset.section === appState.active));
-    renderSection("dashboard", renderDashboard);
-    renderSection("monthly", renderMonthly);
-    renderSection("tickers", renderTickers);
-    renderSection("positions", renderPositions);
-    renderSection("performance", renderPerformance);
-    renderSection("diagnostics", renderDiagnostics);
-    renderSection("methodology", renderMethodology);
+    const renderer = sectionRenderers[appState.active];
+    if (renderer) renderSection(appState.active, renderer);
     document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
     bindControls();
   } catch (err) {
@@ -1419,6 +1479,8 @@ function render(){
       target.innerHTML = `<div class="panel"><h2>Section failed to render</h2><p class="error">${safe(err && (err.stack || err.message) || err)}</p></div>`;
     }
     console.error(err);
+  } finally {
+    document.documentElement.dataset.lastRenderMs = String(Math.round(performance.now() - renderStarted));
   }
 }
 function renderSection(id, fn){
@@ -1436,10 +1498,7 @@ function initNav(){
   $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}">${safe(label)}</button>`).join("");
   [...$("nav").children].forEach(btn => btn.addEventListener("click", () => {
     appState.active = btn.dataset.section;
-    const url = new URL(window.location.href);
-    url.searchParams.set("section", appState.active);
-    url.searchParams.delete("refreshed");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    updateUrlState();
     render();
     window.scrollTo({top:0,behavior:"instant"});
   }));
