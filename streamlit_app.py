@@ -1681,7 +1681,12 @@ def _load_dashboard_state_for_ui(
     price_refresh_token = _get_price_refresh_cache_token(as_of_input, include_unrealized, selected_sheets)
     if source_mode == DATA_SOURCE_IBKR:
         with st.spinner("Building portfolio pipeline..."):
-            base_state = get_cached_ibkr_pipeline_resource(*pipeline_cache_key)
+            base_state = build_base_pipeline(
+                as_of_input,
+                selected_sheets,
+                cache_bust=reload_token,
+                source_mode=source_mode,
+            )
     else:
         base_state = get_cached_pipeline(*pipeline_cache_key)
     priced_state = apply_live_price_overlay(base_state, price_refresh_token)
