@@ -50,7 +50,7 @@ def _auth_enabled() -> bool:
 
 
 def _dashboard_password() -> Optional[str]:
-    return os.getenv("WEB_DASHBOARD_PASSWORD") or os.getenv("MOBILE_API_KEY")
+    return os.getenv("WEB_DASHBOARD_PASSWORD")
 
 
 def _google_client_id() -> Optional[str]:
@@ -370,7 +370,7 @@ async def login(request: Request) -> Response:
     body = (await request.body()).decode("utf-8")
     submitted = parse_qs(body).get("password", [""])[0]
     if not hmac.compare_digest(submitted, expected):
-        return HTMLResponse(_login_html("Invalid password or API key."), status_code=401)
+        return HTMLResponse(_login_html("Invalid dashboard password."), status_code=401)
     response = RedirectResponse(url="/", status_code=303)
     _set_session_cookie(response, email=None, auth_method="key")
     return response
@@ -443,7 +443,7 @@ def _configuration_error_html() -> str:
     return """<!doctype html>
 <html><head><title>Options ROI</title><style>{css}</style></head>
 <body><main class="login"><h1>Dashboard is not configured</h1>
-<p>Set WEB_GOOGLE_CLIENT_ID with WEB_AUTH_ALLOWED_EMAILS and a cookie secret, or set WEB_DASHBOARD_PASSWORD / MOBILE_API_KEY.</p></main></body></html>""".format(
+<p>Set WEB_GOOGLE_CLIENT_ID with WEB_AUTH_ALLOWED_EMAILS and a cookie secret, or set WEB_DASHBOARD_PASSWORD.</p></main></body></html>""".format(
         css=BASE_CSS
     )
 
@@ -474,7 +474,7 @@ def _login_html(error: str = "") -> str:
     safe_error = error.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     google_signin = _google_signin_html()
     fallback_open = "false" if google_signin else "true"
-    fallback_label = "Use API key instead" if google_signin else "Use API key"
+    fallback_label = "Use dashboard password instead" if google_signin else "Use dashboard password"
     return (
         LOGIN_TEMPLATE.replace("__BASE_CSS__", BASE_CSS)
         .replace("__ERROR__", safe_error)
@@ -510,7 +510,7 @@ LOGIN_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Options ROI</title><style>__BASE_CSS__</style></head>
 <body><main class="login"><h1>Options ROI Dashboard</h1><p>Sign in with your allowed Google account. This browser will stay signed in.</p>
 <p class="error">__ERROR__</p>__GOOGLE_SIGNIN__
-<details class="fallback-login"__FALLBACK_OPEN__><summary>__FALLBACK_LABEL__</summary><form method="post" action="/login"><input name="password" type="password" autocomplete="current-password" autofocus placeholder="Password or API key"><button type="submit">Open dashboard</button></form></details></main></body></html>"""
+<details class="fallback-login"__FALLBACK_OPEN__><summary>__FALLBACK_LABEL__</summary><form method="post" action="/login"><input name="password" type="password" autocomplete="current-password" autofocus placeholder="Dashboard password"><button type="submit">Open dashboard</button></form></details></main></body></html>"""
 
 
 DASHBOARD_HTML = """<!doctype html>

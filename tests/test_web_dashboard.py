@@ -76,7 +76,7 @@ def _fake_dashboard_data():
 
 def test_web_dashboard_health_is_public(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     client = TestClient(web_dashboard.app)
 
     response = client.get("/health")
@@ -87,7 +87,7 @@ def test_web_dashboard_health_is_public(monkeypatch):
 
 def test_web_dashboard_redirects_to_login_without_session(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     client = TestClient(web_dashboard.app, follow_redirects=False)
 
     response = client.get("/")
@@ -111,7 +111,7 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
 
 def test_web_dashboard_api_requires_auth(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     client = TestClient(web_dashboard.app)
 
     response = client.get("/api/dashboard")
@@ -120,9 +120,9 @@ def test_web_dashboard_api_requires_auth(monkeypatch):
     assert response.json() == {"error": "unauthorized"}
 
 
-def test_web_dashboard_login_accepts_mobile_api_key(monkeypatch):
+def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda: _fake_dashboard_data())
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 
@@ -138,7 +138,7 @@ def test_web_dashboard_login_accepts_mobile_api_key(monkeypatch):
 
 def test_web_dashboard_login_sets_long_lived_session(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 
     response = client.post("/login", data={"password": "secret"}, follow_redirects=False)
@@ -148,20 +148,19 @@ def test_web_dashboard_login_sets_long_lived_session(monkeypatch):
     assert "Max-Age=7776000" in cookie
 
 
-def test_web_dashboard_login_rejects_wrong_key(monkeypatch):
+def test_web_dashboard_login_rejects_wrong_password(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 
     response = client.post("/login", data={"password": "wrong"})
 
     assert response.status_code == 401
-    assert "Invalid password or API key." in response.text
+    assert "Invalid dashboard password." in response.text
 
 
 def test_web_dashboard_login_page_renders_google_sign_in_when_configured(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.delenv("MOBILE_API_KEY", raising=False)
     monkeypatch.delenv("WEB_DASHBOARD_PASSWORD", raising=False)
     monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret")
     monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
@@ -173,12 +172,11 @@ def test_web_dashboard_login_page_renders_google_sign_in_when_configured(monkeyp
     assert response.status_code == 200
     assert "https://accounts.google.com/gsi/client" in response.text
     assert 'data-client_id="client-id.apps.googleusercontent.com"' in response.text
-    assert "Use API key instead" in response.text
+    assert "Use dashboard password instead" in response.text
 
 
 def test_web_dashboard_login_page_requires_google_allowlist(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
-    monkeypatch.delenv("MOBILE_API_KEY", raising=False)
     monkeypatch.delenv("WEB_DASHBOARD_PASSWORD", raising=False)
     monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret")
     monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
@@ -195,7 +193,7 @@ def test_web_dashboard_google_login_accepts_allowed_verified_email(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
     monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     monkeypatch.setattr(
         web_dashboard,
         "_verify_google_credential",
@@ -213,7 +211,7 @@ def test_web_dashboard_google_login_rejects_disallowed_email(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
     monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
-    monkeypatch.setenv("MOBILE_API_KEY", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
 
     def reject(_credential):
         raise PermissionError("This Google account is not allowed for this dashboard.")

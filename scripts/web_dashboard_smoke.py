@@ -14,14 +14,14 @@ def _password_from_args(args: argparse.Namespace) -> Optional[str]:
         return args.password
     if args.password_file:
         return Path(args.password_file).read_text(encoding="utf-8").strip()
-    return os.getenv("WEB_DASHBOARD_PASSWORD") or os.getenv("MOBILE_API_KEY")
+    return os.getenv("WEB_DASHBOARD_PASSWORD")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke test the Options ROI web dashboard.")
     parser.add_argument("--base-url", required=True, help="Dashboard base URL, e.g. https://...run.app")
-    parser.add_argument("--password", help="Dashboard password/API key. Prefer env or --password-file.")
-    parser.add_argument("--password-file", help="File containing dashboard password/API key.")
+    parser.add_argument("--password", help="Dashboard password. Prefer env or --password-file.")
+    parser.add_argument("--password-file", help="File containing dashboard password.")
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
 
@@ -37,7 +37,7 @@ def main() -> int:
     if home.status_code in {301, 302, 303, 307, 308} and home.headers.get("location") == "/login":
         password = _password_from_args(args)
         if not password:
-            raise AssertionError("dashboard requires login but no password/API key was provided")
+            raise AssertionError("dashboard requires login but no password was provided")
         login = session.post(
             f"{base_url}/login",
             data={"password": password},
