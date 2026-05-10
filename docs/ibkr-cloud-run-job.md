@@ -37,10 +37,16 @@ IBKR_IMPORT_RECENT_OVERLAP_DAYS=14
 IBKR_IMPORT_TO_OFFSET_DAYS=1
 ```
 
-With those settings, a job running on `2026-05-09` guarantees coverage from
+With those settings, a job running on `2026-05-09` targets coverage from
 `2022-11-01` through `2026-05-08`. If Firestore is empty, it splits the full
 range into IBKR-safe chunks of 365 days or less. If history is already covered,
 it re-imports only the last 14 days ending `2026-05-08`.
+
+The auto planner isolates the newest target calendar day into a one-day chunk.
+If IBKR returns `1003: Statement is not available` for only that trailing day,
+the job marks the chunk `deferred`, imports all available earlier chunks, and
+exits successfully with `status=succeeded_with_deferred`. This avoids failing a
+daily run just because IBKR has not published the newest statement yet.
 
 Progress is written as newline-delimited JSON in Cloud Run logs:
 
@@ -48,13 +54,15 @@ Progress is written as newline-delimited JSON in Cloud Run logs:
 auto_plan
 chunk_started
 chunk_succeeded
+chunk_deferred
 chunk_failed
 auto_summary
 ```
 
-Each chunk has its own import run, raw GCS object, Firestore write counts, and
-refresh audit record. A failed chunk is logged with its date range and error,
-and the job exits failed after reporting the summary.
+Each imported chunk has its own import run, raw GCS object, Firestore write
+counts, and refresh audit record. A deferred trailing chunk has a refresh audit
+record with `status=deferred`. Non-deferred failed chunks are logged with their
+date range and error, and the job exits failed after reporting the summary.
 
 The prepared job timeout is 7,200 seconds so a reset or empty Firestore database
 can complete a multi-year backfill in one run while still emitting per-chunk

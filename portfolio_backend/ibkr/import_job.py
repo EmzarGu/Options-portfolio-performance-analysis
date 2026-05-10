@@ -105,6 +105,23 @@ def plan_missing_import_ranges(
     return _dedupe_ranges(planned)
 
 
+def split_trailing_target_day(ranges: Iterable[DateRange], target_end: date) -> list[DateRange]:
+    """Split the target end date into a one-day chunk.
+
+    IBKR often has all prior data available while the latest requested calendar
+    day is still unavailable. Keeping the trailing day isolated lets auto mode
+    import everything else and defer only that day.
+    """
+    split: list[DateRange] = []
+    for date_range in ranges:
+        if date_range.start < target_end <= date_range.end:
+            split.append(DateRange(date_range.start, target_end - timedelta(days=1)))
+            split.append(DateRange(target_end, target_end))
+        else:
+            split.append(date_range)
+    return _dedupe_ranges(split)
+
+
 def _clip_ranges(ranges: Iterable[DateRange], target: DateRange) -> list[DateRange]:
     clipped = []
     for date_range in ranges:
@@ -230,6 +247,45 @@ def _import_range(
         raise
 
 
+def _is_statement_unavailable_error(error: str) -> bool:
+    lowered = str(error or "").lower()
+    return "1003" in lowered and "statement is not available" in lowered
+
+
+def _is_deferable_trailing_unavailable(exc: Exception, date_range: DateRange, auto_target: DateRange) -> bool:
+    return (
+        date_range.start == date_range.end == auto_target.end
+        and _is_statement_unavailable_error(str(exc))
+    )
+
+
+def _mark_deferred_refresh_run(
+    *,
+    db,
+    run_id: str,
+    query_id: str,
+    date_range: DateRange,
+    exc: Exception,
+) -> None:
+    db.collection("refresh_runs").document(run_id).set(
+        {
+            "run_id": run_id,
+            "source": SOURCE,
+            "status": "deferred",
+            "finished_at": _utc_iso(_utc_now()),
+            "ibkr_import_run_id": run_id,
+            "query_id": query_id,
+            "from_date": date_range.start.isoformat(),
+            "to_date": date_range.end.isoformat(),
+            "error_type": type(exc).__name__,
+            "error_message": str(exc)[:1000],
+            "defer_reason": "trailing_statement_unavailable",
+            "schema_version": 1,
+        },
+        merge=True,
+    )
+
+
 def run_import(args: argparse.Namespace) -> dict[str, Any]:
     from google.cloud import firestore, storage
 
@@ -261,6 +317,7 @@ def run_import(args: argparse.Namespace) -> dict[str, Any]:
         existing=existing,
         recent_overlap_days=_recent_overlap_days_from_args(args),
     )
+    planned = split_trailing_target_day(planned, auto_target.end)
     _emit_progress(
         {
             "event": "auto_plan",
@@ -273,6 +330,7 @@ def run_import(args: argparse.Namespace) -> dict[str, Any]:
     )
     results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
     batch_started_at = _utc_now()
     for index, date_range in enumerate(planned, start=1):
         chunk_run_id = _run_id(query_id, batch_started_at, date_range)
@@ -296,6 +354,27 @@ def run_import(args: argparse.Namespace) -> dict[str, Any]:
                 run_id=chunk_run_id,
             )
         except Exception as exc:
+            if _is_deferable_trailing_unavailable(exc, date_range, auto_target):
+                _mark_deferred_refresh_run(
+                    db=db,
+                    run_id=chunk_run_id,
+                    query_id=query_id,
+                    date_range=date_range,
+                    exc=exc,
+                )
+                deferred_chunk = {
+                    "event": "chunk_deferred",
+                    "index": index,
+                    "total": len(planned),
+                    "run_id": chunk_run_id,
+                    **_range_dict(date_range),
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)[:1000],
+                    "defer_reason": "trailing_statement_unavailable",
+                }
+                deferred.append(deferred_chunk)
+                _emit_progress(deferred_chunk)
+                continue
             failure = {
                 "event": "chunk_failed",
                 "index": index,
@@ -311,7 +390,7 @@ def run_import(args: argparse.Namespace) -> dict[str, Any]:
         results.append(result)
         _emit_progress({"event": "chunk_succeeded", "index": index, "total": len(planned), **result})
 
-    summary = _auto_summary(auto_target=auto_target, planned=planned, results=results, failures=failures)
+    summary = _auto_summary(auto_target=auto_target, planned=planned, results=results, failures=failures, deferred=deferred)
     _emit_progress({"event": "auto_summary", **summary})
     if failures:
         raise RuntimeError(f"IBKR auto import failed for {len(failures)} of {len(planned)} chunks")
@@ -336,21 +415,25 @@ def _auto_summary(
     planned: list[DateRange],
     results: list[dict[str, Any]],
     failures: list[dict[str, Any]],
+    deferred: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    status = "failed" if failures else "succeeded_with_deferred" if deferred else "succeeded"
     return {
-        "status": "failed" if failures else "succeeded",
+        "status": status,
         "mode": "auto",
         "target_from": auto_target.start.isoformat(),
         "target_to": auto_target.end.isoformat(),
         "planned_chunks": len(planned),
         "succeeded_chunks": len(results),
         "failed_chunks": len(failures),
+        "deferred_chunks": len(deferred),
         "inserted_raw_rows": sum(int(item.get("inserted_raw_rows") or 0) for item in results),
         "updated_raw_rows": sum(int(item.get("updated_raw_rows") or 0) for item in results),
         "inserted_transactions": sum(int(item.get("inserted_transactions") or 0) for item in results),
         "updated_transactions": sum(int(item.get("updated_transactions") or 0) for item in results),
         "ranges": [_range_dict(item) for item in planned],
         "failures": failures,
+        "deferred": deferred,
     }
 
 

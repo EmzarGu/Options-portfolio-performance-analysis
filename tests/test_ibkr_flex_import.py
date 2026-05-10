@@ -9,7 +9,14 @@ import pytest
 from portfolio_backend.ibkr.dedupe import dedupe_key, raw_row_id
 from portfolio_backend.ibkr.flex_client import DateRange, plan_backfill_ranges, processing_message
 from portfolio_backend.ibkr.flex_parser import count_trade_asset_categories, parse_flex_xml_file
-from portfolio_backend.ibkr.import_job import _auto_target_range_from_args, _date_range_from_args, plan_missing_import_ranges
+from portfolio_backend.ibkr.import_job import (
+    _auto_summary,
+    _auto_target_range_from_args,
+    _date_range_from_args,
+    _is_deferable_trailing_unavailable,
+    plan_missing_import_ranges,
+    split_trailing_target_day,
+)
 from portfolio_backend.ibkr.importer import IbkrImportService, LocalJsonImportStore, LocalRawReportStore
 from portfolio_backend.ibkr.normalization import normalize_transactions, redacted_preview
 from portfolio_backend.ibkr.persisted_report import LocalJsonFlexReportRepository
@@ -247,6 +254,59 @@ def test_plan_missing_import_ranges_backfills_full_inception_after_reset():
         DateRange(date(2024, 10, 31), date(2025, 10, 30)),
         DateRange(date(2025, 10, 31), date(2026, 5, 8)),
     ]
+
+
+def test_split_trailing_target_day_isolates_latest_calendar_day():
+    planned = split_trailing_target_day(
+        [
+            DateRange(date(2022, 11, 1), date(2023, 10, 31)),
+            DateRange(date(2025, 10, 31), date(2026, 5, 9)),
+        ],
+        date(2026, 5, 9),
+    )
+
+    assert planned == [
+        DateRange(date(2022, 11, 1), date(2023, 10, 31)),
+        DateRange(date(2025, 10, 31), date(2026, 5, 8)),
+        DateRange(date(2026, 5, 9), date(2026, 5, 9)),
+    ]
+
+
+def test_auto_import_defers_only_unavailable_trailing_statement_day():
+    target = DateRange(date(2022, 11, 1), date(2026, 5, 9))
+    trailing = DateRange(date(2026, 5, 9), date(2026, 5, 9))
+    historical = DateRange(date(2026, 5, 8), date(2026, 5, 8))
+
+    assert _is_deferable_trailing_unavailable(
+        RuntimeError("IBKR SendRequest error: 1003: Statement is not available."),
+        trailing,
+        target,
+    )
+    assert not _is_deferable_trailing_unavailable(
+        RuntimeError("IBKR SendRequest error: 1003: Statement is not available."),
+        historical,
+        target,
+    )
+    assert not _is_deferable_trailing_unavailable(
+        RuntimeError("IBKR SendRequest error: 1018: Too many requests."),
+        trailing,
+        target,
+    )
+
+
+def test_auto_summary_reports_succeeded_with_deferred_trailing_day():
+    summary = _auto_summary(
+        auto_target=DateRange(date(2022, 11, 1), date(2026, 5, 9)),
+        planned=[DateRange(date(2026, 5, 8), date(2026, 5, 8)), DateRange(date(2026, 5, 9), date(2026, 5, 9))],
+        results=[{"inserted_raw_rows": 0, "updated_raw_rows": 10, "inserted_transactions": 0, "updated_transactions": 2}],
+        failures=[],
+        deferred=[{"from_date": "2026-05-09", "to_date": "2026-05-09"}],
+    )
+
+    assert summary["status"] == "succeeded_with_deferred"
+    assert summary["succeeded_chunks"] == 1
+    assert summary["failed_chunks"] == 0
+    assert summary["deferred_chunks"] == 1
 
 
 def test_plan_missing_import_ranges_only_recent_overlap_when_coverage_complete():
