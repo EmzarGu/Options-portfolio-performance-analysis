@@ -7,6 +7,7 @@ import web_dashboard
 
 def _fake_dashboard_data():
     return {
+        "app": {"revision": "options-roi-web-test", "restart_ts": ""},
         "generated_at": "2026-05-10T12:00:00+00:00",
         "source": {"label": "IBKR Flex", "kind": "ibkr_flex", "row_count": 1, "sheet_counts": []},
         "dashboard": {
@@ -108,7 +109,11 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert "IBKR Flex" in response.text
     assert "dashboard-data" in response.text
     assert "Chart range" in response.text
+    assert "Reload app" in response.text
     assert "Open Shorts Monitor" in response.text
+    assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
 
 
 def test_web_dashboard_api_requires_auth(monkeypatch):
@@ -120,6 +125,7 @@ def test_web_dashboard_api_requires_auth(monkeypatch):
 
     assert response.status_code == 401
     assert response.json() == {"error": "unauthorized"}
+    assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
 
 
 def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):

@@ -39,6 +39,19 @@ app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
 COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 DEFAULT_SESSION_DAYS = 90
+NO_STORE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+@app.middleware("http")
+async def no_store_browser_cache(request: Request, call_next):
+    response = await call_next(request)
+    for header, value in NO_STORE_HEADERS.items():
+        response.headers[header] = value
+    return response
 
 
 def _truthy_env(name: str, default: bool) -> bool:
@@ -352,6 +365,10 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
 
     return _json_safe(
         {
+            "app": {
+                "revision": os.getenv("K_REVISION", "local"),
+                "restart_ts": os.getenv("WEB_RESTART_TS", ""),
+            },
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "source": {
                 "label": "IBKR Flex",
@@ -546,7 +563,7 @@ def refresh(request: Request) -> Response:
         return _redirect_to_login()
     context, cache_bust = _get_context(as_of=None, include_unrealized=True, force_rebuild=True)
     build_mobile_refresh_payload(context, cache_bust=cache_bust)
-    return RedirectResponse(url="/?refreshed=1", status_code=303)
+    return RedirectResponse(url=f"/?refreshed={cache_bust}", status_code=303)
 
 
 @app.get("/api/dashboard")
@@ -722,6 +739,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
     <div class="actions">
       <span class="auth-user">__AUTH_USER__</span>
       <form method="post" action="/refresh"><button class="primary" type="submit">Refresh data</button></form>
+      <button class="secondary" type="button" id="reloadApp">Reload app</button>
       <form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
     </div>
   </div>
@@ -979,7 +997,8 @@ function renderHeader(){
     badge(`${priced}/${required} priced`, missing > 0 ? "bad" : "good"),
     badge(`${issue.total_count ?? 0} actionable issues`, (issue.total_count || 0) ? "bad" : "good"),
     badge(`${fmtNum(data.source.row_count)} source rows`, "blue"),
-    badge(`Updated ${freshness.prices_updated_at ? String(freshness.prices_updated_at).slice(11,19) : "n/a"}`)
+    badge(`Updated ${freshness.prices_updated_at ? String(freshness.prices_updated_at).slice(11,19) : "n/a"}`),
+    badge(`App ${String(data.app?.revision || "local").replace(/^options-roi-web-/,"")}`)
   ].join("");
   $("workflowStrip").innerHTML = [
     badge("Dashboard: monitor current month"),
@@ -1223,6 +1242,15 @@ function renderMethodology(){
   `;
 }
 function bindControls(){
+  const reloadApp = $("reloadApp");
+  if (reloadApp && !reloadApp.dataset.bound) {
+    reloadApp.dataset.bound = "1";
+    reloadApp.addEventListener("click", () => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("v", Date.now().toString());
+      window.location.replace(url.toString());
+    });
+  }
   document.querySelectorAll("#rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
   const risk = $("riskControl"); if (risk) risk.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
   const coverage = $("coverageControl"); if (coverage) coverage.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => { appState.openCoverage = btn.dataset.value; render(); }));
