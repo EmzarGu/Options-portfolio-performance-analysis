@@ -61,6 +61,12 @@ def _truthy_env(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _truthy_query(value: Optional[str], default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def _auth_enabled() -> bool:
     return _truthy_env("WEB_DASHBOARD_AUTH", True)
 
@@ -325,6 +331,49 @@ def _advanced_unreal_records(advanced_unreal: Any) -> List[Dict[str, Any]]:
     return _frame_records(advanced_unreal)
 
 
+def _expectancy_by_year_records(state: Any) -> List[Dict[str, Any]]:
+    years = set()
+    for event in getattr(state, "realized_option_events", []) or []:
+        years.add(pd.to_datetime(event.date).year)
+    for sale in getattr(state, "realized_sales", []) or []:
+        years.add(pd.to_datetime(sale.date).year)
+    if getattr(state, "monthly_cycles", None) is not None and not state.monthly_cycles.empty:
+        monthly = state.monthly_cycles.copy()
+        monthly.index = pd.to_datetime(monthly.index, errors="coerce")
+        years.update(monthly.index.dropna().year.tolist())
+    for chain in getattr(state, "chain_outcomes", []) or []:
+        if getattr(chain, "end", None) is not None:
+            years.add(pd.to_datetime(chain.end).year)
+
+    rows: List[Dict[str, Any]] = []
+    for year in sorted(years):
+        option_events = [
+            event
+            for event in getattr(state, "realized_option_events", []) or []
+            if pd.to_datetime(event.date).year == year
+        ]
+        sales = [
+            sale
+            for sale in getattr(state, "realized_sales", []) or []
+            if pd.to_datetime(sale.date).year == year
+        ]
+        monthly_summary = getattr(state, "monthly_cycles", pd.DataFrame())
+        if monthly_summary is not None and not monthly_summary.empty:
+            monthly_summary = monthly_summary.copy()
+            monthly_summary.index = pd.to_datetime(monthly_summary.index, errors="coerce")
+            monthly_summary = monthly_summary[monthly_summary.index.year == year]
+        chains = [
+            chain
+            for chain in getattr(state, "chain_outcomes", []) or []
+            if getattr(chain, "end", None) is not None and pd.to_datetime(chain.end).year == year
+        ]
+        frame = expectancies(option_events, sales, monthly_summary, chains)
+        if frame is not None and not frame.empty:
+            frame.insert(0, "Year", year)
+            rows.extend(_frame_records(frame))
+    return rows
+
+
 def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebuild: bool = False):
     # The browser dashboard is the IBKR-first production surface. Apply these
     # defaults lazily so importing this module cannot alter Streamlit/mobile
@@ -362,6 +411,7 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
         state.monthly_cycles,
         getattr(state, "chain_outcomes", []),
     )
+    expectancy_by_year = _expectancy_by_year_records(state)
 
     return _json_safe(
         {
@@ -391,6 +441,7 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
                 "per_ticker_totals": _frame_records(state.per_ticker_totals),
                 "benchmark_metrics": _frame_records(state.benchmark_metrics),
                 "expectancy": _frame_records(expectancy),
+                "expectancy_by_year": expectancy_by_year,
                 "inventory": _frame_records(state.inv_df),
                 "open_options": _frame_records(state.open_options),
                 "options_cycle_pnl": _frame_records(build_options_cycle_chart_data(state.monthly_cycles)),
@@ -561,16 +612,21 @@ def logout() -> Response:
 def refresh(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
-    context, cache_bust = _get_context(as_of=None, include_unrealized=True, force_rebuild=True)
+    include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    context, cache_bust = _get_context(as_of=None, include_unrealized=include_unrealized, force_rebuild=True)
     build_mobile_refresh_payload(context, cache_bust=cache_bust)
-    return RedirectResponse(url=f"/?refreshed={cache_bust}", status_code=303)
+    return RedirectResponse(
+        url=f"/?include_unrealized={1 if include_unrealized else 0}&refreshed={cache_bust}",
+        status_code=303,
+    )
 
 
 @app.get("/api/dashboard")
 def dashboard_json(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    return JSONResponse(_build_dashboard_data())
+    include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    return JSONResponse(_build_dashboard_data(include_unrealized=include_unrealized))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -578,7 +634,8 @@ def dashboard_page(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
     try:
-        payload = _build_dashboard_data()
+        include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+        payload = _build_dashboard_data(include_unrealized=include_unrealized)
     except Exception as exc:
         return HTMLResponse(_error_html(str(exc)), status_code=500)
     data_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).replace("</", "<\\/")
@@ -710,17 +767,18 @@ body{background:#080c0f;color:var(--text)}
 .topbar{position:sticky;top:0;z-index:40;background:rgba(8,12,15,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line2)}
 .topbar-inner{max-width:1420px;margin:0 auto;padding:9px 18px;display:flex;gap:14px;align-items:center;justify-content:space-between}
 .brand{font-size:18px;font-weight:850;letter-spacing:.01em;white-space:nowrap}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:650;margin-top:-2px}
-.nav{display:flex;gap:3px;flex:1;justify-content:flex-start;min-width:0;overflow:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}.nav button,.segmented button{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active,.segmented button.active{color:#061a18;background:var(--accent);border-color:transparent}
+.nav{display:flex;gap:3px;flex:1;justify-content:flex-start;min-width:0;overflow:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}.nav button,.segmented button,.segmented a{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active,.segmented button.active,.segmented a.active{color:#061a18;background:var(--accent);border-color:transparent}
 .actions{display:flex;gap:7px;align-items:center;flex:0 0 auto}.actions form{margin:0}.actions .primary,.actions .secondary{padding:9px 11px}.auth-user{display:none;color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shell{max-width:1420px;margin:0 auto;padding:22px 18px 64px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:4px 0 16px}
-.hero h1{font-size:34px;line-height:1.05;margin:0 0 8px}.sub{color:var(--muted);font-size:14px}.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hero h1{font-size:34px;line-height:1.05;margin:0 0 8px}.sub{color:var(--muted);font-size:14px}.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
 .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:#111a1d;border-radius:999px;padding:5px 9px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap}.badge.good{color:#c6f6ce;border-color:#2f6941}.badge.warn{color:#ffe3a3;border-color:#73551d}.badge.bad{color:#ffc0c5;border-color:#70303b}.badge.blue{color:#cfe0ff;border-color:#355189}
-.control-strip{display:flex;gap:12px;align-items:center;justify-content:flex-start;flex-wrap:wrap;background:#0d1417;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;margin:0 0 16px}.control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}#workflowStrip{display:none}
+.basis-control{display:flex;justify-content:flex-end;margin-top:8px}.basis-control .segmented{border:1px solid var(--line2);border-radius:8px;padding:4px;background:#0d1417}.basis-control a,.range-panel a{display:inline-flex;align-items:center;text-decoration:none}
+.control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}.range-panel{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:10px 12px;background:#0d1417;border:1px solid var(--line2);border-radius:8px}.range-panel .segmented button{padding:7px 10px}
 .grid{display:grid;gap:12px}.metrics{grid-template-columns:repeat(4,minmax(180px,1fr))}.two{grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr)}.two-even{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .card,.panel{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.card{padding:14px}.panel{padding:16px}
 .metric-label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:25px;font-weight:900;margin-top:5px;line-height:1.08}.metric-note{color:var(--muted);font-size:12px;margin-top:5px}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.warn-text{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}
 h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select,.section-head select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
 .table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:#11191c}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.empty{padding:18px;color:var(--muted)}
 .risk-row-itm td{background:rgba(255,111,120,.12)}.risk-row-near td{background:rgba(246,194,91,.11)}.risk-row-clear td{background:rgba(69,210,197,.07)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--red)}.dot-warn{background:var(--amber)}.dot-good{background:var(--green)}.dot-blue{background:var(--blue)}
@@ -739,7 +797,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
     <nav class="nav" id="nav"></nav>
     <div class="actions">
       <span class="auth-user">__AUTH_USER__</span>
-      <form method="post" action="/refresh"><button class="primary" type="submit">Refresh data</button></form>
+      <form id="refreshForm" method="post" action="/refresh"><button class="primary" type="submit">Refresh data</button></form>
       <button class="secondary" type="button" id="reloadApp">Reload app</button>
       <form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
     </div>
@@ -748,17 +806,13 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 <main class="shell">
   <section class="hero">
     <div>
-      <h1>Portfolio Dashboard</h1>
+      <h1 id="heroTitle">Dashboard</h1>
       <div class="sub" id="subtitle"></div>
     </div>
-    <div class="status-strip" id="statusStrip"></div>
-  </section>
-  <section class="control-strip">
     <div>
-      <div class="control-label">Chart range</div>
-      <div class="segmented" id="rangeControl"></div>
+      <div class="status-strip" id="statusStrip"></div>
+      <div class="basis-control" id="basisControl"></div>
     </div>
-    <div class="status-strip" id="workflowStrip"></div>
   </section>
   <section id="dashboard" class="section active"></section>
   <section id="monthly" class="section"></section>
@@ -775,17 +829,26 @@ const appState = {
   active: "dashboard",
   range: "YTD",
   openRisk: "all",
-  openCoverage: "all",
+  openType: "all",
   openSearch: "",
   tickerSearch: "",
   tickerYear: "all",
   sort: {}
 };
 const sections = [
-  ["dashboard","Dashboard"], ["monthly","Monthly"], ["tickers","Tickers"],
-  ["positions","Positions"], ["performance","Performance"], ["diagnostics","Diagnostics"],
+  ["dashboard","Dashboard"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
+  ["positions","Positions"], ["diagnostics","Diagnostics"],
   ["methodology","Methodology"]
 ];
+const pageTitles = {
+  dashboard: "Dashboard",
+  performance: "Performance",
+  monthly: "Monthly",
+  tickers: "Tickers",
+  positions: "Positions",
+  diagnostics: "Diagnostics",
+  methodology: "Methodology"
+};
 const rangeOptions = ["3M","6M","YTD","1Y","Since inception"];
 const colors = ["#45d2c5","#7aa7ff","#f6c25b","#b99cff","#ff8e96","#7ee092"];
 const $ = (id) => document.getElementById(id);
@@ -826,9 +889,22 @@ function card(label, value, note="", klass=""){
 function sectionHead(title, note="", right=""){
   return `<div class="section-head"><div><h2>${safe(title)}</h2>${note ? `<div class="section-note">${note}</div>` : ""}</div>${right}</div>`;
 }
-function segmented(id, options, selected){
-  const labels = {all:"All", itm:"ITM", near:"Near", clear:"Clear", covered:"Covered", cash_secured:"Cash-secured"};
-  return `<div class="segmented" id="${id}">${options.map(o => `<button type="button" data-value="${safe(o)}" class="${o === selected ? "active" : ""}">${safe(labels[o] || o)}</button>`).join("")}</div>`;
+function segmentedControl(control, options, selected){
+  const labels = {all:"All", itm:"ITM", near:"Near", clear:"Clear", puts:"Puts", calls:"Calls"};
+  return `<div class="segmented" data-open-control="${control}">${options.map(o => `<button type="button" data-value="${safe(o)}" class="${o === selected ? "active" : ""}">${safe(labels[o] || o)}</button>`).join("")}</div>`;
+}
+function rangePicker(){
+  return `<div class="range-panel"><div class="control-label">Period</div><div class="segmented rangeControl">${rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}">${safe(o)}</button>`).join("")}</div></div>`;
+}
+function withQueryParam(key, value){
+  const url = new URL(window.location.href);
+  url.searchParams.set(key, value);
+  url.searchParams.delete("refreshed");
+  return `${url.pathname}${url.search}`;
+}
+function renderBasisControl(){
+  const include = data.dashboard.request?.include_unrealized !== false;
+  $("basisControl").innerHTML = `<div class="segmented"><a class="${include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","1"))}">With unrealized</a><a class="${!include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","0"))}">Realized only</a></div>`;
 }
 function riskTone(row){
   const band = String(row.moneyness_band || "").toLowerCase();
@@ -965,12 +1041,12 @@ function openShortRows(){
       || (appState.openRisk === "itm" && tone === "bad")
       || (appState.openRisk === "near" && tone === "warn")
       || (appState.openRisk === "clear" && (tone === "good" || tone === "blue"));
-    const cov = String(row.covered_status || "").toLowerCase();
-    const covOk = appState.openCoverage === "all"
-      || (appState.openCoverage === "covered" && cov.includes("covered"))
-      || (appState.openCoverage === "cash_secured" && cov.includes("cash"));
+    const optionType = String(row.option_type || "").toLowerCase();
+    const typeOk = appState.openType === "all"
+      || (appState.openType === "puts" && optionType.includes("put"))
+      || (appState.openType === "calls" && optionType.includes("call"));
     const text = `${row.ticker || ""} ${row.option_type || ""} ${row.strike || ""} ${row.expiration || ""}`.toUpperCase();
-    return riskOk && covOk && (!q || text.includes(q)) && m !== null;
+    return riskOk && typeOk && (!q || text.includes(q)) && m !== null;
   });
 }
 function openShortColumns(){
@@ -989,18 +1065,25 @@ function openShortColumns(){
 }
 function openShortToolbar(){
   return `<div class="toolbar">
-    ${segmented("riskControl",["all","itm","near","clear"],appState.openRisk)}
-    ${segmented("coverageControl",["all","covered","cash_secured"],appState.openCoverage)}
-    <input id="openSearch" value="${safe(appState.openSearch)}" placeholder="Filter ticker, strike, expiry">
+    ${segmentedControl("risk",["all","itm","near","clear"],appState.openRisk)}
+    ${segmentedControl("type",["all","puts","calls"],appState.openType)}
+    <input data-open-search value="${safe(appState.openSearch)}" placeholder="Filter ticker, strike, expiry">
   </div>
   <div class="footnote"><span class="risk-dot dot-bad"></span>ITM <span class="risk-dot dot-warn"></span>At/near strike <span class="risk-dot dot-good"></span>OK <span class="risk-dot dot-blue"></span>Deep OTM</div>`;
 }
-function riskCards(rows){
-  const top = (rows || []).slice(0,6);
+function riskPill(row){
+  const tone = riskTone(row);
+  if (tone === "bad") return "ITM";
+  if (tone === "warn") return "Near";
+  if (tone === "blue") return "Deep OTM";
+  return "OK";
+}
+function riskCards(rows, limit=null){
+  const top = limit === null ? (rows || []) : (rows || []).slice(0, limit);
   if (!top.length) return `<div class="panel muted">No open shorts match the filters.</div>`;
   return `<div class="risk-grid">${top.map(r => {
     const tone = riskTone(r);
-    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${labelize(r.risk_label || r.moneyness_band || tone)}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Premium ${safe(fmtMoney(r.premium_collected,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
+    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${safe(riskPill(r))}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Premium ${safe(fmtMoney(r.premium_collected,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
   }).join("")}</div>`;
 }
 function monthlyRows(){
@@ -1012,6 +1095,7 @@ function renderHeader(){
   const priced=price.priced_count ?? price.stocks_fetched ?? price.fetched ?? 0;
   const required=price.required_count ?? price.stocks_requested ?? price.requested ?? 0;
   const missing=price.missing_count ?? Math.max(required-priced,0);
+  $("heroTitle").textContent = pageTitles[appState.active] || "Dashboard";
   $("subtitle").textContent = `${data.source.label} - as of ${fmtDate(d.request?.as_of)} - generated ${fmtDate(data.generated_at)}`;
   $("statusStrip").innerHTML = [
     badge(`${priced}/${required} priced`, missing > 0 ? "bad" : "good"),
@@ -1020,14 +1104,10 @@ function renderHeader(){
     badge(`Updated ${freshness.prices_updated_at ? String(freshness.prices_updated_at).slice(11,19) : "n/a"}`),
     badge(`App ${String(data.app?.revision || "local").replace(/^options-roi-web-/,"")}`)
   ].join("");
-  $("workflowStrip").innerHTML = [
-  ].join("");
-  $("rangeControl").innerHTML = rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}">${safe(o)}</button>`).join("");
+  renderBasisControl();
 }
 function renderDashboard(){
   const snap=data.dashboard.snapshot || {}, mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
-  const pnlRows = rangeFiltered(data.tables.options_cycle_pnl || data.tables.monthly_cycles || [], "Date");
-  const benchmark = (data.charts.benchmark_growth_by_range || {})[appState.range] || data.charts.benchmark_growth || [];
   $("dashboard").innerHTML = `
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), "Realized plus current unrealized snapshot", cls(snap.ytd_total_pnl))}
@@ -1042,13 +1122,9 @@ function renderDashboard(){
       ${card("Remaining to target", fmtMoney(mt.projected_remaining_pnl), "Based on projected monthly target", cls(-1*(numeric(mt.projected_remaining_pnl)||0)))}
       ${card("Roll-adjusted open premium", fmtMoney(mt.open_expiring_roll_adjusted_premium), "Display/reconciliation only", cls(mt.open_expiring_roll_adjusted_premium))}
     </div>
-    ${sectionHead("Open Shorts Monitor", `${shorts.length} open shorts match current filters.`, "")}
+    ${sectionHead("Open Shorts Monitor", `${shorts.length} open shorts after filters.`, "")}
     ${openShortToolbar()}
     ${riskCards(shorts)}
-    <div style="height:12px"></div>
-    ${dataTable("dashboard-open-shorts", shorts, openShortColumns(), {title:"Open shorts", subtitle:"Sorted by backend moneyness risk; click any header to sort.", rowClass:rowRiskClass, wide:true, maxHeight:460})}
-    ${sectionHead("Performance Charts", "Use the range control above to match Streamlit chart behavior.")}
-    <div class="grid two-even">${barChart("P&L by Options Cycle", pnlRows, "Date", "pnl")}${lineChart("Cumulative Growth vs Benchmarks", benchmark, "Date", "Growth", "Series", v=>fmtDec(v,2)+"x")}</div>
   `;
 }
 function renderMonthly(){
@@ -1058,6 +1134,7 @@ function renderMonthly(){
   const future = data.monthly.future_months || [];
   $("monthly").innerHTML = `
     ${sectionHead("Monthly Performance", "Calendar-month realized results plus explicit current/future projection fields.")}
+    ${rangePicker()}
     <div class="grid two-even">
       ${lineChart("Cumulative Growth by Month", returns, "month", "Growth", "Series", v=>fmtDec(v,2)+"x")}
       ${barChart("Monthly Realized P&L", filtered.map(r=>({Date:r.month,pnl:r.total_realized_pnl})), "Date", "pnl")}
@@ -1078,7 +1155,7 @@ function renderMonthly(){
       {key:"projected_month_pnl",label:"Projected P&L",format:fmtMoney,num:true,className:cls},
       {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true,className:cls},
       {key:"monthly_target_status",label:"Target status"}
-    ], {title:"Monthly table", subtitle:"Matches Streamlit monthly columns and adds explicit projection semantics.", wide:true})}
+    ], {title:"Monthly table", subtitle:"Historical/current rows with explicit projection semantics.", wide:true})}
     ${sectionHead("Future Open Expiry Months", "Future months are shown separately so iOS/web do not infer roll semantics client-side.")}
     ${dataTable("future-months", future, [
       {key:"month",label:"Month",format:monthName},
@@ -1099,7 +1176,7 @@ function renderTickers(){
   const yearly = (data.tables.per_ticker_yearly || []).filter(r => (appState.tickerYear === "all" || String(r.year) === appState.tickerYear) && (!q || String(r.ticker || "").toUpperCase().includes(q)));
   $("tickers").innerHTML = `
     ${sectionHead("Per-Ticker P&L", "Ticker totals include realized options, realized stock, dividends, unrealized snapshot, and total P&L.")}
-    <div class="toolbar"><input id="tickerSearch" value="${safe(appState.tickerSearch)}" placeholder="Filter ticker"><select id="tickerYear">${years.map(y=>`<option value="${safe(y)}" ${y===appState.tickerYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select></div>
+    <div class="toolbar"><input id="tickerSearch" value="${safe(appState.tickerSearch)}" placeholder="Filter ticker"></div>
     ${dataTable("ticker-totals", filtered, [
       {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
       {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
@@ -1111,8 +1188,8 @@ function renderTickers(){
       {key:"current_price",label:"Price",format:v=>fmtMoney(v,2),num:true},
       {key:"open_option_count",label:"Open options",num:true},
       {key:"inventory_share_count",label:"Shares",num:true}
-    ], {title:"Ticker totals", subtitle:"Click headers to sort; use the filter above to inspect a ticker.", wide:true})}
-    ${sectionHead("Per-Year Ticker Realized P&L")}
+    ], {title:"Ticker totals", subtitle:"Cumulative ticker results.", wide:true})}
+    ${sectionHead("Per-Year Ticker Realized P&L", "Year filter applies to this table.", `<select id="tickerYear">${years.map(y=>`<option value="${safe(y)}" ${y===appState.tickerYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
     ${dataTable("ticker-yearly", yearly, [
       {key:"year",label:"Year",num:true},
       {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
@@ -1139,7 +1216,7 @@ function renderPositions(){
     ], {title:"Assigned holdings", subtitle:"Covered strike caps assigned holdings when covered calls are open.", wide:true})}
     ${sectionHead("Open Option Shorts", `${shorts.length} rows after filters.`)}
     ${openShortToolbar()}
-    ${dataTable("positions-open-shorts", shorts, openShortColumns(), {title:"Open option shorts", subtitle:"Moneyness colors match the Streamlit control dashboard.", rowClass:rowRiskClass, wide:true})}
+    ${dataTable("positions-open-shorts", shorts, openShortColumns(), {title:"Open option shorts", subtitle:"Detailed position view by moneyness risk.", rowClass:rowRiskClass, wide:true})}
   `;
 }
 function renderPerformance(){
@@ -1162,6 +1239,8 @@ function renderPerformance(){
       {key:"annualized_twr_unrealized_adjusted",label:"Ann. TWR adj.",format:fmtPct,num:true,className:cls}
     ], {title:"Yearly performance", wide:true})}
     <div style="height:12px"></div>
+    ${sectionHead("Performance Charts", "Period control applies only to these charts.")}
+    ${rangePicker()}
     <div class="grid two-even">${lineChart("Cumulative Growth vs Benchmarks", benchmark, "Date", "Growth", "Series", v=>fmtDec(v,2)+"x")}${barChart("P&L by Options Cycle", pnlRows, "Date", "pnl")}</div>
     ${sectionHead("Benchmark Metrics")}
     ${dataTable("benchmark-metrics", data.tables.benchmark_metrics || [], [
@@ -1177,7 +1256,7 @@ function renderPerformance(){
       {key:"Return 1Y",label:"1Y",format:fmtPct,num:true},
       {key:"Return SI",label:"Since inception",format:fmtPct,num:true}
     ], {title:"Key performance metrics versus benchmarks", wide:true})}
-    ${sectionHead("Expectancy Analysis")}
+    ${sectionHead("Expectancy Analysis", "Overall expectancy plus yearly breakdown to show how the edge changes over time.")}
     ${dataTable("expectancy", data.tables.expectancy || [], [
       {key:"Category",label:"Category"},
       {key:"Count",label:"Count",num:true},
@@ -1186,7 +1265,18 @@ function renderPerformance(){
       {key:"Avg loss",label:"Avg loss",format:fmtMoney,num:true,className:cls},
       {key:"Expectancy",label:"Expectancy",format:fmtMoney,num:true,className:cls},
       {key:"Total P&L",label:"Total P&L",format:fmtMoney,num:true,className:cls}
-    ], {title:"Expectancy", small:true})}
+    ], {title:"Overall expectancy", small:true})}
+    <div style="height:12px"></div>
+    ${dataTable("expectancy-by-year", data.tables.expectancy_by_year || [], [
+      {key:"Year",label:"Year",num:true},
+      {key:"Category",label:"Category"},
+      {key:"Count",label:"Count",num:true},
+      {key:"Win rate",label:"Win rate",format:fmtPct,num:true},
+      {key:"Avg win",label:"Avg win",format:fmtMoney,num:true,className:cls},
+      {key:"Avg loss",label:"Avg loss",format:fmtMoney,num:true,className:cls},
+      {key:"Expectancy",label:"Expectancy",format:fmtMoney,num:true,className:cls},
+      {key:"Total P&L",label:"Total P&L",format:fmtMoney,num:true,className:cls}
+    ], {title:"Expectancy by year", wide:true})}
   `;
 }
 function renderDiagnostics(){
@@ -1268,10 +1358,14 @@ function bindControls(){
       window.location.replace(url.toString());
     });
   }
-  document.querySelectorAll("#rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
-  const risk = $("riskControl"); if (risk) risk.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
-  const coverage = $("coverageControl"); if (coverage) coverage.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => { appState.openCoverage = btn.dataset.value; render(); }));
-  const openSearch = $("openSearch"); if (openSearch) openSearch.addEventListener("input", (e) => { appState.openSearch = e.target.value; render(); });
+  const refreshForm = $("refreshForm");
+  if (refreshForm) {
+    refreshForm.action = `/refresh?include_unrealized=${data.dashboard.request?.include_unrealized === false ? "0" : "1"}`;
+  }
+  document.querySelectorAll(".rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
+  document.querySelectorAll('[data-open-control="risk"] button').forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
+  document.querySelectorAll('[data-open-control="type"] button').forEach(btn => btn.addEventListener("click", () => { appState.openType = btn.dataset.value; render(); }));
+  document.querySelectorAll("[data-open-search]").forEach(input => input.addEventListener("input", (e) => { appState.openSearch = e.target.value; render(); }));
   const tickerSearch = $("tickerSearch"); if (tickerSearch) tickerSearch.addEventListener("input", (e) => { appState.tickerSearch = e.target.value; render(); });
   const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
 }

@@ -52,7 +52,7 @@ def main() -> int:
 
     if home.status_code != 200:
         raise AssertionError(f"dashboard status={home.status_code}")
-    for expected in ("Portfolio Dashboard", "IBKR Flex", "dashboard-data"):
+    for expected in ("Dashboard", "IBKR Flex", "dashboard-data"):
         if expected not in home.text:
             raise AssertionError(f"dashboard HTML missing {expected!r}")
 

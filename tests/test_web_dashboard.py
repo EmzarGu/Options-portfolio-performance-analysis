@@ -99,16 +99,17 @@ def test_web_dashboard_redirects_to_login_without_session(monkeypatch):
 
 def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda: _fake_dashboard_data())
+    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda **_: _fake_dashboard_data())
     client = TestClient(web_dashboard.app)
 
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Portfolio Dashboard" in response.text
+    assert "Dashboard" in response.text
     assert "IBKR Flex" in response.text
     assert "dashboard-data" in response.text
-    assert "Chart range" in response.text
+    assert "Period" in response.text
+    assert "With unrealized" in response.text
     assert "Reload app" in response.text
     assert "Open Shorts Monitor" in response.text
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
@@ -131,7 +132,7 @@ def test_web_dashboard_api_requires_auth(monkeypatch):
 def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda: _fake_dashboard_data())
+    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda **_: _fake_dashboard_data())
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 
     response = client.post("/login", data={"password": "secret"}, follow_redirects=False)
@@ -141,7 +142,7 @@ def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):
 
     dashboard_response = client.get("/")
     assert dashboard_response.status_code == 200
-    assert "Portfolio Dashboard" in dashboard_response.text
+    assert "Dashboard" in dashboard_response.text
 
 
 def test_web_dashboard_login_sets_long_lived_session(monkeypatch):
