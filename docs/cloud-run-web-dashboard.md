@@ -42,6 +42,8 @@ WEB_AUTH_ALLOWED_EMAILS=<allowed-google-email-1>,<allowed-google-email-2>
 WEB_SESSION_DAYS=90
 ```
 
+When Google Sign-In is configured, the password fallback is hidden by default. Set `WEB_PASSWORD_FALLBACK_VISIBLE=1` only for emergency troubleshooting.
+
 The Google OAuth client should be configured with these authorized JavaScript origins:
 
 ```text

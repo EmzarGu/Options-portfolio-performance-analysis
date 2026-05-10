@@ -79,6 +79,10 @@ def _auth_configured() -> bool:
     return bool(_dashboard_password() or _google_auth_configured())
 
 
+def _password_fallback_visible() -> bool:
+    return _truthy_env("WEB_PASSWORD_FALLBACK_VISIBLE", False)
+
+
 def _session_max_age_seconds() -> int:
     raw = os.getenv("WEB_SESSION_DAYS")
     if raw:
@@ -473,12 +477,22 @@ a{color:var(--accent)}button,input{font:inherit}.login{max-width:520px;margin:14
 def _login_html(error: str = "") -> str:
     safe_error = error.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     google_signin = _google_signin_html()
+    show_fallback = bool(_dashboard_password() and (not google_signin or _password_fallback_visible()))
     fallback_open = "false" if google_signin else "true"
     fallback_label = "Use dashboard password instead" if google_signin else "Use dashboard password"
+    fallback_html = ""
+    if show_fallback:
+        fallback_html = (
+            '<details class="fallback-login"__FALLBACK_OPEN__><summary>__FALLBACK_LABEL__</summary>'
+            '<form method="post" action="/login"><input name="password" type="password" '
+            'autocomplete="current-password" autofocus placeholder="Dashboard password">'
+            '<button type="submit">Open dashboard</button></form></details>'
+        )
     return (
         LOGIN_TEMPLATE.replace("__BASE_CSS__", BASE_CSS)
         .replace("__ERROR__", safe_error)
         .replace("__GOOGLE_SIGNIN__", google_signin)
+        .replace("__FALLBACK_LOGIN__", fallback_html)
         .replace("__FALLBACK_OPEN__", " open" if fallback_open == "true" else "")
         .replace("__FALLBACK_LABEL__", fallback_label)
     )
@@ -510,7 +524,7 @@ LOGIN_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Options ROI</title><style>__BASE_CSS__</style></head>
 <body><main class="login"><h1>Options ROI Dashboard</h1><p>Sign in with your allowed Google account. This browser will stay signed in.</p>
 <p class="error">__ERROR__</p>__GOOGLE_SIGNIN__
-<details class="fallback-login"__FALLBACK_OPEN__><summary>__FALLBACK_LABEL__</summary><form method="post" action="/login"><input name="password" type="password" autocomplete="current-password" autofocus placeholder="Dashboard password"><button type="submit">Open dashboard</button></form></details></main></body></html>"""
+__FALLBACK_LOGIN__</main></body></html>"""
 
 
 DASHBOARD_HTML = """<!doctype html>
