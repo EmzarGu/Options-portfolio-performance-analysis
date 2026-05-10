@@ -132,6 +132,7 @@ SHEETS = ["Options 2024", "Options 2025", "Options 2026"]
 DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 IBKR_SOURCE_LABEL = "IBKR Flex"
+DEFAULT_FIRESTORE_PROJECT_ID = "options-performance-dashboard"
 STREAMLIT_ENV_SECRET_KEYS = (
     "OPTIONS_DATA_SOURCE",
     "IBKR_REPORT_SOURCE",
@@ -494,10 +495,12 @@ def streamlit_app_source_mode() -> str:
     sync_streamlit_secrets_to_env()
     if not os.getenv("OPTIONS_DATA_SOURCE"):
         os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
+        os.environ.setdefault("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
         return DATA_SOURCE_IBKR
     mode = data_source_mode()
     if mode == DATA_SOURCE_IBKR:
         os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
+        os.environ.setdefault("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
     return mode
 
 
@@ -1636,11 +1639,19 @@ def main():
         priced_state = apply_live_price_overlay(base_state, price_refresh_token)
         state = apply_unrealized_adjusted_display(priced_state, include_unrealized)
     except Exception as e:
-        st.error(
-            "Could not load data. If the sheet is private, set `GOOGLE_SERVICE_ACCOUNT_JSON` (or `LOCAL_SECRETS_PATH`); "
-            "if it's public, ensure sharing is enabled. You can also set `LOCAL_EXCEL_PATH` to a local workbook. "
-            f"Details: {e}"
-        )
+        if source_mode == DATA_SOURCE_IBKR:
+            st.error(
+                "Could not load IBKR Flex data from Firestore. Confirm Streamlit secrets include "
+                "`GOOGLE_SERVICE_ACCOUNT_JSON` or `FIRESTORE_SERVICE_ACCOUNT_JSON`, and that "
+                "`FIRESTORE_PROJECT_ID` is set to `options-performance-dashboard`. "
+                f"Details: {e}"
+            )
+        else:
+            st.error(
+                "Could not load data. If the sheet is private, set `GOOGLE_SERVICE_ACCOUNT_JSON` (or `LOCAL_SECRETS_PATH`); "
+                "if it's public, ensure sharing is enabled. You can also set `LOCAL_EXCEL_PATH` to a local workbook. "
+                f"Details: {e}"
+            )
         st.stop()
     view_model = build_dashboard_view_model(state, include_unrealized)
 

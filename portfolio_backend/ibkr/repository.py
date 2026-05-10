@@ -101,7 +101,8 @@ def load_local_flex_report(
 
 def load_flex_report_from_env(*, env_path: Optional[str | Path] = ".env") -> IbkrFlexReport:
     load_env(env_path)
-    source = os.environ.get("IBKR_REPORT_SOURCE", "local_xml").strip().lower()
+    default_source = "firestore" if os.environ.get("OPTIONS_DATA_SOURCE", "").strip().lower() in {"ibkr", "ibkr_flex"} else "local_xml"
+    source = os.environ.get("IBKR_REPORT_SOURCE", default_source).strip().lower()
     query_id = os.environ.get("IBKR_FLEX_QUERY_ID")
     if source in {"local_json", "json", "firestore_sim"}:
         root_dir = os.environ.get("IBKR_IMPORT_JSON_DIR", "tmp/ibkr_import/firestore_sim")
