@@ -428,6 +428,10 @@ def _clear_data_caches() -> None:
     except NameError:
         pass
     try:
+        get_cached_ibkr_pipeline_resource.clear()
+    except NameError:
+        pass
+    try:
         get_cached_current_prices.clear()
     except NameError:
         pass
@@ -766,6 +770,21 @@ def build_pipeline_cache_key(
 
 @st.cache_data(show_spinner="Building portfolio pipeline...")
 def get_cached_pipeline(
+    source_mode: str,
+    as_of_key: str,
+    selected_sheets_key: Tuple[str, ...],
+    reload_token: int,
+) -> PipelineState:
+    return build_base_pipeline(
+        date.fromisoformat(as_of_key),
+        list(selected_sheets_key),
+        cache_bust=reload_token,
+        source_mode=source_mode,
+    )
+
+
+@st.cache_resource(show_spinner=False, ttl=300)
+def get_cached_ibkr_pipeline_resource(
     source_mode: str,
     as_of_key: str,
     selected_sheets_key: Tuple[str, ...],
@@ -1646,7 +1665,11 @@ def _load_dashboard_state_for_ui(
         source_mode=source_mode,
     )
     price_refresh_token = _get_price_refresh_cache_token(as_of_input, include_unrealized, selected_sheets)
-    base_state = get_cached_pipeline(*pipeline_cache_key)
+    if source_mode == DATA_SOURCE_IBKR:
+        with st.spinner("Building portfolio pipeline..."):
+            base_state = get_cached_ibkr_pipeline_resource(*pipeline_cache_key)
+    else:
+        base_state = get_cached_pipeline(*pipeline_cache_key)
     priced_state = apply_live_price_overlay(base_state, price_refresh_token)
     state = apply_unrealized_adjusted_display(priced_state, include_unrealized)
     return state, build_dashboard_view_model(state, include_unrealized)
