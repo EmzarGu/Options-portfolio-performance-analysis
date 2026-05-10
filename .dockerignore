@@ -2,6 +2,7 @@
 .gitignore
 .gcloudignore
 .venv
+.devcontainer/
 __pycache__/
 .pytest_cache/
 *.py[cod]
@@ -10,6 +11,16 @@ __pycache__/
 .streamlit/secrets.toml
 .streamlit_user_prefs.json
 
+tmp/
+tests/
+docs/
+scripts/
+infra/
+
+agent.md
+Makefile
+notebook_extracted.py
+Options_ROI_Dashboard_Monthly_Final.ipynb
 latest_download.xlsx
 Options_output_Nov30.pdf
 tmp.png
