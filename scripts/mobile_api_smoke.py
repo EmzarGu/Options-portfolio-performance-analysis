@@ -39,6 +39,7 @@ READ_ENDPOINTS = {
         "return_metric",
         "current_month",
         "months",
+        "future_months",
     },
     "/v1/mobile/performance/yearly": {"request", "data_freshness", "years"},
     "/v1/mobile/issues": {
@@ -120,7 +121,7 @@ def summarize(endpoint: str, payload: dict[str, Any]) -> str:
     if endpoint.endswith("/tickers"):
         return f"items={len(payload.get('items', []))}"
     if endpoint.endswith("/monthly"):
-        return f"months={len(payload.get('months', []))}"
+        return f"months={len(payload.get('months', []))}, future_months={len(payload.get('future_months', []))}"
     if endpoint.endswith("/yearly"):
         return f"years={len(payload.get('years', []))}"
     if endpoint.endswith("/issues"):
