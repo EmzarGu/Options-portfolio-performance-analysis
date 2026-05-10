@@ -218,8 +218,52 @@ def wheel_stock_movements_from_rows(option_eae_rows: Iterable[IbkrRawRow]) -> li
     return sorted(movements, key=lambda row: (row.date, row.ticker, row.side, row.trade_id or ""))
 
 
-def manual_stock_sell_movements_from_rows(trade_rows: Iterable[IbkrRawRow]) -> list[WheelStockMovement]:
+def _stock_movement_trade_id_key(*, date: pd.Timestamp, ticker: str, side: str, trade_id: Optional[str]) -> Optional[tuple]:
+    if not trade_id:
+        return None
+    return ("trade_id", date, ticker, side, trade_id)
+
+
+def _stock_movement_terms_key(*, date: pd.Timestamp, ticker: str, side: str, shares: float, price: float) -> tuple:
+    return ("terms", date, ticker, side, round(shares, 6), round(price, 6))
+
+
+def _assignment_sell_duplicate_keys(movements: Iterable[WheelStockMovement]) -> tuple[set[tuple], set[tuple]]:
+    trade_id_keys: set[tuple] = set()
+    terms_keys: set[tuple] = set()
+    for movement in movements:
+        if movement.side != "SELL":
+            continue
+        trade_id_key = _stock_movement_trade_id_key(
+            date=movement.date,
+            ticker=movement.ticker,
+            side=movement.side,
+            trade_id=movement.trade_id,
+        )
+        if trade_id_key is not None:
+            trade_id_keys.add(trade_id_key)
+        else:
+            terms_keys.add(
+                _stock_movement_terms_key(
+                    date=movement.date,
+                    ticker=movement.ticker,
+                    side=movement.side,
+                    shares=movement.shares,
+                    price=movement.price,
+                )
+            )
+    return trade_id_keys, terms_keys
+
+
+def manual_stock_sell_movements_from_rows(
+    trade_rows: Iterable[IbkrRawRow],
+    *,
+    exclude_assignment_sell_trade_ids: Optional[set[tuple]] = None,
+    exclude_assignment_sell_terms: Optional[set[tuple]] = None,
+) -> list[WheelStockMovement]:
     movements: list[WheelStockMovement] = []
+    exclude_assignment_sell_trade_ids = exclude_assignment_sell_trade_ids or set()
+    exclude_assignment_sell_terms = exclude_assignment_sell_terms or set()
     for row in trade_rows:
         attrs = row.attrs
         if attrs.get("assetCategory") != "STK":
@@ -236,16 +280,33 @@ def manual_stock_sell_movements_from_rows(trade_rows: Iterable[IbkrRawRow]) -> l
         if abs(proceeds) <= 1e-9:
             proceeds = _float_or_zero(attrs.get("proceeds"))
         price = abs(proceeds) / shares if shares else 0.0
+        ticker = (_blank_to_none(attrs.get("symbol")) or "").upper()
+        trade_id = _blank_to_none(attrs.get("tradeID"))
+        trade_id_key = _stock_movement_trade_id_key(
+            date=pd.to_datetime(date).normalize(),
+            ticker=ticker,
+            side="SELL",
+            trade_id=trade_id,
+        )
+        terms_key = _stock_movement_terms_key(
+            date=pd.to_datetime(date).normalize(),
+            ticker=ticker,
+            side="SELL",
+            shares=shares,
+            price=price,
+        )
+        if trade_id_key in exclude_assignment_sell_trade_ids or terms_key in exclude_assignment_sell_terms:
+            continue
         movements.append(
             WheelStockMovement(
                 date=pd.to_datetime(date).normalize(),
-                ticker=(_blank_to_none(attrs.get("symbol")) or "").upper(),
+                ticker=ticker,
                 side="SELL",
                 shares=shares,
                 price=price,
                 proceeds=proceeds,
                 source="Manual Stock Sell",
-                trade_id=_blank_to_none(attrs.get("tradeID")),
+                trade_id=trade_id,
             )
         )
     return sorted(movements, key=lambda row: (row.date, row.ticker, row.trade_id or ""))
@@ -313,10 +374,16 @@ def _consume_assignment_stock_link(
 
 
 def wheel_stock_movements_from_report(report: IbkrFlexReport) -> list[WheelStockMovement]:
+    assignment_movements = wheel_stock_movements_from_rows(report.rows("OptionEAE"))
+    duplicate_trade_id_keys, duplicate_terms_keys = _assignment_sell_duplicate_keys(assignment_movements)
     return sorted(
         [
-            *wheel_stock_movements_from_rows(report.rows("OptionEAE")),
-            *manual_stock_sell_movements_from_rows(report.rows("Trade")),
+            *assignment_movements,
+            *manual_stock_sell_movements_from_rows(
+                report.rows("Trade"),
+                exclude_assignment_sell_trade_ids=duplicate_trade_id_keys,
+                exclude_assignment_sell_terms=duplicate_terms_keys,
+            ),
         ],
         key=lambda row: (row.date, row.ticker, 0 if row.side == "BUY" else 1, row.trade_id or ""),
     )

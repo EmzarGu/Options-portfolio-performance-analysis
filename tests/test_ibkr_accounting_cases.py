@@ -639,6 +639,142 @@ def test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_rem
     assert not [issue for issue in state.issues if "EMN call" in issue or "assigned-call sold shares of EMN" in issue]
 
 
+def test_ibkr_assignment_book_trade_stock_sell_is_not_double_counted():
+    put_open = _trade(
+        symbol="ASAN  221216P00015000",
+        underlyingSymbol="ASAN",
+        description="ASAN 16DEC22 15 P",
+        conid="ASAN-PUT",
+        tradeID="ASAN-PUT-OPEN",
+        transactionID="ASAN-XP1",
+        ibExecID="ASAN-EP1",
+        tradeDate="20221201",
+        dateTime="20221201;154500",
+        expiry="20221216",
+        strike="15",
+        putCall="P",
+        quantity="-10",
+        tradePrice="1.00",
+        proceeds="1000",
+        ibCommission="0",
+        netCash="1000",
+    )
+    put_assignment = _option_eae(
+        symbol="ASAN  221216P00015000",
+        underlyingSymbol="ASAN",
+        description="ASAN 16DEC22 15 P",
+        conid="ASAN-PUT",
+        tradeID="ASAN-PUT-ASSIGN",
+        date="20221216",
+        expiry="20221216",
+        strike="15",
+        putCall="P",
+        quantity="-10",
+        multiplier="100",
+        realizedPnl="1000",
+    )
+    assigned_buy = _stock_eae(
+        symbol="ASAN",
+        tradeID="ASAN-STOCK-BUY",
+        date="20221216",
+        transactionType="Buy",
+        quantity="1000",
+        tradePrice="15",
+        proceeds="-15000",
+    )
+    assigned_call = _call_assignment_eae(
+        symbol="ASAN  230217C00015000",
+        underlyingSymbol="ASAN",
+        description="ASAN 17FEB23 15 C",
+        conid="ASAN-CALL-1",
+        tradeID="ASAN-CALL-ASSIGN",
+        date="20230217",
+        expiry="20230217",
+        strike="15",
+        putCall="C",
+        quantity="4",
+        multiplier="100",
+        realizedPnl="0",
+    )
+    assigned_sell = _stock_eae(
+        symbol="ASAN",
+        tradeID="ASAN-STOCK-SELL",
+        date="20230217",
+        transactionType="Sell",
+        quantity="-400",
+        tradePrice="15",
+        proceeds="6000",
+    )
+    duplicate_book_trade_sell = _trade(
+        assetCategory="STK",
+        symbol="ASAN",
+        underlyingSymbol="",
+        description="ASAN",
+        conid="ASAN-STOCK",
+        tradeID="ASAN-STOCK-SELL",
+        transactionID="ASAN-STOCK-TXN",
+        ibExecID="",
+        tradeDate="20230217",
+        dateTime="20230217;162000",
+        expiry="",
+        strike="",
+        putCall="",
+        buySell="SELL",
+        openCloseIndicator="C",
+        transactionType="BookTrade",
+        quantity="-400",
+        multiplier="1",
+        tradePrice="15",
+        proceeds="6000",
+        ibCommission="0",
+        netCash="6000",
+        notes="A",
+    )
+    later_call_open = _trade(
+        symbol="ASAN  230317C00016000",
+        underlyingSymbol="ASAN",
+        description="ASAN 17MAR23 16 C",
+        conid="ASAN-CALL-2",
+        tradeID="ASAN-CALL-OPEN-2",
+        transactionID="ASAN-XC2",
+        ibExecID="ASAN-EC2",
+        tradeDate="20230221",
+        dateTime="20230221;154500",
+        expiry="20230317",
+        strike="16",
+        putCall="C",
+        quantity="-6",
+        tradePrice="0.50",
+        proceeds="300",
+        ibCommission="0",
+        netCash="300",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report(
+            {
+                "Trade": [put_open, duplicate_book_trade_sell, later_call_open],
+                "OptionEAE": [put_assignment, assigned_buy, assigned_call, assigned_sell],
+            }
+        ),
+        as_of=pd.Timestamp("2023-03-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(txn.ticker, txn.side, txn.shares, txn.price, txn.source) for txn in state.stock_txns] == [
+        ("ASAN", "BUY", 1000, 15.0, "Assigned Put"),
+        ("ASAN", "SELL", 400, 15.0, "Assigned Call"),
+    ]
+    assert [(lot.ticker, lot.shares_remaining, lot.cost_per_share) for lot in state.ending_inventory] == [
+        ("ASAN", 600, 15.0)
+    ]
+    assert [(row["ticker"], row["type"], row["strike"], row["qty"]) for _, row in state.open_options.iterrows()] == [
+        ("ASAN", "Call", 16.0, 6)
+    ]
+    assert not [issue for issue in state.issues if "ASAN call" in issue or "assigned-call sold shares of ASAN" in issue]
+
+
 def test_ibkr_manual_stock_sell_consumes_assignment_inventory_only():
     put_open = _trade(
         symbol="AAPL  260117P00100000",
