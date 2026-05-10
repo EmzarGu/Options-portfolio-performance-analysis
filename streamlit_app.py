@@ -483,7 +483,16 @@ def data_source_mode() -> str:
     value = os.getenv("OPTIONS_DATA_SOURCE", DATA_SOURCE_GOOGLE_SHEETS).strip().lower()
     if value in {DATA_SOURCE_IBKR, "ibkr_flex"}:
         return DATA_SOURCE_IBKR
+    if value in {DATA_SOURCE_GOOGLE_SHEETS, "sheets", "sheet", "google"}:
+        return DATA_SOURCE_GOOGLE_SHEETS
     return DATA_SOURCE_GOOGLE_SHEETS
+
+
+def streamlit_app_source_mode() -> str:
+    sync_streamlit_secrets_to_env()
+    if not os.getenv("OPTIONS_DATA_SOURCE"):
+        return DATA_SOURCE_IBKR
+    return data_source_mode()
 
 
 def is_ibkr_source_mode() -> bool:
@@ -1562,7 +1571,7 @@ def _render_methodology_tab() -> None:
 
 def main():
     st.title("Options ROI Dashboard")
-    source_mode = data_source_mode()
+    source_mode = streamlit_app_source_mode()
     st.caption(f"Live from {source_label_for_mode(source_mode)} with Streamlit")
 
     col_side, col_main = st.columns([1, 4])
@@ -1608,7 +1617,13 @@ def main():
         save_prefs(new_prefs)
 
     reload_token = _get_pipeline_reload_token()
-    pipeline_cache_key = build_pipeline_cache_key(as_of_input, include_unrealized, selected_sheets, reload_token)
+    pipeline_cache_key = build_pipeline_cache_key(
+        as_of_input,
+        include_unrealized,
+        selected_sheets,
+        reload_token,
+        source_mode=source_mode,
+    )
     price_refresh_token = _get_price_refresh_cache_token(as_of_input, include_unrealized, selected_sheets)
     try:
         base_state = get_cached_pipeline(*pipeline_cache_key)

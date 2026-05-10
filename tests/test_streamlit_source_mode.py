@@ -23,10 +23,23 @@ def test_streamlit_ibkr_source_mode_reads_streamlit_secret(monkeypatch):
         streamlit_app.os.environ.pop("OPTIONS_DATA_SOURCE", None)
 
 
-def test_streamlit_sheet_source_mode_stays_default(monkeypatch):
+def test_streamlit_sheet_source_mode_stays_backend_default(monkeypatch):
     monkeypatch.delenv("OPTIONS_DATA_SOURCE", raising=False)
 
     assert streamlit_app.data_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
+
+
+def test_streamlit_app_source_mode_defaults_to_ibkr(monkeypatch):
+    monkeypatch.delenv("OPTIONS_DATA_SOURCE", raising=False)
+
+    assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
+
+
+def test_streamlit_sheet_source_mode_remains_explicit_rollback(monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "google_sheets")
+
+    assert streamlit_app.data_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
+    assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
     assert streamlit_app.normalize_selected_sheets_for_mode(
         ["Options 2024", "Options 2026"],
         ["Options 2024", "Options 2025", "Options 2026"],
