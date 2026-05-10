@@ -590,6 +590,7 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "total_count": 2,
         "price_issue_count": 1,
         "parse_issue_count": 1,
+        "audit_issue_count": 0,
         "top_messages": ["MISS: no price returned", "Mixed-leg option row needs review"],
     }
 
@@ -1129,7 +1130,7 @@ def test_mobile_issue_rows_classify_raw_backend_messages():
         {
             "id": "dividend-1",
             "category": "dividend",
-            "severity": "info",
+            "severity": "warning",
             "message": "DIVMISS: dividend history returned no usable data",
             "tickers": ["DIVMISS"],
             "action": "refresh_data",
@@ -1143,6 +1144,38 @@ def test_mobile_issue_rows_classify_raw_backend_messages():
             "action": "refresh_data",
         },
     ]
+
+
+def test_mobile_issue_rows_classify_expected_ibkr_wheel_exclusions_as_info():
+    state = SimpleNamespace(
+        issues=[
+            "Excluded ABC call execution on 2026-01-20 because no prior put-assignment stock inventory was held.",
+            "Excluded ABC call roll replacement on 2026-01-20 because the closed call lot was non-wheel.",
+            "Ignored 100 assigned-call sold shares of XYZ on 2026-02-20 because no assignment-derived stock inventory was available.",
+            "Prorated ABC call execution on 2026-01-20 to 100 wheel-held shares out of 200 required shares.",
+        ],
+        price_errors=[],
+        price_summary={},
+        historical_price_errors=[],
+        historical_price_summary={},
+        dividend_errors=[],
+        dividend_summary={},
+        capital_history_coverage_issues=[],
+    )
+
+    rows = build_mobile_issue_rows(state)
+
+    assert [row["category"] for row in rows] == ["wheel_audit", "wheel_audit", "wheel_audit", "wheel_audit"]
+    assert [row["severity"] for row in rows] == ["info", "info", "info", "info"]
+    assert [row["action"] for row in rows] == [None, None, None, None]
+    assert build_mobile_issues(state, {"selected_sheets": ["IBKR Flex"], "include_unrealized": True})["summary"] == {
+        "severity": "ok",
+        "total_count": 0,
+        "info_count": 4,
+        "unrealized_blocked": False,
+        "capital_history_incomplete": False,
+        "dividend_coverage_complete": True,
+    }
 
 
 def test_mobile_issues_composes_contract_payload():
@@ -1165,6 +1198,7 @@ def test_mobile_issues_composes_contract_payload():
     assert issues["summary"] == {
         "severity": "warning",
         "total_count": 6,
+        "info_count": 0,
         "unrealized_blocked": False,
         "capital_history_incomplete": True,
         "dividend_coverage_complete": False,

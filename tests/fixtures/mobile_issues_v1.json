@@ -35,6 +35,7 @@
   "summary": {
     "severity": "warning",
     "total_count": 6,
+    "info_count": 0,
     "unrealized_blocked": false,
     "capital_history_incomplete": true,
     "dividend_coverage_complete": false
@@ -81,7 +82,7 @@
     {
       "id": "dividend-1",
       "category": "dividend",
-      "severity": "info",
+      "severity": "warning",
       "message": "DIVMISS: dividend history returned no usable data",
       "tickers": [
         "DIVMISS"

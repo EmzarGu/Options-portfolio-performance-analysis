@@ -50,6 +50,7 @@ from portfolio_backend.charts import (
     select_chart_return_window as _select_chart_return_window,
 )
 from portfolio_backend.constants import CONTRACT_MULTIPLIER
+from portfolio_backend.issue_classification import split_actionable_and_audit_issues
 from portfolio_backend.models import (
     ChainOutcome,
     HoldSeg,
@@ -566,19 +567,22 @@ def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) 
 
 def render_issue_status_banner(issues: List[str], price_errors: List[str], price_summary: Dict[str, int]) -> None:
     severity = "success"
+    actionable_issues, audit_issues = split_actionable_and_audit_issues(issues)
     coverage_problem = price_summary and (
         price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
     )
-    if issues or price_errors:
+    if actionable_issues or price_errors:
         severity = "error"
     elif coverage_problem:
         severity = "warning"
 
-    total_issues = len(issues) + len(price_errors) + (1 if coverage_problem else 0)
+    total_issues = len(actionable_issues) + len(price_errors) + (1 if coverage_problem else 0)
     if total_issues == 0:
-        msg = "0 issues detected (Logs tab)"
+        msg = "0 actionable issues detected (Logs tab)"
+        if audit_issues:
+            msg += f" · {len(audit_issues)} audit note(s)"
     else:
-        msg = f"{total_issues} issue(s) detected — check Logs tab"
+        msg = f"{total_issues} actionable issue(s) detected — check Logs tab"
 
     color = {"success": "#22c55e", "warning": "#f59e0b", "error": "#ef4444"}[severity]
     st.markdown(f"<div style='font-weight:600; color:{color}; margin: 4px 0;'>{msg}</div>", unsafe_allow_html=True)
@@ -752,7 +756,7 @@ def _render_config_tab(available_sheets: List[str], default_sheets: List[str]) -
             _increment_pipeline_reload_token()
             _clear_data_caches()
             _rerun_app()
-        st.caption("Clears cached sheet and pipeline data. Press after workbook edits to fetch fresh data and rebuild.")
+        st.caption("Clears cached data-source and pipeline data. Press after source edits/imports to fetch fresh data and rebuild.")
     with col_status:
         _render_data_status(SHEET_ID)
     selected_sheets = st.multiselect(
@@ -1311,20 +1315,21 @@ def _render_logs_tab(
     dividend_errors: List[str],
     dividend_warning_note: Optional[str],
 ) -> None:
-    st.markdown("##### Data / connectivity issues")
+    st.markdown("##### Data source / connectivity issues")
     st.write(f"Build version: {APP_BUILD_VERSION}")
     st.caption(
-        "Secrets key used: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
-        "private sheets need a service account. Offline fallback: set env "
+        "Secrets key used for Google Sheets mode: `GOOGLE_SERVICE_ACCOUNT_JSON`. Public sheets load without credentials; "
+        "private sheets need a service account. Offline fallback for Sheets mode: set env "
         "`LOCAL_EXCEL_PATH=/full/path/to/IBKR_Portfolio_sheets.xlsx` when running locally."
     )
+    actionable_issues, audit_issues = split_actionable_and_audit_issues(issues)
     coverage_problem = price_summary and (
         price_summary.get("stocks_fetched", 0) < price_summary.get("stocks_requested", 0)
     )
-    if issues or price_errors or coverage_problem or (not dividend_coverage_complete):
-        if issues:
-            st.warning("Issues:")
-            st.dataframe(pd.DataFrame({"message": issues}), width="stretch")
+    if actionable_issues or price_errors or coverage_problem or (not dividend_coverage_complete):
+        if actionable_issues:
+            st.warning("Actionable issues:")
+            st.dataframe(pd.DataFrame({"message": actionable_issues}), width="stretch")
         if price_summary:
             st.write("Price fetch coverage:")
             st.dataframe(
@@ -1396,7 +1401,10 @@ def _render_logs_tab(
         if dividend_warning_note:
             st.info(dividend_warning_note)
     else:
-        st.success("No issues detected.")
+        st.success("No actionable issues detected.")
+    if audit_issues:
+        st.info("Wheel audit notes: expected IBKR exclusions that are not counted as data-health warnings.")
+        st.dataframe(pd.DataFrame({"message": audit_issues}), width="stretch")
     if state.get("stock_prices"):
         st.write("Stock prices used:")
         st.dataframe(
@@ -1411,7 +1419,7 @@ def _render_logs_tab(
         adv_df.columns = ["ticker", "unrealized_pnl"]
         st.dataframe(_format_df(adv_df, currency_cols=["unrealized_pnl"]), width="stretch")
     if state.get("sheet_counts") is not None:
-        st.markdown("##### Loaded rows by sheet")
+        st.markdown("##### Loaded rows by data source")
         st.dataframe(state["sheet_counts"], width="stretch")
     st.markdown("---")
     st.markdown("##### Debug / raw data")
@@ -1425,7 +1433,7 @@ def _render_methodology_tab() -> None:
     st.markdown(
         """
 **Scope & sources**
-- Sheets included: whichever `Options YYYY` tabs you pick in Config. Rows outside those sheets are ignored.
+- Data source: Google Sheets mode uses whichever `Options YYYY` tabs you pick in Config; IBKR mode uses the imported Flex data source. Rows outside the active source are ignored.
 - Actions processed: `Sell/Buy` (plus `Bought` → `Buy`). Blank rows are skipped.
 
 **Capital & P&L**
@@ -1446,7 +1454,7 @@ def _render_methodology_tab() -> None:
 
 **Limitations / edge cases**
 - No true option MTM; no external deposit/withdrawal modeling.
-- Date parsing depends on sheet date fields being parseable; bad rows go to Issues.
+- Date parsing depends on source date fields being parseable; bad rows go to Issues.
 - Mixed legs (“Put/Call”, “Call/Put”) infer the short leg via type/comment heuristics.
             """
     )
@@ -1454,7 +1462,7 @@ def _render_methodology_tab() -> None:
 
 def main():
     st.title("Options ROI Dashboard")
-    st.caption("Live from Google Sheets with Streamlit")
+    st.caption("Live from configured data source with Streamlit")
 
     col_side, col_main = st.columns([1, 4])
     prefs = load_prefs()

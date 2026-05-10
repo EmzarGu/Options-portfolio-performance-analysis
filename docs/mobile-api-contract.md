@@ -807,6 +807,7 @@ Response:
   "summary": {
     "severity": "warning",
     "total_count": 4,
+    "info_count": 0,
     "unrealized_blocked": false,
     "capital_history_incomplete": false,
     "dividend_coverage_complete": true
@@ -827,6 +828,14 @@ Response:
       "message": "Mixed-leg option row for TSLA on 2026-04-12 has ambiguous short leg.",
       "tickers": ["TSLA"],
       "action": "fix_workbook_row"
+    },
+    {
+      "id": "wheel-audit-1",
+      "category": "wheel_audit",
+      "severity": "info",
+      "message": "Excluded ABC call execution on 2026-01-20 because no prior put-assignment stock inventory was held.",
+      "tickers": ["ABC"],
+      "action": null
     }
   ],
   "coverage": {
@@ -869,6 +878,7 @@ Backend source today:
 Recommended backend shape change:
 
 - Convert plain issue strings into typed issue DTOs at the backend boundary. Keep original message for display, but add category/severity/action/tickers.
+- Expected IBKR wheel exclusions use `category: "wheel_audit"` and `severity: "info"`. They are included for auditability but are not counted in `summary.total_count` and do not make the source unhealthy.
 
 ## Endpoint 8: Configuration
 

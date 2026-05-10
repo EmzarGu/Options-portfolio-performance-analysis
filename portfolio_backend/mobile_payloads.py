@@ -8,6 +8,7 @@ from typing import Any, Dict, Hashable, Iterable, List, Optional
 import pandas as pd
 
 from portfolio_backend.constants import CONTRACT_MULTIPLIER
+from portfolio_backend.issue_classification import classify_backend_issue
 from portfolio_backend.serializers import json_safe
 from portfolio_backend.tables import build_assigned_holdings_frame, build_open_option_shorts_frame
 
@@ -615,7 +616,9 @@ def build_mobile_yearly_performance(
 def build_issue_summary(state) -> Dict[str, Any]:
     issues = list(getattr(state, "issues", []) or [])
     price_errors = list(getattr(state, "price_errors", []) or [])
-    total_count = len(issues) + len(price_errors)
+    actionable_issues = [message for message in issues if classify_backend_issue(message).actionable]
+    audit_issue_count = len(issues) - len(actionable_issues)
+    total_count = len(actionable_issues) + len(price_errors)
     severity = "ok" if total_count == 0 else "warning"
     if bool(getattr(state, "unrealized_blocked", False)):
         severity = "warning"
@@ -623,8 +626,9 @@ def build_issue_summary(state) -> Dict[str, Any]:
         "severity": severity,
         "total_count": total_count,
         "price_issue_count": len(price_errors),
-        "parse_issue_count": len(issues),
-        "top_messages": json_safe([*price_errors, *issues][:3]),
+        "parse_issue_count": len(actionable_issues),
+        "audit_issue_count": audit_issue_count,
+        "top_messages": json_safe([*price_errors, *actionable_issues][:3]),
     }
 
 
@@ -1135,13 +1139,15 @@ def build_mobile_issue_rows(state) -> List[Dict[str, Any]]:
         )
 
     for idx, message in enumerate(getattr(state, "issues", []) or [], start=1):
+        classification = classify_backend_issue(message)
+        issue_id_prefix = "wheel-audit" if classification.category == "wheel_audit" else classification.category.replace("_", "-")
         rows.append(
             _issue_row(
-                f"parse-{idx}",
-                category="parse",
-                severity="warning",
+                f"{issue_id_prefix}-{idx}",
+                category=classification.category,
+                severity=classification.severity,
                 message=message,
-                action="fix_workbook_row",
+                action=classification.action,
             )
         )
 
@@ -1161,7 +1167,7 @@ def build_mobile_issue_rows(state) -> List[Dict[str, Any]]:
             _issue_row(
                 f"dividend-{idx}",
                 category="dividend",
-                severity="info",
+                severity="warning",
                 message=message,
                 action="refresh_data",
             )
@@ -1193,13 +1199,16 @@ def build_mobile_issue_rows(state) -> List[Dict[str, Any]]:
 def build_mobile_issue_summary(state, issue_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     if any(row["severity"] == "error" for row in issue_rows):
         severity = "error"
-    elif issue_rows or bool(getattr(state, "unrealized_blocked", False)):
+    elif any(row["severity"] == "warning" for row in issue_rows) or bool(getattr(state, "unrealized_blocked", False)):
         severity = "warning"
     else:
         severity = "ok"
+    actionable_count = sum(1 for row in issue_rows if row["severity"] in {"warning", "error"})
+    info_count = sum(1 for row in issue_rows if row["severity"] == "info")
     return {
         "severity": severity,
-        "total_count": len(issue_rows),
+        "total_count": actionable_count,
+        "info_count": info_count,
         "unrealized_blocked": bool(getattr(state, "unrealized_blocked", False)),
         "capital_history_incomplete": bool(getattr(state, "capital_history_incomplete", False)),
         "dividend_coverage_complete": bool(getattr(state, "dividend_coverage_complete", True)),
