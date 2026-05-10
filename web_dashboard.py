@@ -613,10 +613,13 @@ def refresh(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    section = request.query_params.get("section") or "dashboard"
+    if section not in {"dashboard", "performance", "monthly", "tickers", "positions", "diagnostics", "methodology"}:
+        section = "dashboard"
     context, cache_bust = _get_context(as_of=None, include_unrealized=include_unrealized, force_rebuild=True)
     build_mobile_refresh_payload(context, cache_bust=cache_bust)
     return RedirectResponse(
-        url=f"/?include_unrealized={1 if include_unrealized else 0}&refreshed={cache_bust}",
+        url=f"/?include_unrealized={1 if include_unrealized else 0}&section={section}&refreshed={cache_bust}",
         status_code=303,
     )
 
@@ -899,12 +902,18 @@ function rangePicker(){
 function withQueryParam(key, value){
   const url = new URL(window.location.href);
   url.searchParams.set(key, value);
+  url.searchParams.set("section", appState.active);
   url.searchParams.delete("refreshed");
   return `${url.pathname}${url.search}`;
 }
 function renderBasisControl(){
+  const target = $("basisControl");
+  if (!["dashboard","performance"].includes(appState.active)) {
+    target.innerHTML = "";
+    return;
+  }
   const include = data.dashboard.request?.include_unrealized !== false;
-  $("basisControl").innerHTML = `<div class="segmented"><a class="${include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","1"))}">With unrealized</a><a class="${!include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","0"))}">Realized only</a></div>`;
+  target.innerHTML = `<div class="segmented"><a class="${include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","1"))}">With unrealized</a><a class="${!include ? "active" : ""}" href="${safe(withQueryParam("include_unrealized","0"))}">Realized only</a></div>`;
 }
 function riskTone(row){
   const band = String(row.moneyness_band || "").toLowerCase();
@@ -1360,7 +1369,7 @@ function bindControls(){
   }
   const refreshForm = $("refreshForm");
   if (refreshForm) {
-    refreshForm.action = `/refresh?include_unrealized=${data.dashboard.request?.include_unrealized === false ? "0" : "1"}`;
+    refreshForm.action = `/refresh?include_unrealized=${data.dashboard.request?.include_unrealized === false ? "0" : "1"}&section=${encodeURIComponent(appState.active)}`;
   }
   document.querySelectorAll(".rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
   document.querySelectorAll('[data-open-control="risk"] button').forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
@@ -1403,7 +1412,19 @@ function renderSection(id, fn){
 }
 function initNav(){
   $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}">${safe(label)}</button>`).join("");
-  [...$("nav").children].forEach(btn => btn.addEventListener("click", () => { appState.active = btn.dataset.section; render(); window.scrollTo({top:0,behavior:"instant"}); }));
+  [...$("nav").children].forEach(btn => btn.addEventListener("click", () => {
+    appState.active = btn.dataset.section;
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", appState.active);
+    url.searchParams.delete("refreshed");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    render();
+    window.scrollTo({top:0,behavior:"instant"});
+  }));
+}
+const initialSection = new URLSearchParams(window.location.search).get("section");
+if (initialSection && sections.some(([id]) => id === initialSection)) {
+  appState.active = initialSection;
 }
 initNav();
 render();
