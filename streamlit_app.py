@@ -132,6 +132,16 @@ SHEETS = ["Options 2024", "Options 2025", "Options 2026"]
 DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 IBKR_SOURCE_LABEL = "IBKR Flex"
+STREAMLIT_ENV_SECRET_KEYS = (
+    "OPTIONS_DATA_SOURCE",
+    "IBKR_REPORT_SOURCE",
+    "IBKR_FLEX_QUERY_ID",
+    "FIRESTORE_PROJECT_ID",
+    "FIRESTORE_DATABASE",
+    "PRICE_HISTORY_STORE",
+    "DIVIDEND_HISTORY_STORE",
+    "AUDIT_STORE",
+)
 # Keep the original on-disk prefs path for local runs; add a home-dir fallback for rebuilds.
 PREFS_PATH = Path(".streamlit_user_prefs.json")
 PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
@@ -453,7 +463,23 @@ def resolve_build_version() -> str:
 APP_BUILD_VERSION = resolve_build_version()
 
 
+def sync_streamlit_secrets_to_env() -> None:
+    try:
+        secrets = st.secrets
+        for key in STREAMLIT_ENV_SECRET_KEYS:
+            if os.getenv(key):
+                continue
+            if key not in secrets:
+                continue
+            value = secrets.get(key)
+            if value is not None:
+                os.environ[key] = str(value)
+    except Exception:
+        pass
+
+
 def data_source_mode() -> str:
+    sync_streamlit_secrets_to_env()
     value = os.getenv("OPTIONS_DATA_SOURCE", DATA_SOURCE_GOOGLE_SHEETS).strip().lower()
     if value in {DATA_SOURCE_IBKR, "ibkr_flex"}:
         return DATA_SOURCE_IBKR
@@ -645,6 +671,7 @@ def build_base_pipeline(
     cache_bust: int = 1,
     source_mode: Optional[str] = None,
 ) -> PipelineState:
+    sync_streamlit_secrets_to_env()
     source_mode = source_mode or data_source_mode()
     if source_mode == DATA_SOURCE_IBKR:
         return _backend_build_ibkr_base_pipeline(

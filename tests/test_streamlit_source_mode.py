@@ -12,6 +12,17 @@ def test_streamlit_ibkr_source_mode_normalizes_selected_sheets(monkeypatch):
     ) == [streamlit_app.IBKR_SOURCE_LABEL]
 
 
+def test_streamlit_ibkr_source_mode_reads_streamlit_secret(monkeypatch):
+    monkeypatch.delenv("OPTIONS_DATA_SOURCE", raising=False)
+    monkeypatch.setattr(streamlit_app.st, "secrets", {"OPTIONS_DATA_SOURCE": "ibkr_flex"})
+
+    try:
+        assert streamlit_app.data_source_mode() == streamlit_app.DATA_SOURCE_IBKR
+        assert streamlit_app.os.getenv("OPTIONS_DATA_SOURCE") == "ibkr_flex"
+    finally:
+        streamlit_app.os.environ.pop("OPTIONS_DATA_SOURCE", None)
+
+
 def test_streamlit_sheet_source_mode_stays_default(monkeypatch):
     monkeypatch.delenv("OPTIONS_DATA_SOURCE", raising=False)
 
