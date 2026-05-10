@@ -140,12 +140,17 @@ proved the job runtime path, IAM, GCS writes, Firestore writes, and dedupe.
 Create or update command:
 
 ```bash
+IBKR_IMPORT_INCEPTION_DATE=2022-11-01 \
 infra/cloud-run-jobs/create_ibkr_flex_import_job.sh
 ```
+
+`IBKR_IMPORT_INCEPTION_DATE` is required by the helper script so the historical
+baseline is explicit deployment configuration, not a hidden code default.
 
 To pin a specific image:
 
 ```bash
+IBKR_IMPORT_INCEPTION_DATE=2022-11-01 \
 IMAGE_URI=europe-west6-docker.pkg.dev/options-performance-dashboard/cloud-run-source-deploy/options-portfolio-performance-analysis/options-roi-mobile-api:<commit-sha> \
 infra/cloud-run-jobs/create_ibkr_flex_import_job.sh
 ```

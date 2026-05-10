@@ -537,7 +537,7 @@ google-cloud-storage
      `2026-05-08`.
    - Re-importing the same range inserted no duplicate rows and only updated
      the existing Firestore documents.
-   - Scheduled runs should use `IBKR_IMPORT_INCEPTION_DATE=2022-11-01`,
+   - Scheduled runs must explicitly set `IBKR_IMPORT_INCEPTION_DATE=2022-11-01`,
      `IBKR_IMPORT_RECENT_OVERLAP_DAYS=14`, and
      `IBKR_IMPORT_TO_OFFSET_DAYS=1`. The job inspects Firestore coverage,
      imports missing chunks from inception, re-imports the recent overlap, and

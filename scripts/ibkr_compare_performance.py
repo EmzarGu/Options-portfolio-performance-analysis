@@ -64,8 +64,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Compare IBKR-native yearly performance to current sheet pipeline.")
     parser.add_argument("xml_path", nargs="?", default=None)
     parser.add_argument("--xml-dir", default=str(REPO_ROOT / "tmp" / "ibkr_backfill" / "query-1503002"))
-    parser.add_argument("--since", default="2024-01-01")
-    parser.add_argument("--as-of", default="2026-05-08")
+    parser.add_argument("--since", required=True, help="Start date for the comparison window, as YYYY-MM-DD.")
+    parser.add_argument("--as-of", required=True, help="End date for the comparison window, as YYYY-MM-DD.")
     parser.add_argument(
         "--sheet",
         action="append",

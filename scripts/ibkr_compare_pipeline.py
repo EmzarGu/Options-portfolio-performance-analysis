@@ -106,7 +106,7 @@ def main() -> int:
         "--xml-dir",
         help="Directory of IBKR Flex XML files to combine with section-level dedupe.",
     )
-    parser.add_argument("--as-of", default="2026-05-08")
+    parser.add_argument("--as-of", required=True, help="End date for the comparison window, as YYYY-MM-DD.")
     parser.add_argument(
         "--since",
         default=None,
