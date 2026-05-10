@@ -1152,6 +1152,9 @@ def test_mobile_issue_rows_classify_expected_ibkr_wheel_exclusions_as_info():
             "Excluded ABC call execution on 2026-01-20 because no prior put-assignment stock inventory was held.",
             "Excluded ABC call roll replacement on 2026-01-20 because the closed call lot was non-wheel.",
             "Ignored 100 assigned-call sold shares of XYZ on 2026-02-20 because no assignment-derived stock inventory was available.",
+            "Excluded 10 SPY put spread contracts on 2022-12-28 because the short put was opened with a protective long put.",
+            "Excluded 10 SPY put spread close contracts on 2023-01-10 because they close a non-wheel spread put lot.",
+            "Excluded 4 ASAN call spread contracts on 2024-12-02 because the short call was opened with a protective long call.",
         ],
         price_errors=[],
         price_summary={},
@@ -1164,24 +1167,24 @@ def test_mobile_issue_rows_classify_expected_ibkr_wheel_exclusions_as_info():
 
     rows = build_mobile_issue_rows(state)
 
-    assert [row["category"] for row in rows] == ["wheel_audit", "wheel_audit", "wheel_audit"]
-    assert [row["severity"] for row in rows] == ["info", "info", "info"]
-    assert [row["action"] for row in rows] == [None, None, None]
+    assert [row["category"] for row in rows] == ["wheel_audit"] * 6
+    assert [row["severity"] for row in rows] == ["info"] * 6
+    assert [row["action"] for row in rows] == [None] * 6
     assert build_mobile_issues(state, {"selected_sheets": ["IBKR Flex"], "include_unrealized": True})["summary"] == {
         "severity": "ok",
         "total_count": 0,
-        "info_count": 3,
+        "info_count": 6,
         "unrealized_blocked": False,
         "capital_history_incomplete": False,
         "dividend_coverage_complete": True,
     }
     payload = build_mobile_issues(state, {"selected_sheets": ["IBKR Flex"], "include_unrealized": True})
     assert payload["issues"] == []
-    assert len(payload["audit_notes"]) == 3
+    assert len(payload["audit_notes"]) == 6
     assert payload["audit_summary"] == {
-        "total_count": 3,
-        "by_category": {"wheel_audit": 3},
-        "by_severity": {"info": 3},
+        "total_count": 6,
+        "by_category": {"wheel_audit": 6},
+        "by_severity": {"info": 6},
     }
 
 

@@ -18,6 +18,10 @@ _EXPECTED_WHEEL_AUDIT_PATTERNS = (
     "because they close a non-wheel call lot.",
     "because no included wheel call lot was open.",
     "because the closed call lot was non-wheel.",
+    "because the short put was opened with a protective long put.",
+    "because they close a non-wheel spread put lot.",
+    "because the short call was opened with a protective long call.",
+    "because they close a non-wheel spread call lot.",
     "assigned-call sold shares",
     "manually sold shares",
 )
