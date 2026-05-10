@@ -67,7 +67,7 @@ def test_streamlit_ibkr_source_mode_replaces_blank_hosting_defaults(monkeypatch)
 
 def test_streamlit_ibkr_source_mode_normalizes_old_firestore_secret(monkeypatch):
     monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
-    monkeypatch.setenv("IBKR_REPORT_SOURCE", "firestore")
+    monkeypatch.setenv("IBKR_REPORT_SOURCE", '"firestore"')
     monkeypatch.setenv("FIRESTORE_PROJECT_ID", streamlit_app.DEFAULT_FIRESTORE_PROJECT_ID)
     monkeypatch.setenv("IBKR_FLEX_QUERY_ID", streamlit_app.DEFAULT_IBKR_FLEX_QUERY_ID)
 

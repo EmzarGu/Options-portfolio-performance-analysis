@@ -106,7 +106,7 @@ def load_local_flex_report(
 def load_flex_report_from_env(*, env_path: Optional[str | Path] = ".env") -> IbkrFlexReport:
     load_env(env_path)
     default_source = "firestore" if os.environ.get("OPTIONS_DATA_SOURCE", "").strip().lower() in {"ibkr", "ibkr_flex"} else "local_xml"
-    source = os.environ.get("IBKR_REPORT_SOURCE", default_source).strip().lower()
+    source = _clean_env_token(os.environ.get("IBKR_REPORT_SOURCE", default_source)).lower()
     query_id = os.environ.get("IBKR_FLEX_QUERY_ID")
     if source in {"local_json", "json", "firestore_sim"}:
         root_dir = os.environ.get("IBKR_IMPORT_JSON_DIR", "tmp/ibkr_import/firestore_sim")
@@ -116,3 +116,11 @@ def load_flex_report_from_env(*, env_path: Optional[str | Path] = ".env") -> Ibk
     if source in {"firestore_rest", "firestore-rest", "rest"}:
         return FirestoreRestFlexReportRepository().load_report(query_id=query_id)
     return load_local_flex_report(query_id=query_id, env_path=env_path)
+
+
+def _clean_env_token(value: object) -> str:
+    text = str(value or "").strip()
+    for quote in ("'", '"'):
+        if text.startswith(quote) and text.endswith(quote) and len(text) >= 2:
+            text = text[1:-1].strip()
+    return text

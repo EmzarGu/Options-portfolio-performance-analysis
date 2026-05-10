@@ -496,10 +496,20 @@ def _set_env_default_if_blank(key: str, value: str) -> None:
         os.environ[key] = value
 
 
+def _clean_secret_token(value: object) -> str:
+    text = str(value or "").strip()
+    for quote in ("'", '"'):
+        if text.startswith(quote) and text.endswith(quote) and len(text) >= 2:
+            text = text[1:-1].strip()
+    return text
+
+
 def _normalize_streamlit_ibkr_report_source() -> None:
-    source = str(os.getenv("IBKR_REPORT_SOURCE", "")).strip().lower()
+    source = _clean_secret_token(os.getenv("IBKR_REPORT_SOURCE", "")).lower()
     if source in {"", "firestore", "gcp"}:
         os.environ["IBKR_REPORT_SOURCE"] = DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE
+    else:
+        os.environ["IBKR_REPORT_SOURCE"] = source
 
 
 def data_source_mode() -> str:
