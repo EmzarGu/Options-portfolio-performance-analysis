@@ -7,10 +7,11 @@ import hmac
 import json
 import math
 import os
+import secrets
 from datetime import date, datetime
 from time import time
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 import pandas as pd
 from fastapi import FastAPI, Request
@@ -35,6 +36,7 @@ from portfolio_backend.mobile_api_service import (
 app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
 
 COOKIE_NAME = "options_roi_web_session"
+OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 DEFAULT_SESSION_DAYS = 90
 
 
@@ -182,7 +184,7 @@ def _set_session_cookie(response: Response, *, email: Optional[str], auth_method
     )
 
 
-def _verify_google_credential(credential: str) -> Dict[str, Any]:
+def _verify_google_credential(credential: str, *, nonce: Optional[str] = None) -> Dict[str, Any]:
     client_id = _google_client_id()
     if not client_id:
         raise ValueError("Google sign-in is not configured.")
@@ -196,12 +198,40 @@ def _verify_google_credential(credential: str) -> Dict[str, Any]:
     email = str(claims.get("email") or "").strip().lower()
     if not email:
         raise PermissionError("Google account did not include an email address.")
+    if nonce is not None and claims.get("nonce") != nonce:
+        raise PermissionError("Google sign-in session could not be verified.")
     allowed = _allowed_google_emails()
     if not allowed:
         raise PermissionError("No Google account allowlist is configured.")
     if email not in allowed:
         raise PermissionError("This Google account is not allowed for this dashboard.")
     return {**claims, "email": email}
+
+
+def _oauth_state_token(*, state: str, nonce: str) -> str:
+    payload = _b64_json({"state": state, "nonce": nonce, "iat": int(time())})
+    return f"{payload}.{_sign_value(payload)}"
+
+
+def _oauth_state_info(token: str) -> Optional[Dict[str, Any]]:
+    info = _session_info(token)
+    if not info:
+        return None
+    if int(info.get("iat", 0)) < int(time()) - 10 * 60:
+        return None
+    state = info.get("state")
+    nonce = info.get("nonce")
+    if not isinstance(state, str) or not isinstance(nonce, str):
+        return None
+    return {"state": state, "nonce": nonce}
+
+
+def _google_redirect_uri(request: Request) -> str:
+    public_base_url = os.getenv("WEB_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if public_base_url:
+        return f"{public_base_url}/auth/google"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"https://{host}/auth/google"
 
 
 def _json_safe(value: Any) -> Any:
@@ -388,6 +418,7 @@ async def google_login(request: Request) -> Response:
     body = (await request.body()).decode("utf-8")
     fields = parse_qs(body)
     credential = fields.get("credential", [""])[0]
+    state = fields.get("state", [""])[0]
     body_csrf = fields.get("g_csrf_token", [""])[0]
     cookie_csrf = request.cookies.get("g_csrf_token", "")
     if body_csrf or cookie_csrf:
@@ -395,21 +426,71 @@ async def google_login(request: Request) -> Response:
             return HTMLResponse(_login_html("Google sign-in failed CSRF validation."), status_code=400)
     if not credential:
         return HTMLResponse(_login_html("Google sign-in did not return a credential."), status_code=400)
+    nonce = None
+    if state:
+        oauth_info = _oauth_state_info(request.cookies.get(OAUTH_STATE_COOKIE_NAME, ""))
+        if not oauth_info or not hmac.compare_digest(state, oauth_info["state"]):
+            return HTMLResponse(_login_html("Google sign-in failed session validation."), status_code=400)
+        nonce = oauth_info["nonce"]
     try:
-        claims = _verify_google_credential(credential)
+        claims = (
+            _verify_google_credential(credential, nonce=nonce)
+            if nonce is not None
+            else _verify_google_credential(credential)
+        )
     except PermissionError as exc:
         return HTMLResponse(_login_html(str(exc)), status_code=403)
     except Exception:
         return HTMLResponse(_login_html("Google sign-in could not be verified."), status_code=401)
     response = RedirectResponse(url="/", status_code=303)
     _set_session_cookie(response, email=str(claims["email"]), auth_method="google")
+    response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
     return response
+
+
+@app.get("/auth/google/start")
+def google_redirect_start(request: Request) -> Response:
+    client_id = _google_client_id()
+    if not _auth_enabled():
+        return RedirectResponse(url="/", status_code=303)
+    if not client_id:
+        return HTMLResponse(_login_html("Google sign-in is not configured."), status_code=500)
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    params = {
+        "client_id": client_id,
+        "redirect_uri": _google_redirect_uri(request),
+        "response_type": "id_token",
+        "scope": "openid email profile",
+        "state": state,
+        "nonce": nonce,
+        "prompt": "select_account",
+    }
+    response = RedirectResponse(
+        url=f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}",
+        status_code=303,
+    )
+    response.set_cookie(
+        OAUTH_STATE_COOKIE_NAME,
+        _oauth_state_token(state=state, nonce=nonce),
+        max_age=10 * 60,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+    return response
+
+
+@app.get("/auth/google", response_class=HTMLResponse)
+def google_redirect_callback() -> HTMLResponse:
+    return HTMLResponse(GOOGLE_REDIRECT_CALLBACK_HTML)
 
 
 @app.post("/logout")
 def logout() -> Response:
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(COOKIE_NAME)
+    response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
     return response
 
 
@@ -470,7 +551,7 @@ BASE_CSS = """
 a{color:var(--accent)}button,input{font:inherit}.login{max-width:520px;margin:14vh auto;padding:32px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
 .login h1{margin:0 0 8px;font-size:32px}.login p{color:var(--muted)}.login input{width:100%;padding:13px 14px;background:#0c120f;color:var(--text);border:1px solid var(--line);border-radius:8px;margin:12px 0}
 .login button,.primary{background:var(--accent);color:#06201b;border:0;border-radius:8px;padding:12px 16px;font-weight:750;cursor:pointer}.secondary{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:10px 13px;cursor:pointer}
-.signin-block{margin:18px 0}.fallback-login{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.fallback-login summary{cursor:pointer;color:var(--muted);font-weight:750}.auth-user{color:var(--muted);font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signin-block{margin:18px 0}.google-login-button{display:inline-flex;align-items:center;gap:12px;background:#fff;color:#202124;border:1px solid #dadce0;border-radius:4px;padding:10px 16px;font-weight:700;text-decoration:none;box-shadow:0 1px 2px rgba(0,0,0,.18)}.google-login-icon{display:inline-grid;place-items:center;width:20px;height:20px;font-weight:900;color:#4285f4}.fallback-login{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.fallback-login summary{cursor:pointer;color:var(--muted);font-weight:750}.auth-user{color:var(--muted);font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .error{color:var(--bad);font-weight:700}.error-panel{border-color:#5d2a2d;background:#211113}
 """
 
@@ -503,22 +584,47 @@ def _google_signin_html() -> str:
     client_id = _google_client_id()
     if not client_id:
         return ""
-    safe_client_id = html.escape(client_id, quote=True)
-    return f"""
+    return """
 <div class="signin-block">
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <div id="g_id_onload"
-       data-client_id="{safe_client_id}"
-       data-login_uri="/auth/google"
-       data-auto_prompt="false"></div>
-  <div class="g_id_signin"
-       data-type="standard"
-       data-theme="filled_black"
-       data-size="large"
-       data-text="signin_with"
-       data-shape="rectangular"
-       data-logo_alignment="left"></div>
+  <a class="google-login-button" href="/auth/google/start">
+    <span class="google-login-icon" aria-hidden="true">G</span>
+    <span>Sign in with Google</span>
+  </a>
 </div>"""
+
+
+GOOGLE_REDIRECT_CALLBACK_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Options ROI</title><style>__BASE_CSS__</style></head>
+<body><main class="login"><h1>Signing in</h1><p>Completing Google sign-in...</p><p class="error" id="error"></p></main>
+<script>
+(async () => {
+  const params = new URLSearchParams(window.location.hash.slice(1) || window.location.search.slice(1));
+  const credential = params.get("id_token");
+  const state = params.get("state");
+  if (!credential) {
+    document.getElementById("error").textContent = "Google sign-in did not return a credential.";
+    return;
+  }
+  const body = new URLSearchParams();
+  body.set("credential", credential);
+  if (state) body.set("state", state);
+  const response = await fetch("/auth/google", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body
+  });
+  if (response.redirected) {
+    window.location.replace(response.url);
+    return;
+  }
+  const text = await response.text();
+  document.open();
+  document.write(text);
+  document.close();
+})();
+</script></body></html>""".replace("__BASE_CSS__", BASE_CSS)
 
 
 LOGIN_TEMPLATE = """<!doctype html>

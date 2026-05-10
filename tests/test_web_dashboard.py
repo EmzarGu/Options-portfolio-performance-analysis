@@ -170,8 +170,8 @@ def test_web_dashboard_login_page_renders_google_sign_in_when_configured(monkeyp
     response = client.get("/login")
 
     assert response.status_code == 200
-    assert "https://accounts.google.com/gsi/client" in response.text
-    assert 'data-client_id="client-id.apps.googleusercontent.com"' in response.text
+    assert 'href="/auth/google/start"' in response.text
+    assert "Sign in with Google" in response.text
     assert "Use dashboard password instead" not in response.text
     assert "Dashboard password" not in response.text
 
@@ -189,6 +189,21 @@ def test_web_dashboard_login_page_can_show_password_fallback(monkeypatch):
     assert response.status_code == 200
     assert "Use dashboard password instead" in response.text
     assert "Dashboard password" in response.text
+
+
+def test_web_dashboard_google_start_uses_public_https_redirect(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
+    monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
+    monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
+    client = TestClient(web_dashboard.app, base_url="http://options-roi-web.example.run.app")
+
+    response = client.get("/auth/google/start", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "redirect_uri=https%3A%2F%2Foptions-roi-web.example.run.app%2Fauth%2Fgoogle" in response.headers[
+        "location"
+    ]
 
 
 def test_web_dashboard_login_page_requires_google_allowlist(monkeypatch):
