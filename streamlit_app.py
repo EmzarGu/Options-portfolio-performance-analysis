@@ -137,6 +137,7 @@ DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 IBKR_SOURCE_LABEL = "IBKR Flex"
 DEFAULT_FIRESTORE_PROJECT_ID = "options-performance-dashboard"
+DEFAULT_IBKR_FLEX_QUERY_ID = "1503002"
 STREAMLIT_ENV_SECRET_KEYS = (
     "OPTIONS_DATA_SOURCE",
     "IBKR_REPORT_SOURCE",
@@ -500,11 +501,13 @@ def streamlit_app_source_mode() -> str:
     if not os.getenv("OPTIONS_DATA_SOURCE"):
         os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
         os.environ.setdefault("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
+        os.environ.setdefault("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
         return DATA_SOURCE_IBKR
     mode = data_source_mode()
     if mode == DATA_SOURCE_IBKR:
         os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
         os.environ.setdefault("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
+        os.environ.setdefault("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
     return mode
 
 
