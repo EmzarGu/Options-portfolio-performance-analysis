@@ -91,3 +91,17 @@ def test_streamlit_pipeline_cache_key_includes_source_mode(monkeypatch):
     assert ibkr_key[2] == (streamlit_app.IBKR_SOURCE_LABEL,)
     assert sheet_key[0] == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
     assert sheet_key[2] == ("Options 2024", "Options 2025", "Options 2026")
+
+
+def test_streamlit_sheet_multiselect_defaults_ignore_stale_ibkr_session(monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "google_sheets")
+    stale_defaults = ["IBKR Flex", "Options 2025"]
+    available = ["Options 2024", "Options 2025", "Options 2026"]
+
+    sanitized = streamlit_app._sanitize_sheet_defaults(
+        stale_defaults,
+        available,
+        ["Options 2024", "Options 2025", "Options 2026"],
+    )
+
+    assert sanitized == ["Options 2025"]

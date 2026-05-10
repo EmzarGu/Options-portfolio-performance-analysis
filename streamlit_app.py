@@ -852,6 +852,13 @@ def _render_price_refresh_button(key: str) -> None:
         _rerun_app()
 
 
+def _sanitize_sheet_defaults(defaults: List[str], available_sheets: List[str], fallback_sheets: List[str]) -> List[str]:
+    selected_defaults = [sheet for sheet in (defaults or []) if sheet in available_sheets]
+    if selected_defaults:
+        return selected_defaults
+    return [sheet for sheet in fallback_sheets if sheet in available_sheets]
+
+
 def _render_config_tab(available_sheets: List[str], default_sheets: List[str], source_mode: str) -> None:
     st.markdown("##### Data source")
     col_refresh, col_status = st.columns([1, 2])
@@ -877,10 +884,15 @@ def _render_config_tab(available_sheets: List[str], default_sheets: List[str], s
             disabled=True,
         )
     else:
+        selected_defaults = _sanitize_sheet_defaults(
+            st.session_state.get("selected_sheets", default_sheets) or [],
+            available_sheets,
+            default_sheets,
+        )
         selected_sheets = st.multiselect(
             "Sheets to include (Options YYYY):",
             options=available_sheets,
-            default=st.session_state.get("selected_sheets", default_sheets),
+            default=selected_defaults,
             key="selected_sheets",
         )
         if not selected_sheets:
