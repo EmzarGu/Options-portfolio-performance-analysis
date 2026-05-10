@@ -53,9 +53,9 @@ class MemoryDividendHistoryStore(DividendHistoryStore):
 class FirestoreDividendHistoryStore(DividendHistoryStore):
     def __init__(self, *, project: Optional[str] = None, database: str = "(default)", client=None):
         if client is None:
-            from google.cloud import firestore
+            from portfolio_backend.gcp import firestore_client
 
-            client = firestore.Client(project=project, database=database)
+            client = firestore_client(project=project, database=database)
         self.client = client
         self._doc_cache: Dict[str, Optional[Dict]] = {}
 

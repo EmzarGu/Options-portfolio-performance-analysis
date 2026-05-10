@@ -61,9 +61,9 @@ class MemoryAuditStore(AuditStore):
 class FirestoreAuditStore(AuditStore):
     def __init__(self, *, project: Optional[str] = None, database: str = "(default)", client=None):
         if client is None:
-            from google.cloud import firestore
+            from portfolio_backend.gcp import firestore_client
 
-            client = firestore.Client(project=project, database=database)
+            client = firestore_client(project=project, database=database)
         self.client = client
 
     def record_refresh_run(self, record: RefreshAuditRecord) -> None:

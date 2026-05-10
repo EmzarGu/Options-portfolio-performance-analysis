@@ -492,7 +492,7 @@ def _storage_client():
 
 def _firestore_client():
     try:
-        from google.cloud import firestore
+        from portfolio_backend.gcp import firestore_client
     except ImportError as exc:
         raise RuntimeError("Install google-cloud-firestore to use Firestore IBKR import storage.") from exc
-    return firestore.Client()
+    return firestore_client()

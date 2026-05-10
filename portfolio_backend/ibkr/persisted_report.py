@@ -100,7 +100,12 @@ class FirestoreFlexReportRepository:
         wanted_sections = {str(section) for section in sections} if sections is not None else None
         query = self.client.collection(self.raw_rows_collection)
         if query_id is not None:
-            query = query.where("query_id", "==", str(query_id))
+            try:
+                from google.cloud.firestore_v1 import FieldFilter
+
+                query = query.where(filter=FieldFilter("query_id", "==", str(query_id)))
+            except Exception:
+                query = query.where("query_id", "==", str(query_id))
         docs = []
         for snap in query.stream():
             doc = snap.to_dict() or {}
@@ -114,10 +119,10 @@ class FirestoreFlexReportRepository:
 
 def _firestore_client():
     try:
-        from google.cloud import firestore
+        from portfolio_backend.gcp import firestore_client
     except ImportError as exc:
         raise RuntimeError("Install google-cloud-firestore to load IBKR reports from Firestore.") from exc
-    return firestore.Client()
+    return firestore_client()
 
 
 def _empty_report_message(*, query_id: Optional[str], sections: Optional[set[str]]) -> str:
