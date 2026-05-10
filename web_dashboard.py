@@ -1357,6 +1357,24 @@ function renderMethodology(){
     </div>
   `;
 }
+function renderPreservingInput(event, selector, updateState){
+  const value = event.target.value;
+  const selectionStart = event.target.selectionStart;
+  const selectionEnd = event.target.selectionEnd;
+  updateState(value);
+  render();
+  window.requestAnimationFrame(() => {
+    const scope = document.querySelector(".section.active") || document;
+    const next = scope.querySelector(selector) || document.querySelector(selector);
+    if (!next) return;
+    next.focus({preventScroll:true});
+    if (typeof next.setSelectionRange === "function" && selectionStart !== null && selectionEnd !== null) {
+      const start = Math.min(selectionStart, next.value.length);
+      const end = Math.min(selectionEnd, next.value.length);
+      next.setSelectionRange(start, end);
+    }
+  });
+}
 function bindControls(){
   const reloadApp = $("reloadApp");
   if (reloadApp && !reloadApp.dataset.bound) {
@@ -1374,8 +1392,12 @@ function bindControls(){
   document.querySelectorAll(".rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
   document.querySelectorAll('[data-open-control="risk"] button').forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
   document.querySelectorAll('[data-open-control="type"] button').forEach(btn => btn.addEventListener("click", () => { appState.openType = btn.dataset.value; render(); }));
-  document.querySelectorAll("[data-open-search]").forEach(input => input.addEventListener("input", (e) => { appState.openSearch = e.target.value; render(); }));
-  const tickerSearch = $("tickerSearch"); if (tickerSearch) tickerSearch.addEventListener("input", (e) => { appState.tickerSearch = e.target.value; render(); });
+  document.querySelectorAll("[data-open-search]").forEach(input => input.addEventListener("input", (e) => {
+    renderPreservingInput(e, "[data-open-search]", (value) => { appState.openSearch = value; });
+  }));
+  const tickerSearch = $("tickerSearch"); if (tickerSearch) tickerSearch.addEventListener("input", (e) => {
+    renderPreservingInput(e, "#tickerSearch", (value) => { appState.tickerSearch = value; });
+  });
   const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
 }
 function render(){
