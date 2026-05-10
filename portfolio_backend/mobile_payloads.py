@@ -898,6 +898,30 @@ def _realized_by_ticker(state, year: Optional[int] = None) -> Dict[str, Dict[str
     }
 
 
+def _dividends_by_ticker(state, year: Optional[int] = None) -> Dict[str, float]:
+    div_df = getattr(state, "div_df", pd.DataFrame())
+    as_of = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
+    if div_df is None or div_df.empty or "ticker" not in div_df.columns or "cash" not in div_df.columns:
+        return {}
+
+    dividends = div_df.copy()
+    date_col = "pay_date" if "pay_date" in dividends.columns else "ex_date" if "ex_date" in dividends.columns else None
+    if date_col is not None:
+        dividends[date_col] = pd.to_datetime(dividends[date_col], errors="coerce")
+        dividends = dividends.loc[dividends[date_col].notna()]
+        if pd.notna(as_of):
+            dividends = dividends.loc[dividends[date_col] <= as_of]
+        if year is not None:
+            dividends = dividends.loc[dividends[date_col].dt.year == int(year)]
+
+    if dividends.empty:
+        return {}
+    dividends["ticker"] = dividends["ticker"].astype(str).str.upper().str.strip()
+    dividends["cash"] = pd.to_numeric(dividends["cash"], errors="coerce").fillna(0.0)
+    grouped = dividends.loc[dividends["ticker"].ne("")].groupby("ticker")["cash"].sum()
+    return {str(ticker): float(value) for ticker, value in grouped.items()}
+
+
 def _totals_by_ticker(state) -> Dict[str, Dict[str, float]]:
     totals = getattr(state, "per_ticker_totals", pd.DataFrame())
     if totals is None or totals.empty or "ticker" not in totals.columns:
@@ -1009,6 +1033,7 @@ def build_ticker_summary_rows(
 ) -> List[Dict[str, Any]]:
     totals_by_ticker = _totals_by_ticker(state)
     realized_by_ticker = _realized_by_ticker(state, year) if year is not None else {}
+    dividends_by_ticker = _dividends_by_ticker(state, year)
     history_by_ticker = _history_by_ticker(state, year) if include_history else {}
     open_counts, inventory_shares = _ticker_counts(state)
     open_rows = build_open_option_short_rows(state, sort="ticker")
@@ -1050,6 +1075,7 @@ def build_ticker_summary_rows(
                 "current_price": json_safe(current_price),
                 "realized_options_pnl": json_safe(_number(realized.get("realized_options_pnl")) or 0.0),
                 "realized_stock_pnl": json_safe(_number(realized.get("realized_stock_pnl")) or 0.0),
+                "dividends": json_safe(dividends_by_ticker.get(ticker, 0.0)),
                 "combined_realized_pnl": json_safe(combined_realized),
                 "unrealized_pnl": json_safe(unrealized_pnl),
                 "total_pnl": json_safe(total_pnl),

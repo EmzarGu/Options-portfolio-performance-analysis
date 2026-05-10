@@ -189,6 +189,34 @@ def _mobile_state():
                 },
             ]
         ),
+        div_df=pd.DataFrame(
+            [
+                {
+                    "ticker": "CALL",
+                    "ex_date": pd.Timestamp("2026-04-10"),
+                    "pay_date": pd.Timestamp("2026-04-15"),
+                    "cash": 12.5,
+                },
+                {
+                    "ticker": "PUTT",
+                    "ex_date": pd.Timestamp("2025-08-10"),
+                    "pay_date": pd.Timestamp("2025-08-15"),
+                    "cash": 7.0,
+                },
+                {
+                    "ticker": "PUTT",
+                    "ex_date": pd.Timestamp("2026-04-20"),
+                    "pay_date": pd.Timestamp("2026-04-25"),
+                    "cash": 11.0,
+                },
+                {
+                    "ticker": "FUTR",
+                    "ex_date": pd.Timestamp("2026-05-10"),
+                    "pay_date": pd.Timestamp("2026-05-10"),
+                    "cash": 99.0,
+                },
+            ]
+        ),
         monthly_cycles=pd.DataFrame(
             {
                 "realized_options_pnl": [250.0, 100.0],
@@ -707,6 +735,7 @@ def test_ticker_summary_rows_emit_mobile_contract_shape():
         "current_price": 60.0,
         "realized_options_pnl": 10.0,
         "realized_stock_pnl": 20.0,
+        "dividends": 12.5,
         "combined_realized_pnl": 30.0,
         "unrealized_pnl": 1500.0,
         "total_pnl": 1530.0,
@@ -726,6 +755,7 @@ def test_ticker_summary_rows_emit_mobile_contract_shape():
 
     putt = rows[1]
     assert putt["id"] == "ticker:PUTT"
+    assert putt["dividends"] == 18.0
     assert putt["open_option_count"] == 2
     assert putt["inventory_share_count"] == 0
     assert putt["risk_labels"] == ["In the money"]
@@ -747,6 +777,7 @@ def test_ticker_summary_rows_support_year_filter_and_blocked_unrealized():
     putt = next(row for row in rows if row["ticker"] == "PUTT")
     assert putt["realized_options_pnl"] == 150.0
     assert putt["combined_realized_pnl"] == 150.0
+    assert putt["dividends"] == 11.0
     assert putt["unrealized_pnl"] is None
     assert putt["total_pnl"] is None
     assert [row["id"] for row in putt["history"]] == ["year:2026:ticker:PUTT"]

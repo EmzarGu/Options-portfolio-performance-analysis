@@ -480,6 +480,7 @@ Response:
       "current_price": 924.74,
       "realized_options_pnl": 12480.0,
       "realized_stock_pnl": 0.0,
+      "dividends": 0.0,
       "combined_realized_pnl": 12480.0,
       "unrealized_pnl": 18354.0,
       "total_pnl": 30834.0,
@@ -502,6 +503,7 @@ Response:
       "current_price": 183.42,
       "realized_options_pnl": 9140.0,
       "realized_stock_pnl": 0.0,
+      "dividends": 0.0,
       "combined_realized_pnl": 9140.0,
       "unrealized_pnl": -7676.0,
       "total_pnl": 1464.0,
@@ -520,6 +522,7 @@ Nullability:
 - History row `id` is mandatory when `history` is populated. Use `year:{YYYY}:ticker:{ticker}`.
 - `unrealized_pnl` and `total_pnl` are `null` when unrealized snapshot is blocked.
 - `current_price` is `null` when missing.
+- `dividends` is cumulative realized dividend cash for the ticker in the same optional `year` scope as the realized P&L fields. It is always present and is `0.0` when none.
 - `history` is `[]` unless `include_history=true`.
 
 Backend source today:
