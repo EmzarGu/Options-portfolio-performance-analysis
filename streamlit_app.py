@@ -92,6 +92,8 @@ from portfolio_backend.pipeline import (
     normalize_dividend_fetch_result,
     open_option_lots_for_state as _backend_open_option_lots_for_state,
 )
+from portfolio_backend.ibkr.pipeline import build_ibkr_base_pipeline as _backend_build_ibkr_base_pipeline
+from portfolio_backend.ibkr.repository import load_flex_report_from_env
 from portfolio_backend.tables import (
     build_assigned_holdings_frame,
     build_open_option_shorts_frame,
@@ -127,6 +129,9 @@ st.markdown(
 # ------------------------------------------------------------
 SHEET_ID = "19LhrZai3cbJ1GbPE1iTquYHUeXfpIxXFX1amF5eWi_g"
 SHEETS = ["Options 2024", "Options 2025", "Options 2026"]
+DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
+DATA_SOURCE_IBKR = "ibkr"
+IBKR_SOURCE_LABEL = "IBKR Flex"
 # Keep the original on-disk prefs path for local runs; add a home-dir fallback for rebuilds.
 PREFS_PATH = Path(".streamlit_user_prefs.json")
 PREFS_HOME_PATH = Path.home() / ".options_roi_prefs.json"
@@ -448,6 +453,33 @@ def resolve_build_version() -> str:
 APP_BUILD_VERSION = resolve_build_version()
 
 
+def data_source_mode() -> str:
+    value = os.getenv("OPTIONS_DATA_SOURCE", DATA_SOURCE_GOOGLE_SHEETS).strip().lower()
+    if value in {DATA_SOURCE_IBKR, "ibkr_flex"}:
+        return DATA_SOURCE_IBKR
+    return DATA_SOURCE_GOOGLE_SHEETS
+
+
+def is_ibkr_source_mode() -> bool:
+    return data_source_mode() == DATA_SOURCE_IBKR
+
+
+def source_label_for_mode(mode: Optional[str] = None) -> str:
+    return IBKR_SOURCE_LABEL if (mode or data_source_mode()) == DATA_SOURCE_IBKR else "Google Sheets"
+
+
+def available_sources_for_mode(mode: Optional[str] = None) -> List[str]:
+    if (mode or data_source_mode()) == DATA_SOURCE_IBKR:
+        return [IBKR_SOURCE_LABEL]
+    return list_option_sheets(SHEET_ID)
+
+
+def normalize_selected_sheets_for_mode(selected_sheets: Optional[List[str]], available_sheets: List[str], mode: Optional[str] = None) -> List[str]:
+    if (mode or data_source_mode()) == DATA_SOURCE_IBKR:
+        return [IBKR_SOURCE_LABEL]
+    return list(selected_sheets or [])
+
+
 def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
     return _fetch_current_prices_yf(tickers, yf)
 
@@ -589,6 +621,11 @@ def render_issue_status_banner(issues: List[str], price_errors: List[str], price
 
 
 def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool, selected_sheets: List[str], cache_bust: int = 1):
+    source_mode = data_source_mode()
+    selected_sheets = normalize_selected_sheets_for_mode(selected_sheets, [IBKR_SOURCE_LABEL], source_mode)
+    if source_mode == DATA_SOURCE_IBKR:
+        base_state = build_base_pipeline(as_of, selected_sheets, cache_bust=cache_bust, source_mode=source_mode)
+        return apply_unrealized_adjusted_display(base_state, include_unrealized_current_year)
     return _backend_build_pipeline_without_live_prices(
         SHEET_ID,
         as_of,
@@ -602,7 +639,22 @@ def _build_pipeline_uncached(as_of: date, include_unrealized_current_year: bool,
     )
 
 
-def build_base_pipeline(as_of: date, selected_sheets: List[str], cache_bust: int = 1) -> PipelineState:
+def build_base_pipeline(
+    as_of: date,
+    selected_sheets: List[str],
+    cache_bust: int = 1,
+    source_mode: Optional[str] = None,
+) -> PipelineState:
+    source_mode = source_mode or data_source_mode()
+    if source_mode == DATA_SOURCE_IBKR:
+        return _backend_build_ibkr_base_pipeline(
+            load_flex_report_from_env(),
+            as_of=as_of,
+            fetch_price_history_fn=fetch_price_history_yf,
+            align_benchmarks_monthly_fn=align_benchmarks_monthly,
+            selected_sheets=[IBKR_SOURCE_LABEL],
+            cache_bust=cache_bust,
+        )
     return _backend_build_base_pipeline(
         SHEET_ID,
         as_of,
@@ -622,6 +674,7 @@ def build_pipeline(
     cache_bust: int = 1,
     price_refresh_token=0,
 ):
+    selected_sheets = normalize_selected_sheets_for_mode(selected_sheets, [IBKR_SOURCE_LABEL] if is_ibkr_source_mode() else selected_sheets)
     base_state = build_base_pipeline(as_of, selected_sheets, cache_bust=cache_bust)
     priced_state = apply_live_price_overlay(base_state, price_refresh_token)
     return apply_unrealized_adjusted_display(priced_state, include_unrealized_current_year)
@@ -632,10 +685,14 @@ def build_pipeline_cache_key(
     include_unrealized_current_year: bool,
     selected_sheets: List[str],
     reload_token: int,
-) -> Tuple[str, Tuple[str, ...], int]:
+    source_mode: Optional[str] = None,
+) -> Tuple[str, str, Tuple[str, ...], int]:
+    source_mode = source_mode or data_source_mode()
     as_of_key = pd.to_datetime(as_of).date().isoformat()
+    selected_sheets = normalize_selected_sheets_for_mode(selected_sheets, [IBKR_SOURCE_LABEL], source_mode)
     selected_sheets_key = tuple(str(sheet) for sheet in (selected_sheets or []))
     return (
+        source_mode,
         as_of_key,
         selected_sheets_key,
         int(reload_token or 0),
@@ -644,6 +701,7 @@ def build_pipeline_cache_key(
 
 @st.cache_data(show_spinner="Building portfolio pipeline...")
 def get_cached_pipeline(
+    source_mode: str,
     as_of_key: str,
     selected_sheets_key: Tuple[str, ...],
     reload_token: int,
@@ -652,6 +710,7 @@ def get_cached_pipeline(
         date.fromisoformat(as_of_key),
         list(selected_sheets_key),
         cache_bust=reload_token,
+        source_mode=source_mode,
     )
 
 
@@ -748,26 +807,40 @@ def _render_price_refresh_button(key: str) -> None:
         _rerun_app()
 
 
-def _render_config_tab(available_sheets: List[str], default_sheets: List[str]) -> None:
-    st.markdown("##### Data sources")
+def _render_config_tab(available_sheets: List[str], default_sheets: List[str], source_mode: str) -> None:
+    st.markdown("##### Data source")
     col_refresh, col_status = st.columns([1, 2])
     with col_refresh:
         if st.button("Refresh data / Rebuild pipeline", key="refresh_rebuild_pipeline"):
             _increment_pipeline_reload_token()
             _clear_data_caches()
             _rerun_app()
-        st.caption("Clears cached data-source and pipeline data. Press after source edits/imports to fetch fresh data and rebuild.")
+        st.caption("Clears cached source and pipeline data. Press after source edits/imports to fetch fresh data and rebuild.")
     with col_status:
-        _render_data_status(SHEET_ID)
-    selected_sheets = st.multiselect(
-        "Sheets to include (Options YYYY):",
-        options=available_sheets,
-        default=st.session_state.get("selected_sheets", default_sheets),
-        key="selected_sheets",
-    )
-    if not selected_sheets:
-        st.warning("Select at least one sheet to run the dashboard.")
-    st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
+        if source_mode == DATA_SOURCE_IBKR:
+            st.caption(f"Source: {IBKR_SOURCE_LABEL}")
+            st.caption("Configured by `OPTIONS_DATA_SOURCE=ibkr`; Google Sheet tab selection is disabled in this mode.")
+            st.session_state["selected_sheets"] = [IBKR_SOURCE_LABEL]
+        else:
+            _render_data_status(SHEET_ID)
+    if source_mode == DATA_SOURCE_IBKR:
+        st.selectbox(
+            "Data source",
+            options=available_sheets,
+            index=0,
+            key="ibkr_source_display",
+            disabled=True,
+        )
+    else:
+        selected_sheets = st.multiselect(
+            "Sheets to include (Options YYYY):",
+            options=available_sheets,
+            default=st.session_state.get("selected_sheets", default_sheets),
+            key="selected_sheets",
+        )
+        if not selected_sheets:
+            st.warning("Select at least one sheet to run the dashboard.")
+        st.caption("Any sheet named like `Options 2022`, `Options 2023`, etc., can be included.")
 
 
 def _render_snapshot(
@@ -1462,7 +1535,8 @@ def _render_methodology_tab() -> None:
 
 def main():
     st.title("Options ROI Dashboard")
-    st.caption("Live from configured data source with Streamlit")
+    source_mode = data_source_mode()
+    st.caption(f"Live from {source_label_for_mode(source_mode)} with Streamlit")
 
     col_side, col_main = st.columns([1, 4])
     prefs = load_prefs()
@@ -1478,22 +1552,30 @@ def main():
     snapshot_area = st.container()
     tabs_area = st.container()
 
-    available_sheets = list_option_sheets(SHEET_ID)
-    saved_sheets = prefs.get("selected_sheets") or []
-    saved_sheets = [s for s in saved_sheets if s in available_sheets]
-    default_sheets = saved_sheets or [s for s in available_sheets if s in SHEETS] or available_sheets
-    st.session_state["selected_sheets"] = st.session_state.get("selected_sheets", default_sheets)
+    available_sheets = available_sources_for_mode(source_mode)
+    if source_mode == DATA_SOURCE_IBKR:
+        default_sheets = [IBKR_SOURCE_LABEL]
+        st.session_state["selected_sheets"] = [IBKR_SOURCE_LABEL]
+    else:
+        saved_sheets = prefs.get("selected_sheets") or []
+        saved_sheets = [s for s in saved_sheets if s in available_sheets]
+        default_sheets = saved_sheets or [s for s in available_sheets if s in SHEETS] or available_sheets
+        st.session_state["selected_sheets"] = st.session_state.get("selected_sheets", default_sheets)
     with tabs_area:
         tabs = ["Yearly", "Monthly cycles", "Per ticker", "Positions", "Config", "Logs / data issues", "Methodology"]
         tab_yearly, tab_monthly, tab_ticker, tab_positions, tab_config, tab_logs, tab_method = st.tabs(tabs)
         with tab_config:
-            _render_config_tab(available_sheets, default_sheets)
-    selected_sheets = st.session_state.get("selected_sheets", default_sheets) or default_sheets
+            _render_config_tab(available_sheets, default_sheets, source_mode)
+    selected_sheets = normalize_selected_sheets_for_mode(
+        st.session_state.get("selected_sheets", default_sheets) or default_sheets,
+        available_sheets,
+        source_mode,
+    )
 
     # Persist prefs if changed
     new_prefs = {
         "include_unrealized": bool(st.session_state.get("include_unrealized", False)),
-        "selected_sheets": selected_sheets,
+        "selected_sheets": prefs.get("selected_sheets", []) if source_mode == DATA_SOURCE_IBKR else selected_sheets,
     }
     if new_prefs != prefs:
         save_prefs(new_prefs)

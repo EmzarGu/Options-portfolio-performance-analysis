@@ -1200,8 +1200,8 @@ def test_mobile_issue_rows_classify_actionable_ibkr_accounting_warnings():
     state = SimpleNamespace(
         issues=[
             "Prorated GOOGL call execution on 2022-10-05 to 100 wheel-held shares out of 200 required shares.",
-            "Buy ASAN Put 25.0 on 2022-05-20 had no open short to close.",
-            "Unmatched buy quantity for ASAN Put 25.0 on 2022-05-20: 1 remaining.",
+            "Buy GOOGL Put 125.0 on 2026-01-20 had no open short to close.",
+            "Unmatched buy quantity for GOOGL Put 125.0 on 2026-01-20: 1 remaining.",
         ],
         price_errors=[],
         price_summary={},
@@ -1218,6 +1218,35 @@ def test_mobile_issue_rows_classify_actionable_ibkr_accounting_warnings():
     assert [row["category"] for row in rows] == ["wheel_warning", "missing_basis", "missing_basis"]
     assert [row["severity"] for row in rows] == ["warning", "warning", "warning"]
     assert [row["action"] for row in rows] == ["review_source_data", "review_source_data", "review_source_data"]
+
+
+def test_mobile_issue_rows_classify_known_historical_ibkr_warnings_as_audit_notes():
+    state = SimpleNamespace(
+        issues=[
+            "Prorated ASAN call execution on 2022-11-23 to 100 wheel-held shares out of 400 required shares.",
+            "Prorated ASAN call execution on 2023-08-21 to 100 wheel-held shares out of 400 required shares.",
+            "Buy ASAN Put 25.0 on 2022-05-20 had no open short to close.",
+            "Unmatched buy quantity for ASAN Put 25.0 on 2022-05-20: 1 remaining.",
+            "Buy CROX Put 60.0 on 2022-05-20 had no open short to close.",
+            "Unmatched buy quantity for CROX Put 60.0 on 2022-05-20: 1 remaining.",
+        ],
+        price_errors=[],
+        price_summary={},
+        historical_price_errors=[],
+        historical_price_summary={},
+        dividend_errors=[],
+        dividend_summary={},
+        capital_history_coverage_issues=[],
+    )
+
+    rows = build_mobile_issue_rows(state)
+    payload = build_mobile_issues(state, {"selected_sheets": ["IBKR Flex"], "include_unrealized": True})
+
+    assert [row["category"] for row in rows] == ["wheel_audit"] * 6
+    assert [row["severity"] for row in rows] == ["info"] * 6
+    assert payload["issues"] == []
+    assert len(payload["audit_notes"]) == 6
+    assert payload["summary"]["total_count"] == 0
 
 
 def test_mobile_issues_composes_contract_payload():

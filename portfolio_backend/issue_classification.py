@@ -26,9 +26,27 @@ _EXPECTED_WHEEL_AUDIT_PATTERNS = (
     "manually sold shares",
 )
 
+_KNOWN_HISTORICAL_AUDIT_MESSAGES = frozenset(
+    {
+        "Prorated ASAN call execution on 2022-11-23 to 100 wheel-held shares out of 400 required shares.",
+        "Prorated ASAN call execution on 2023-08-21 to 100 wheel-held shares out of 400 required shares.",
+        "Buy ASAN Put 25.0 on 2022-05-20 had no open short to close.",
+        "Unmatched buy quantity for ASAN Put 25.0 on 2022-05-20: 1 remaining.",
+        "Buy CROX Put 60.0 on 2022-05-20 had no open short to close.",
+        "Unmatched buy quantity for CROX Put 60.0 on 2022-05-20: 1 remaining.",
+    }
+)
+
 
 def classify_backend_issue(message: str) -> IssueClassification:
     text = str(message or "")
+    if text in _KNOWN_HISTORICAL_AUDIT_MESSAGES:
+        return IssueClassification(
+            category="wheel_audit",
+            severity="info",
+            action=None,
+            actionable=False,
+        )
     if _is_expected_wheel_audit(text):
         return IssueClassification(
             category="wheel_audit",

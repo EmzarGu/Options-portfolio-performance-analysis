@@ -1863,7 +1863,7 @@ def test_pipeline_cache_key_excludes_chart_period():
 
     assert key_before_chart_change == key_after_chart_change
     assert chart_period not in key_after_chart_change
-    assert key_after_chart_change == ("2026-04-27", ("Options 2024", "Options 2025"), 3)
+    assert key_after_chart_change == ("google_sheets", "2026-04-27", ("Options 2024", "Options 2025"), 3)
 
 
 def test_pipeline_cache_key_excludes_unrealized_adjusted_toggle():
@@ -1873,7 +1873,7 @@ def test_pipeline_cache_key_excludes_unrealized_adjusted_toggle():
     key_toggle_on = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), True, selected_sheets, 3)
 
     assert key_toggle_off == key_toggle_on
-    assert key_toggle_on == ("2026-04-27", ("Options 2024", "Options 2025"), 3)
+    assert key_toggle_on == ("google_sheets", "2026-04-27", ("Options 2024", "Options 2025"), 3)
 
 
 def test_pipeline_cache_key_changes_when_reload_token_changes():
@@ -1883,9 +1883,9 @@ def test_pipeline_cache_key_changes_when_reload_token_changes():
     refreshed_key = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), False, selected_sheets, 4)
 
     assert first_key != refreshed_key
-    assert first_key[:2] == refreshed_key[:2]
-    assert first_key[2] == 3
-    assert refreshed_key[2] == 4
+    assert first_key[:3] == refreshed_key[:3]
+    assert first_key[3] == 3
+    assert refreshed_key[3] == 4
 
 
 def test_pipeline_cache_key_excludes_price_refresh_token():
