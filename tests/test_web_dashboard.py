@@ -107,6 +107,8 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert "Portfolio Dashboard" in response.text
     assert "IBKR Flex" in response.text
     assert "dashboard-data" in response.text
+    assert "Chart range" in response.text
+    assert "Open Shorts Monitor" in response.text
 
 
 def test_web_dashboard_api_requires_auth(monkeypatch):

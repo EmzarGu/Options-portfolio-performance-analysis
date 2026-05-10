@@ -20,7 +20,7 @@ from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
 
 import mobile_api
-from portfolio_backend.charts import build_benchmark_growth_chart_data
+from portfolio_backend.charts import build_benchmark_growth_chart_data, build_options_cycle_chart_data
 from portfolio_backend.mobile_api_service import (
     build_mobile_dashboard_payload,
     build_mobile_issues_payload,
@@ -31,6 +31,7 @@ from portfolio_backend.mobile_api_service import (
     build_mobile_tickers_payload,
     build_mobile_yearly_payload,
 )
+from portfolio_backend.performance import expectancies
 
 
 app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
@@ -277,6 +278,40 @@ def _series_records(series: Any, value_name: str) -> List[Dict[str, Any]]:
     return _json_safe(frame.to_dict(orient="records"))
 
 
+def _benchmark_growth_by_range(state: Any) -> Dict[str, List[Dict[str, Any]]]:
+    ranges = ["3M", "6M", "YTD", "1Y", "Since inception"]
+    return {
+        range_choice: _frame_records(
+            build_benchmark_growth_chart_data(
+                state.monthly_returns_covered,
+                state.aligned_bench_returns,
+                range_choice,
+                state.as_of,
+            )
+        )
+        for range_choice in ranges
+    }
+
+
+def _stock_price_records(stock_prices: Any) -> List[Dict[str, Any]]:
+    if not stock_prices:
+        return []
+    rows = [{"ticker": str(ticker), "price": price} for ticker, price in stock_prices.items()]
+    rows.sort(key=lambda row: row["ticker"])
+    return _json_safe(rows)
+
+
+def _advanced_unreal_records(advanced_unreal: Any) -> List[Dict[str, Any]]:
+    if advanced_unreal is None or getattr(advanced_unreal, "empty", True):
+        return []
+    if isinstance(advanced_unreal, pd.Series):
+        frame = advanced_unreal.rename("unrealized_pnl").reset_index()
+        first_col = frame.columns[0]
+        frame = frame.rename(columns={first_col: "ticker"})
+        return _json_safe(frame.to_dict(orient="records"))
+    return _frame_records(advanced_unreal)
+
+
 def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebuild: bool = False):
     # The browser dashboard is the IBKR-first production surface. Apply these
     # defaults lazily so importing this module cannot alter Streamlit/mobile
@@ -307,11 +342,12 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
     yearly = build_mobile_yearly_payload(context)
     issues = build_mobile_issues_payload(context)
 
-    benchmark_growth = build_benchmark_growth_chart_data(
-        state.monthly_returns_covered,
-        state.aligned_bench_returns,
-        "YTD",
-        state.as_of,
+    benchmark_growth_by_range = _benchmark_growth_by_range(state)
+    expectancy = expectancies(
+        getattr(state, "realized_option_events", []),
+        getattr(state, "realized_sales", []),
+        state.monthly_cycles,
+        getattr(state, "chain_outcomes", []),
     )
 
     return _json_safe(
@@ -337,11 +373,21 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
                 "per_ticker_yearly": _frame_records(state.per_ticker),
                 "per_ticker_totals": _frame_records(state.per_ticker_totals),
                 "benchmark_metrics": _frame_records(state.benchmark_metrics),
+                "expectancy": _frame_records(expectancy),
                 "inventory": _frame_records(state.inv_df),
                 "open_options": _frame_records(state.open_options),
+                "options_cycle_pnl": _frame_records(build_options_cycle_chart_data(state.monthly_cycles)),
+                "stock_prices": _stock_price_records(getattr(state, "stock_prices", {}) or {}),
+                "unrealized_by_ticker": _advanced_unreal_records(getattr(state, "advanced_unreal", None)),
+                "capital_daily_tail": _frame_records(
+                    getattr(state, "capital_daily", pd.DataFrame()).tail(30),
+                    index_name="date",
+                ),
+                "dividends": _frame_records(getattr(state, "div_df", pd.DataFrame())),
             },
             "charts": {
-                "benchmark_growth": _frame_records(benchmark_growth),
+                "benchmark_growth": benchmark_growth_by_range.get("YTD", []),
+                "benchmark_growth_by_range": benchmark_growth_by_range,
                 "monthly_returns": _series_records(state.monthly_returns_covered, "return"),
                 "monthly_returns_unrealized_adjusted": _series_records(
                     state.monthly_returns_unrealized_adjusted,
@@ -642,138 +688,586 @@ DASHBOARD_HTML = """<!doctype html>
 <title>Options ROI Dashboard</title>
 <style>
 __BASE_CSS__
-.shell{max-width:1440px;margin:0 auto;padding:24px 22px 56px}.topbar{position:sticky;top:0;z-index:10;background:rgba(9,13,11,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
-.topbar-inner{max-width:1440px;margin:0 auto;padding:12px 22px;display:flex;gap:14px;align-items:center;justify-content:space-between}.brand{font-size:18px;font-weight:800}.nav{display:flex;gap:4px;flex-wrap:wrap}.nav button{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 11px;cursor:pointer}.nav button.active{color:var(--text);background:var(--panel2);border-color:var(--line)}
-.actions{display:flex;gap:8px;align-items:center}.actions form{margin:0}.header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:24px 0 18px}.title h1{font-size:34px;line-height:1.1;margin:0 0 7px}.sub{color:var(--muted)}
-.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:5px 9px;color:var(--muted);font-size:13px}.badge.good{color:#b8f2c0;border-color:#315f39}.badge.warn{color:#ffd987;border-color:#6c5625}.badge.bad{color:#ffb0b0;border-color:#633}
-.grid{display:grid;gap:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.two{grid-template-columns:1.15fr .85fr}.three{grid-template-columns:repeat(3,minmax(0,1fr))}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:0 8px 26px rgba(0,0,0,.14)}
-.metric-label{color:var(--muted);font-size:13px}.metric-value{font-size:26px;font-weight:850;margin-top:5px}.metric-note{color:var(--muted);font-size:12px;margin-top:2px}.pos{color:var(--good)}.neg{color:var(--bad)}.muted{color:var(--muted)}.warn-text{color:var(--warn)}
-h2{font-size:22px;margin:26px 0 12px}h3{font-size:16px;margin:0 0 12px}.section{display:none}.section.active{display:block}
-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:700;background:#101712;position:sticky;top:57px;z-index:2}td.num,th.num{text-align:right}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:8px}.table-wrap table th:first-child{border-top-left-radius:8px}.table-wrap table th:last-child{border-top-right-radius:8px}
-.risk-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}.risk-card{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:12px}.risk-head{display:flex;justify-content:space-between;gap:10px}.risk-title{font-weight:850}.pill{font-size:12px;border-radius:999px;padding:3px 7px;background:#24322b;color:var(--muted)}.pill.bad{background:#3a191b;color:#ffc3c3}.pill.warn{background:#3a2b10;color:#ffd987}.pill.good{background:#153820;color:#b5f4be}.risk-meta{margin-top:8px;color:var(--muted);font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:4px}
-.chart{width:100%;height:280px}.chart text{fill:var(--muted);font-size:11px}.chart .axis{stroke:#3a4a41}.chart .line{fill:none;stroke-width:2.2}.chart .bar-pos{fill:#52d273}.chart .bar-neg{fill:#ff6b6b}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px}.toolbar input{background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:10px 12px;min-width:260px}
-.note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel)}summary{cursor:pointer;font-weight:800}.status-strip{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
-@media(max-width:900px){.metrics,.two,.three{grid-template-columns:1fr}.header{grid-template-columns:1fr}.topbar-inner{align-items:flex-start;flex-direction:column}.actions{width:100%;justify-content:space-between}.title h1{font-size:28px}th{position:static}.shell{padding-left:14px;padding-right:14px}}
+:root{--bg2:#0c1114;--panel3:#10161a;--panel4:#151f23;--line2:#26383b;--blue:#7aa7ff;--amber:#f6c25b;--red:#ff6f78;--green:#7ee092;--teal:#45d2c5}
+body{background:#080c0f;color:var(--text)}
+.topbar{position:sticky;top:0;z-index:40;background:rgba(8,12,15,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line2)}
+.topbar-inner{max-width:1540px;margin:0 auto;padding:10px 22px;display:flex;gap:16px;align-items:center;justify-content:space-between}
+.brand{font-size:18px;font-weight:850;letter-spacing:.01em;white-space:nowrap}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:650;margin-top:-2px}
+.nav{display:flex;gap:4px;flex:1;justify-content:center;min-width:0}.nav button,.segmented button{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 11px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active,.segmented button.active{color:#061a18;background:var(--accent);border-color:transparent}
+.actions{display:flex;gap:8px;align-items:center}.actions form{margin:0}.auth-user{color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shell{max-width:1540px;margin:0 auto;padding:22px 22px 64px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:4px 0 16px}
+.hero h1{font-size:34px;line-height:1.05;margin:0 0 8px}.sub{color:var(--muted);font-size:14px}.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:#111a1d;border-radius:999px;padding:5px 9px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap}.badge.good{color:#c6f6ce;border-color:#2f6941}.badge.warn{color:#ffe3a3;border-color:#73551d}.badge.bad{color:#ffc0c5;border-color:#70303b}.badge.blue{color:#cfe0ff;border-color:#355189}
+.control-strip{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#0d1417;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;margin:0 0 16px}.control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}
+.grid{display:grid;gap:12px}.metrics{grid-template-columns:repeat(4,minmax(180px,1fr))}.two{grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr)}.two-even{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.card,.panel{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.card{padding:14px}.panel{padding:16px}
+.metric-label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:25px;font-weight:900;margin-top:5px;line-height:1.08}.metric-note{color:var(--muted);font-size:12px;margin-top:5px}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.warn-text{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}
+h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
+.table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:#11191c}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#b6c4c1;font-size:11px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.empty{padding:18px;color:var(--muted)}
+.risk-row-itm td{background:rgba(255,111,120,.12)}.risk-row-near td{background:rgba(246,194,91,.11)}.risk-row-clear td{background:rgba(69,210,197,.07)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--red)}.dot-warn{background:var(--amber)}.dot-good{background:var(--green)}.dot-blue{background:var(--blue)}
+.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;gap:8px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{font-size:11px;border-radius:999px;padding:3px 7px;background:#1c2a2d;color:var(--muted);font-weight:850}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
+.chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:12px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:15px}.chart{width:100%;height:290px;display:block}.chart text{fill:#a9b7b4;font-size:11px}.axis{stroke:#31464a;stroke-width:1}.grid-line{stroke:#1f2d30;stroke-width:1}.line{fill:none;stroke-width:2.4}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:12px;color:var(--muted);display:inline-flex;gap:5px;align-items:center}.legend-swatch{width:10px;height:10px;border-radius:2px}
+.note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
+@media(max-width:1100px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.nav{justify-content:flex-start;overflow:auto}.topbar-inner{align-items:flex-start;flex-direction:column}.actions{width:100%;justify-content:space-between}.auth-user{max-width:48vw}.shell{padding-left:14px;padding-right:14px}.hero h1{font-size:28px}.chart{height:250px}}
+@media(max-width:620px){.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.control-strip{align-items:flex-start}.metric-value{font-size:22px}}
 </style>
 </head>
 <body>
-<div class="topbar"><div class="topbar-inner"><div class="brand">Options ROI</div><nav class="nav" id="nav"></nav><div class="actions"><span class="auth-user">__AUTH_USER__</span><form method="post" action="/refresh"><button class="primary" type="submit">Refresh</button></form><form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form></div></div></div>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">Options ROI<small>IBKR dashboard</small></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="actions">
+      <span class="auth-user">__AUTH_USER__</span>
+      <form method="post" action="/refresh"><button class="primary" type="submit">Refresh data</button></form>
+      <form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
+    </div>
+  </div>
+</div>
 <main class="shell">
-<section class="header"><div class="title"><h1>Portfolio Dashboard</h1><div class="sub" id="subtitle"></div></div><div class="status-strip" id="statusStrip"></div></section>
-<section id="overview" class="section active"></section>
-<section id="monthly" class="section"></section>
-<section id="tickers" class="section"></section>
-<section id="positions" class="section"></section>
-<section id="performance" class="section"></section>
-<section id="diagnostics" class="section"></section>
-<section id="methodology" class="section"></section>
+  <section class="hero">
+    <div>
+      <h1>Portfolio Dashboard</h1>
+      <div class="sub" id="subtitle"></div>
+    </div>
+    <div class="status-strip" id="statusStrip"></div>
+  </section>
+  <section class="control-strip">
+    <div>
+      <div class="control-label">Chart range</div>
+      <div class="segmented" id="rangeControl"></div>
+    </div>
+    <div class="status-strip" id="workflowStrip"></div>
+  </section>
+  <section id="dashboard" class="section active"></section>
+  <section id="monthly" class="section"></section>
+  <section id="tickers" class="section"></section>
+  <section id="positions" class="section"></section>
+  <section id="performance" class="section"></section>
+  <section id="diagnostics" class="section"></section>
+  <section id="methodology" class="section"></section>
 </main>
 <script id="dashboard-data" type="application/json">__DASHBOARD_DATA__</script>
 <script>
-const data = JSON.parse(document.getElementById('dashboard-data').textContent);
+const data = JSON.parse(document.getElementById("dashboard-data").textContent);
+const appState = {
+  active: "dashboard",
+  range: "YTD",
+  openRisk: "all",
+  openCoverage: "all",
+  openSearch: "",
+  tickerSearch: "",
+  tickerYear: "all",
+  sort: {}
+};
 const sections = [
-  ['overview','Dashboard'], ['monthly','Monthly'], ['tickers','Tickers'],
-  ['positions','Positions'], ['performance','Performance'], ['diagnostics','Diagnostics'],
-  ['methodology','Methodology']
+  ["dashboard","Dashboard"], ["monthly","Monthly"], ["tickers","Tickers"],
+  ["positions","Positions"], ["performance","Performance"], ["diagnostics","Diagnostics"],
+  ["methodology","Methodology"]
 ];
-const nav = document.getElementById('nav');
-sections.forEach(([id,label],i)=>{ const b=document.createElement('button'); b.textContent=label; b.onclick=()=>show(id); if(i===0)b.className='active'; nav.appendChild(b); });
-function show(id){ document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active',s.id===id)); [...nav.children].forEach(b=>b.classList.toggle('active',b.textContent===sections.find(x=>x[0]===id)[1])); window.scrollTo({top:0,behavior:'instant'}); }
-const $ = (id)=>document.getElementById(id);
-const val = (v)=> v === null || v === undefined || Number.isNaN(v) ? null : Number(v);
-const money = (v)=> val(v)===null ? 'n/a' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v);
-const money2 = (v)=> val(v)===null ? 'n/a' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(v);
-const pct = (v)=> val(v)===null ? 'n/a' : new Intl.NumberFormat('en-US',{style:'percent',minimumFractionDigits:1,maximumFractionDigits:1}).format(v);
-const num = (v)=> val(v)===null ? 'n/a' : new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(v);
-const dec = (v,d=2)=> val(v)===null ? 'n/a' : Number(v).toFixed(d);
-const dateFmt = (v)=> v ? String(v).slice(0,10) : 'n/a';
-const cls = (v)=> val(v)===null ? '' : Number(v) < 0 ? 'neg' : Number(v) > 0 ? 'pos' : '';
-function card(label,value,note,klass=''){return `<div class="card"><div class="metric-label">${label}</div><div class="metric-value ${klass}">${value}</div>${note?`<div class="metric-note">${note}</div>`:''}</div>`}
-function badge(text,type=''){return `<span class="badge ${type}">${text}</span>`}
-function table(rows, cols, opts={}) {
-  if(!rows || rows.length===0) return '<div class="card muted">No rows.</div>';
-  const body = rows.map(r=>'<tr>'+cols.map(c=>{
-    const raw = c.value ? c.value(r) : r[c.key];
-    const value = c.format ? c.format(raw,r) : (raw ?? 'n/a');
-    const k = c.num ? 'num ' + (c.className ? c.className(raw,r) : '') : (c.className ? c.className(raw,r) : '');
-    return `<td class="${k}">${value}</td>`;
-  }).join('')+'</tr>').join('');
-  const head = '<tr>'+cols.map(c=>`<th class="${c.num?'num':''}">${c.label}</th>`).join('')+'</tr>';
-  return `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+const rangeOptions = ["3M","6M","YTD","1Y","Since inception"];
+const colors = ["#45d2c5","#7aa7ff","#f6c25b","#b99cff","#ff8e96","#7ee092"];
+const $ = (id) => document.getElementById(id);
+const safe = (v) => String(v ?? "n/a").replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[ch]));
+const numeric = (v) => v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
+const fmtMoney = (v, digits=0) => {
+  const places = Number.isInteger(digits) ? digits : 0;
+  return numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:places,maximumFractionDigits:places}).format(Number(v));
+};
+const fmtPct = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1}).format(Number(v));
+const fmtNum = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{maximumFractionDigits:0}).format(Number(v));
+const fmtDec = (v,d=2) => numeric(v) === null ? "n/a" : Number(v).toFixed(d);
+const fmtDate = (v) => v ? String(v).slice(0,10) : "n/a";
+const monthName = (v) => {
+  if (!v) return "n/a";
+  const d = new Date(String(v).slice(0,10) + "T00:00:00Z");
+  return Number.isNaN(d.getTime()) ? fmtDate(v) : d.toLocaleDateString("en-US",{month:"short",year:"numeric",timeZone:"UTC"});
+};
+const cls = (v) => numeric(v) === null ? "" : Number(v) < 0 ? "neg" : Number(v) > 0 ? "pos" : "";
+const moneynessCls = (v) => numeric(v) === null ? "" : Number(v) > 0 ? "neg" : Number(v) < 0 ? "pos" : "";
+const get = (obj, key) => key.split(".").reduce((acc, part) => acc == null ? undefined : acc[part], obj);
+function labelize(v){
+  return safe(String(v ?? "n/a").replaceAll("_"," ").replace(/\\b\\w/g, ch => ch.toUpperCase()));
 }
-function chartLine(rows, xKey, yKey, seriesKey) {
-  if(!rows || rows.length<2) return '<div class="card muted">Chart unavailable.</div>';
-  const w=760,h=280,p=34; const xs=[...new Set(rows.map(r=>dateFmt(r[xKey])))].sort();
-  const yVals=rows.map(r=>val(r[yKey])).filter(v=>v!==null); let yMin=Math.min(...yVals), yMax=Math.max(...yVals); if(yMin===yMax){yMin-=.05;yMax+=.05}
-  const sx=(x)=>p+(xs.indexOf(dateFmt(x))/(Math.max(xs.length-1,1)))*(w-p*2); const sy=(y)=>h-p-((y-yMin)/(yMax-yMin))*(h-p*2);
-  const colors=['#48d0bd','#7ddf8a','#f5b84c','#b69bff','#ff8b8b'];
-  const groups={}; rows.forEach(r=>{ const k=r[seriesKey]||'Series'; (groups[k] ||= []).push(r); });
-  const paths=Object.entries(groups).map(([name,vals],i)=>`<path class="line" stroke="${colors[i%colors.length]}" d="${vals.map((r,j)=>(j?'L':'M')+sx(r[xKey])+','+sy(val(r[yKey]))).join(' ')}"><title>${name}</title></path>`).join('');
-  const labels=Object.keys(groups).map((n,i)=>`<span class="badge" style="border-color:${colors[i%colors.length]}">${n}</span>`).join('');
-  return `<div class="card"><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="axis" x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}"></line><line class="axis" x1="${p}" y1="${p}" x2="${p}" y2="${h-p}"></line>${paths}<text x="${p}" y="${p-8}">${yMax.toFixed(2)}</text><text x="${p}" y="${h-8}">${yMin.toFixed(2)}</text></svg><div class="status-strip">${labels}</div></div>`;
+function badge(text, type=""){ return `<span class="badge ${type}">${safe(text)}</span>`; }
+function card(label, value, note="", klass=""){
+  return `<div class="card"><div class="metric-label">${safe(label)}</div><div class="metric-value mono ${klass}">${value}</div>${note ? `<div class="metric-note">${note}</div>` : ""}</div>`;
 }
-function chartBars(rows, xKey, yKey) {
-  if(!rows || rows.length===0) return '<div class="card muted">Chart unavailable.</div>';
-  const w=760,h=260,p=32; const vals=rows.map(r=>val(r[yKey])||0); const max=Math.max(...vals.map(v=>Math.abs(v)),1);
-  const barW=(w-p*2)/rows.length*.72, gap=(w-p*2)/rows.length*.28; const zero=h/2;
-  const bars=rows.map((r,i)=>{const v=val(r[yKey])||0; const x=p+i*(barW+gap); const bh=Math.abs(v)/max*(h/2-p); const y=v>=0?zero-bh:zero; return `<rect class="${v>=0?'bar-pos':'bar-neg'}" x="${x}" y="${y}" width="${barW}" height="${bh}"><title>${dateFmt(r[xKey])}: ${money2(v)}</title></rect>`}).join('');
-  return `<div class="card"><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="axis" x1="${p}" y1="${zero}" x2="${w-p}" y2="${zero}"></line>${bars}<text x="${p}" y="18">${money(max)}</text><text x="${p}" y="${h-8}">${money(-max)}</text></svg></div>`;
+function sectionHead(title, note="", right=""){
+  return `<div class="section-head"><div><h2>${safe(title)}</h2>${note ? `<div class="section-note">${note}</div>` : ""}</div>${right}</div>`;
 }
-function riskPill(r){ const band=r.moneyness_band; if(band==='in_the_money')return 'bad'; if(band==='at_strike'||band==='near_the_money')return 'warn'; return 'good'; }
-function renderRiskCards(rows){
-  if(!rows || rows.length===0) return '<div class="card muted">No open option shorts.</div>';
-  return `<div class="risk-list">${rows.map(r=>`<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${r.ticker} ${r.option_type||r.type} ${dec(r.strike,2)}</div><div class="muted">${dateFmt(r.expiration)} - ${r.days_to_expiration ?? 'n/a'} DTE</div></div><span class="pill ${riskPill(r)}">${r.risk_label || r.moneyness_band || 'Risk'}</span></div><div class="risk-meta"><span>Current ${money2(r.current_price)}</span><span>Moneyness ${pct(r.moneyness)}</span><span>Qty ${r.quantity ?? r.qty}</span><span>${r.covered_status || 'open'}</span><span>Premium ${money2(r.premium_collected ?? r.open_price*100*(r.quantity??r.qty??0))}</span><span>Opened ${dateFmt(r.opened || r.trans_date)}</span></div></div>`).join('')}</div>`;
+function segmented(id, options, selected){
+  const labels = {all:"All", itm:"ITM", near:"Near", clear:"Clear", covered:"Covered", cash_secured:"Cash-secured"};
+  return `<div class="segmented" id="${id}">${options.map(o => `<button type="button" data-value="${safe(o)}" class="${o === selected ? "active" : ""}">${safe(labels[o] || o)}</button>`).join("")}</div>`;
 }
-function initHeader(){
-  const d=data.dashboard; const freshness=d.data_freshness || {}; const price=freshness.price_coverage || {}; const issue=d.issue_summary || {};
-  const priced = price.priced_count ?? price.stocks_fetched ?? price.fetched ?? 0;
-  const required = price.required_count ?? price.stocks_requested ?? price.requested ?? 0;
-  const missing = price.missing_count ?? (required - priced);
-  $('subtitle').textContent = `${data.source.label} - as of ${dateFmt(d.request.as_of)} - generated ${dateFmt(data.generated_at)}`;
-  $('statusStrip').innerHTML = [
-    badge(`${priced}/${required} priced`, (missing||0)>0?'bad':'good'),
-    badge(`${issue.total_count ?? 0} actionable issues`, (issue.total_count||0)>0?'bad':'good'),
-    badge(`${data.source.row_count} source rows`),
-    badge(`Updated ${freshness.prices_updated_at ? String(freshness.prices_updated_at).slice(11,19) : 'n/a'}`)
-  ].join('');
+function riskTone(row){
+  const band = String(row.moneyness_band || "").toLowerCase();
+  const m = numeric(row.moneyness);
+  if (band === "in_the_money" || (m !== null && m >= 0)) return "bad";
+  if (band === "at_strike" || band === "near_the_money" || (m !== null && m >= -0.05)) return "warn";
+  if (m !== null && m < -0.10) return "blue";
+  return "good";
 }
-function renderOverview(){
-  const snap=data.dashboard.snapshot||{}, mt=data.dashboard.monthly_target||{}, open=data.open_shorts.items||data.positions.open_option_shorts||[];
-  const rows=(data.tables.monthly_cycles||[]).slice(-8).map(r=>({month:r.month,total_realized_pnl:r.total_realized_pnl}));
-  $('overview').innerHTML = `
-  <div class="grid metrics">${card('YTD total P&L', money(snap.ytd_total_pnl),'Realized plus current unrealized snapshot',cls(snap.ytd_total_pnl))}${card('YTD realized P&L', money(snap.ytd_realized_pnl),'Closed options, stock P&L, dividends',cls(snap.ytd_realized_pnl))}${card('Current unrealized', money(snap.current_unrealized_pnl),`Options ${money(snap.current_option_unrealized_pnl)} - Stock ${money(snap.current_stock_unrealized_pnl)}`,cls(snap.current_unrealized_pnl))}${card('YTD annualized TWR', pct(snap.ytd_annualized_twr),'Unrealized adjusted when enabled',cls(snap.ytd_annualized_twr))}</div>
-  <h2>Current Month</h2><div class="grid three">${card('Projected month P&L', money(mt.projected_month_pnl),`Realized ${money(mt.realized_month_pnl)} + incremental open premium ${money(mt.open_expiring_incremental_premium)}`,cls(mt.projected_month_pnl))}${card('Projected return', `${pct(mt.projected_return_roac)} RoAC`,`${mt.monthly_target_status || mt.status || 'status n/a'} - target ${pct(mt.target_return || data.monthly.target_return)}`,cls(mt.projected_return_roac - (mt.target_return || data.monthly.target_return || 0)))}${card('Roll-adjusted open premium', money(mt.open_expiring_roll_adjusted_premium),'Display/reconciliation only, not additive projection',cls(mt.open_expiring_roll_adjusted_premium))}</div>
-  <h2>Open Shorts At Risk</h2>${renderRiskCards(open.slice(0,8))}
-  <h2>Monthly P&L Trend</h2>${chartBars(rows,'month','total_realized_pnl')}
-  <h2>Benchmark Growth</h2>${chartLine(data.charts.benchmark_growth,'Date','Growth','Series')}`;
+function rowRiskClass(row){
+  const tone = riskTone(row);
+  if (tone === "bad") return "risk-row-itm";
+  if (tone === "warn") return "risk-row-near";
+  if (tone === "blue") return "risk-row-clear";
+  return "";
+}
+function dot(row){
+  const tone = riskTone(row);
+  return `<span class="risk-dot ${tone === "bad" ? "dot-bad" : tone === "warn" ? "dot-warn" : tone === "blue" ? "dot-blue" : "dot-good"}"></span>`;
+}
+function compareValues(a,b){
+  const na = numeric(a), nb = numeric(b);
+  if (na !== null && nb !== null) return na - nb;
+  const da = Date.parse(a), db = Date.parse(b);
+  if (!Number.isNaN(da) && !Number.isNaN(db)) return da - db;
+  return String(a ?? "").localeCompare(String(b ?? ""));
+}
+function sortedRows(tableId, rows, columns){
+  const state = appState.sort[tableId];
+  if (!state) return rows;
+  const col = columns.find(c => c.key === state.key);
+  if (!col) return rows;
+  return [...rows].sort((a,b) => {
+    const av = col.value ? col.value(a) : get(a, col.key);
+    const bv = col.value ? col.value(b) : get(b, col.key);
+    return compareValues(av,bv) * (state.dir === "desc" ? -1 : 1);
+  });
+}
+function dataTable(tableId, rows, columns, opts={}){
+  const tableRows = sortedRows(tableId, rows || [], columns);
+  const title = opts.title ? `<div class="table-title"><div><strong>${safe(opts.title)}</strong>${opts.subtitle ? `<span>${safe(opts.subtitle)}</span>` : ""}</div>${opts.count === false ? "" : badge(`${fmtNum(tableRows.length)} rows`,"blue")}</div>` : "";
+  if (!tableRows.length) return `<div class="table-card ${opts.small ? "small-table" : ""}">${title}<div class="empty">No rows.</div></div>`;
+  const head = `<tr>${columns.map(c => `<th class="${c.num ? "num" : ""}"><button type="button" onclick="sortTable('${tableId}','${c.key}')">${safe(c.label)}</button></th>`).join("")}</tr>`;
+  const body = tableRows.map(row => `<tr class="${opts.rowClass ? opts.rowClass(row) : ""}">${columns.map(c => {
+    const raw = c.value ? c.value(row) : get(row, c.key);
+    const value = c.format ? c.format(raw,row) : safe(raw);
+    const cellClass = [c.num ? "num" : "", c.className ? c.className(raw,row) : ""].filter(Boolean).join(" ");
+    return `<td class="${cellClass}">${value}</td>`;
+  }).join("")}</tr>`).join("");
+  return `<div class="table-card ${opts.small ? "small-table" : ""} ${opts.wide ? "wide-table" : ""}">${title}<div class="table-scroll" style="${opts.maxHeight ? `max-height:${opts.maxHeight}px` : ""}"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
+}
+function sortTable(tableId,key){
+  const current = appState.sort[tableId] || {};
+  appState.sort[tableId] = {key, dir: current.key === key && current.dir !== "desc" ? "desc" : "asc"};
+  render();
+}
+function parseDate(v){ const d = new Date(fmtDate(v) + "T00:00:00Z"); return Number.isNaN(d.getTime()) ? null : d; }
+function addMonths(date, months){ const d = new Date(date); d.setUTCMonth(d.getUTCMonth() + months); return d; }
+function rangeFiltered(rows, dateKey){
+  const range = appState.range;
+  if (range === "Since inception") return rows || [];
+  const asOf = parseDate(data.dashboard.request?.as_of || data.generated_at) || new Date();
+  let start = null;
+  if (range === "3M") start = addMonths(asOf, -3);
+  if (range === "6M") start = addMonths(asOf, -6);
+  if (range === "1Y") start = addMonths(asOf, -12);
+  if (range === "YTD") start = new Date(Date.UTC(asOf.getUTCFullYear(),0,1));
+  return (rows || []).filter(row => {
+    const d = parseDate(get(row,dateKey));
+    return !start || (d && d >= start && d <= asOf);
+  });
+}
+function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
+  const clean = (rows || []).filter(r => numeric(get(r,yKey)) !== null && get(r,xKey));
+  if (clean.length < 2) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
+  const w=900,h=310,pad={l:54,r:18,t:18,b:38};
+  const dates=[...new Set(clean.map(r => fmtDate(get(r,xKey))))].sort();
+  const yVals=clean.map(r=>numeric(get(r,yKey))).filter(v=>v!==null);
+  let yMin=Math.min(...yVals), yMax=Math.max(...yVals);
+  const yPad=(yMax-yMin)*0.12 || 0.05; yMin-=yPad; yMax+=yPad;
+  const sx=(v)=> pad.l + (dates.indexOf(fmtDate(v)) / Math.max(dates.length-1,1)) * (w-pad.l-pad.r);
+  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
+  const groups={}; clean.forEach(r => { const name = get(r,seriesKey) || "Series"; (groups[name] ||= []).push(r); });
+  const grid=[0,.25,.5,.75,1].map(t => { const y=pad.t+t*(h-pad.t-pad.b); const value=yMax-t*(yMax-yMin); return `<line class="grid-line" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}"></line><text x="8" y="${y+4}">${safe(yFormat(value))}</text>`; }).join("");
+  const paths=Object.entries(groups).map(([name,vals],i) => {
+    vals.sort((a,b)=>String(get(a,xKey)).localeCompare(String(get(b,xKey))));
+    return `<path class="line" stroke="${colors[i%colors.length]}" d="${vals.map((r,j)=>(j?"L":"M")+sx(get(r,xKey))+","+sy(numeric(get(r,yKey)))).join(" ")}"><title>${safe(name)}</title></path>`;
+  }).join("");
+  const labels=Object.keys(groups).map((name,i)=>`<span class="legend-item"><span class="legend-swatch" style="background:${colors[i%colors.length]}"></span>${safe(name)}</span>`).join("");
+  const first=dates[0], last=dates[dates.length-1];
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${paths}<text x="${pad.l}" y="${h-10}">${safe(first)}</text><text x="${w-pad.r-84}" y="${h-10}">${safe(last)}</text></svg><div class="legend">${labels}</div></div>`;
+}
+function barChart(title, rows, xKey, yKey){
+  const clean=(rows || []).filter(r=>numeric(get(r,yKey))!==null);
+  if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
+  const w=900,h=300,pad={l:58,r:18,t:18,b:48};
+  const vals=clean.map(r=>numeric(get(r,yKey)) || 0);
+  const max=Math.max(...vals.map(v=>Math.abs(v)),1);
+  const zero=pad.t+(h-pad.t-pad.b)/2;
+  const slot=(w-pad.l-pad.r)/clean.length;
+  const bw=Math.max(8,slot*.68);
+  const bars=clean.map((r,i)=>{
+    const v=numeric(get(r,yKey)) || 0; const x=pad.l+i*slot+(slot-bw)/2;
+    const bh=Math.abs(v)/max*((h-pad.t-pad.b)/2-8); const y=v>=0?zero-bh:zero;
+    const label=clean.length<=14?`<text x="${x}" y="${h-18}" transform="rotate(35 ${x} ${h-18})">${safe(monthName(get(r,xKey)).split(" ")[0])}</text>`:"";
+    return `<rect class="${v>=0?"bar-pos":"bar-neg"}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(get(r,xKey)))}: ${safe(fmtMoney(v))}</title></rect>${label}`;
+  }).join("");
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet"><line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line><text x="8" y="${pad.t+8}">${safe(fmtMoney(max))}</text><text x="8" y="${h-pad.b}">${safe(fmtMoney(-max))}</text>${bars}</svg></div>`;
+}
+function growthFromReturns(rows){
+  let growth=1;
+  return rangeFiltered(rows || [],"month").sort((a,b)=>String(a.month).localeCompare(String(b.month))).map(row => {
+    growth *= (1 + (numeric(row.return) || 0));
+    return {month: row.month, Series: "Strategy", Growth: growth};
+  });
+}
+function openShortRows(){
+  const rows = data.positions.open_option_shorts || data.open_shorts.items || [];
+  const q = appState.openSearch.trim().toUpperCase();
+  return rows.filter(row => {
+    const m = numeric(row.moneyness);
+    const tone = riskTone(row);
+    const riskOk = appState.openRisk === "all"
+      || (appState.openRisk === "itm" && tone === "bad")
+      || (appState.openRisk === "near" && tone === "warn")
+      || (appState.openRisk === "clear" && (tone === "good" || tone === "blue"));
+    const cov = String(row.covered_status || "").toLowerCase();
+    const covOk = appState.openCoverage === "all"
+      || (appState.openCoverage === "covered" && cov.includes("covered"))
+      || (appState.openCoverage === "cash_secured" && cov.includes("cash"));
+    const text = `${row.ticker || ""} ${row.option_type || ""} ${row.strike || ""} ${row.expiration || ""}`.toUpperCase();
+    return riskOk && covOk && (!q || text.includes(q)) && m !== null;
+  });
+}
+function openShortColumns(){
+  return [
+    {key:"ticker",label:"Ticker",format:(v,r)=>`${dot(r)}<strong>${safe(v)}</strong>`},
+    {key:"option_type",label:"Type"},
+    {key:"strike",label:"Strike",format:v=>fmtMoney(v,2),num:true},
+    {key:"expiration",label:"Expiry",format:fmtDate},
+    {key:"days_to_expiration",label:"DTE",num:true},
+    {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
+    {key:"moneyness",label:"Moneyness",format:fmtPct,num:true,className:moneynessCls},
+    {key:"quantity",label:"Qty",num:true},
+    {key:"premium_collected",label:"Premium",format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"covered_status",label:"Coverage"}
+  ];
+}
+function openShortToolbar(){
+  return `<div class="toolbar">
+    ${segmented("riskControl",["all","itm","near","clear"],appState.openRisk)}
+    ${segmented("coverageControl",["all","covered","cash_secured"],appState.openCoverage)}
+    <input id="openSearch" value="${safe(appState.openSearch)}" placeholder="Filter ticker, strike, expiry">
+  </div>
+  <div class="footnote"><span class="risk-dot dot-bad"></span>ITM <span class="risk-dot dot-warn"></span>At/near strike <span class="risk-dot dot-good"></span>OK <span class="risk-dot dot-blue"></span>Deep OTM</div>`;
+}
+function riskCards(rows){
+  const top = (rows || []).slice(0,6);
+  if (!top.length) return `<div class="panel muted">No open shorts match the filters.</div>`;
+  return `<div class="risk-grid">${top.map(r => {
+    const tone = riskTone(r);
+    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${labelize(r.risk_label || r.moneyness_band || tone)}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Premium ${safe(fmtMoney(r.premium_collected,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
+  }).join("")}</div>`;
+}
+function monthlyRows(){
+  const cycles = new Map((data.tables.monthly_cycles || []).map(row => [fmtDate(row.month), row]));
+  return (data.monthly.months || []).map(row => ({...(cycles.get(fmtDate(row.month)) || {}), ...row}));
+}
+function renderHeader(){
+  const d=data.dashboard || {}, freshness=d.data_freshness || {}, price=freshness.price_coverage || {}, issue=d.issue_summary || {};
+  const priced=price.priced_count ?? price.stocks_fetched ?? price.fetched ?? 0;
+  const required=price.required_count ?? price.stocks_requested ?? price.requested ?? 0;
+  const missing=price.missing_count ?? Math.max(required-priced,0);
+  $("subtitle").textContent = `${data.source.label} - as of ${fmtDate(d.request?.as_of)} - generated ${fmtDate(data.generated_at)}`;
+  $("statusStrip").innerHTML = [
+    badge(`${priced}/${required} priced`, missing > 0 ? "bad" : "good"),
+    badge(`${issue.total_count ?? 0} actionable issues`, (issue.total_count || 0) ? "bad" : "good"),
+    badge(`${fmtNum(data.source.row_count)} source rows`, "blue"),
+    badge(`Updated ${freshness.prices_updated_at ? String(freshness.prices_updated_at).slice(11,19) : "n/a"}`)
+  ].join("");
+  $("workflowStrip").innerHTML = [
+    badge("Dashboard: monitor current month"),
+    badge("Positions: inventory first"),
+    badge("Diagnostics: data quality")
+  ].join("");
+  $("rangeControl").innerHTML = rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}">${safe(o)}</button>`).join("");
+}
+function renderDashboard(){
+  const snap=data.dashboard.snapshot || {}, mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
+  const pnlRows = rangeFiltered(data.tables.options_cycle_pnl || data.tables.monthly_cycles || [], "Date");
+  const benchmark = (data.charts.benchmark_growth_by_range || {})[appState.range] || data.charts.benchmark_growth || [];
+  $("dashboard").innerHTML = `
+    <div class="grid metrics">
+      ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), "Realized plus current unrealized snapshot", cls(snap.ytd_total_pnl))}
+      ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
+      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
+      ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
+    </div>
+    ${sectionHead("Current Month", "Projected values keep realized P&L separate from open premium.")}
+    <div class="grid metrics">
+      ${card("Projected month P&L", fmtMoney(mt.projected_month_pnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + incremental open premium ${safe(fmtMoney(mt.open_expiring_incremental_premium))}`, cls(mt.projected_month_pnl))}
+      ${card("Projected return", `${safe(fmtPct(mt.projected_return_roac))} RoAC`, `Target ${safe(fmtPct(mt.target_return || data.monthly.target_return))} - ${labelize(mt.monthly_target_status || mt.status || "status n/a")}`, cls((numeric(mt.projected_return_roac)||0) - (numeric(mt.target_return || data.monthly.target_return)||0)))}
+      ${card("Remaining to target", fmtMoney(mt.projected_remaining_pnl), "Based on projected monthly target", cls(-1*(numeric(mt.projected_remaining_pnl)||0)))}
+      ${card("Roll-adjusted open premium", fmtMoney(mt.open_expiring_roll_adjusted_premium), "Display/reconciliation only", cls(mt.open_expiring_roll_adjusted_premium))}
+    </div>
+    ${sectionHead("Open Shorts Monitor", `${shorts.length} open shorts match current filters.`, "")}
+    ${openShortToolbar()}
+    ${riskCards(shorts)}
+    <div style="height:12px"></div>
+    ${dataTable("dashboard-open-shorts", shorts, openShortColumns(), {title:"Open shorts", subtitle:"Sorted by backend moneyness risk; click any header to sort.", rowClass:rowRiskClass, wide:true, maxHeight:460})}
+    ${sectionHead("Performance Charts", "Use the range control above to match Streamlit chart behavior.")}
+    <div class="grid two-even">${barChart("P&L by Options Cycle", pnlRows, "Date", "pnl")}${lineChart("Cumulative Growth vs Benchmarks", benchmark, "Date", "Growth", "Series", v=>fmtDec(v,2)+"x")}</div>
+  `;
 }
 function renderMonthly(){
-  const m=data.monthly; const future=m.future_months||[]; const rows=m.months||[];
-  $('monthly').innerHTML = `<h2>Monthly Performance</h2><div class="grid two"><div>${table(rows,[{key:'month',label:'Month',format:dateFmt},{key:'realized_options_pnl',label:'Options',format:money,num:true,className:cls},{key:'realized_stock_pnl',label:'Stock',format:money,num:true,className:cls},{key:'dividends',label:'Dividends',format:money,num:true},{key:'total_realized_pnl',label:'Realized',format:money,num:true,className:cls},{key:'open_expiring_incremental_premium',label:'Open incremental',format:money,num:true,className:cls},{key:'open_expiring_roll_adjusted_premium',label:'Open roll-adjusted',format:money,num:true,className:cls},{key:'projected_month_pnl',label:'Projected',format:money,num:true,className:cls},{key:'projected_return_roac',label:'Proj. RoAC',format:pct,num:true}])}</div><div><h3>Future Expiry Months</h3>${table(future,[{key:'month',label:'Month',format:dateFmt},{key:'open_option_count',label:'Open',num:true},{key:'open_expiring_incremental_premium',label:'Incremental',format:money,num:true,className:cls},{key:'open_expiring_roll_adjusted_premium',label:'Roll-adjusted',format:money,num:true,className:cls},{key:'projection_basis',label:'Basis'}])}</div></div><h2>Return Curve</h2>${chartLine(data.charts.monthly_returns.map(r=>({month:r.month,Series:'Strategy',Growth:(1+(r.return||0))})).reduce((acc,r,i)=>{const prev=i?acc[i-1].Growth:1; acc.push({...r,Growth:prev*(1+(r.return||0))}); return acc;},[]),'month','Growth','Series')}`;
+  const rows = monthlyRows();
+  const filtered = rangeFiltered(rows, "month");
+  const returns = growthFromReturns(data.charts.monthly_returns || []);
+  const future = data.monthly.future_months || [];
+  $("monthly").innerHTML = `
+    ${sectionHead("Monthly Performance", "Calendar-month realized results plus explicit current/future projection fields.")}
+    <div class="grid two-even">
+      ${lineChart("Cumulative Growth by Month", returns, "month", "Growth", "Series", v=>fmtDec(v,2)+"x")}
+      ${barChart("Monthly Realized P&L", filtered.map(r=>({Date:r.month,pnl:r.total_realized_pnl})), "Date", "pnl")}
+    </div>
+    <div style="height:12px"></div>
+    ${dataTable("monthly-table", rows, [
+      {key:"month",label:"Month",format:monthName},
+      {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
+      {key:"realized_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+      {key:"dividends",label:"Dividends",format:fmtMoney,num:true},
+      {key:"total_realized_pnl",label:"Total realized",format:fmtMoney,num:true,className:cls},
+      {key:"avg_capital",label:"Avg capital",format:fmtMoney,num:true},
+      {key:"peak_capital",label:"Peak capital",format:fmtMoney,num:true},
+      {key:"return_roac",label:"RoAC",format:fmtPct,num:true,className:cls},
+      {key:"return_ropc",label:"RoPC",format:fmtPct,num:true,className:cls},
+      {key:"open_expiring_incremental_premium",label:"Open incremental",format:fmtMoney,num:true,className:cls},
+      {key:"open_expiring_roll_adjusted_premium",label:"Open roll-adjusted",format:fmtMoney,num:true,className:cls},
+      {key:"projected_month_pnl",label:"Projected P&L",format:fmtMoney,num:true,className:cls},
+      {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true,className:cls},
+      {key:"monthly_target_status",label:"Target status"}
+    ], {title:"Monthly table", subtitle:"Matches Streamlit monthly columns and adds explicit projection semantics.", wide:true})}
+    ${sectionHead("Future Open Expiry Months", "Future months are shown separately so iOS/web do not infer roll semantics client-side.")}
+    ${dataTable("future-months", future, [
+      {key:"month",label:"Month",format:monthName},
+      {key:"open_option_count",label:"Open options",num:true},
+      {key:"open_expiring_incremental_premium",label:"Incremental premium",format:fmtMoney,num:true,className:cls},
+      {key:"open_expiring_roll_adjusted_premium",label:"Roll-adjusted premium",format:fmtMoney,num:true,className:cls},
+      {key:"projected_month_pnl",label:"Projected P&L",format:fmtMoney,num:true,className:cls},
+      {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true},
+      {key:"projection_basis",label:"Basis"}
+    ], {title:"Future expiry months", small:true})}
+  `;
 }
 function renderTickers(){
-  const rows=data.tickers.items || data.tables.per_ticker_totals || [];
-  $('tickers').innerHTML = `<h2>Ticker P&L</h2><div class="toolbar"><input id="tickerSearch" placeholder="Filter ticker..."></div><div id="tickerTable"></div><h2>Yearly Ticker P&L</h2>${table(data.tables.per_ticker_yearly,[{key:'year',label:'Year',num:true},{key:'ticker',label:'Ticker'},{key:'options_pnl',label:'Options',format:money,num:true,className:cls},{key:'stock_realized_pnl',label:'Stock',format:money,num:true,className:cls},{key:'combined_realized',label:'Realized',format:money,num:true,className:cls}])}`;
-  const render=()=>{ const q=($('tickerSearch').value||'').toUpperCase(); const filtered=rows.filter(r=>!q || String(r.ticker).includes(q)); $('tickerTable').innerHTML=table(filtered,[{key:'ticker',label:'Ticker'},{key:'realized_options_pnl',label:'Options',format:money,num:true,className:cls},{key:'realized_stock_pnl',label:'Stock',format:money,num:true,className:cls},{key:'dividends',label:'Dividends',format:money,num:true},{key:'combined_realized_pnl',label:'Realized',format:money,num:true,className:cls},{key:'unrealized_pnl',label:'Unrealized',format:money,num:true,className:cls},{key:'total_pnl',label:'Total',format:money,num:true,className:cls},{key:'open_option_count',label:'Open options',num:true},{key:'inventory_share_count',label:'Shares',num:true}]); };
-  $('tickerSearch').oninput=render; render();
+  const rows = data.tickers.items || data.tables.per_ticker_totals || [];
+  const years = ["all", ...[...new Set((data.tables.per_ticker_yearly || []).map(r => String(r.year)))].sort()];
+  const q = appState.tickerSearch.trim().toUpperCase();
+  const filtered = rows.filter(r => !q || String(r.ticker || "").toUpperCase().includes(q));
+  const yearly = (data.tables.per_ticker_yearly || []).filter(r => (appState.tickerYear === "all" || String(r.year) === appState.tickerYear) && (!q || String(r.ticker || "").toUpperCase().includes(q)));
+  $("tickers").innerHTML = `
+    ${sectionHead("Per-Ticker P&L", "Ticker totals include realized options, realized stock, dividends, unrealized snapshot, and total P&L.")}
+    <div class="toolbar"><input id="tickerSearch" value="${safe(appState.tickerSearch)}" placeholder="Filter ticker"><select id="tickerYear">${years.map(y=>`<option value="${safe(y)}" ${y===appState.tickerYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select></div>
+    ${dataTable("ticker-totals", filtered, [
+      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+      {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
+      {key:"realized_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+      {key:"dividends",label:"Dividends",format:fmtMoney,num:true,className:cls},
+      {key:"combined_realized_pnl",label:"Realized",format:fmtMoney,num:true,className:cls},
+      {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls},
+      {key:"total_pnl",label:"Total P&L",format:fmtMoney,num:true,className:cls},
+      {key:"current_price",label:"Price",format:v=>fmtMoney(v,2),num:true},
+      {key:"open_option_count",label:"Open options",num:true},
+      {key:"inventory_share_count",label:"Shares",num:true}
+    ], {title:"Ticker totals", subtitle:"Click headers to sort; use the filter above to inspect a ticker.", wide:true})}
+    ${sectionHead("Per-Year Ticker Realized P&L")}
+    ${dataTable("ticker-yearly", yearly, [
+      {key:"year",label:"Year",num:true},
+      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+      {key:"options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
+      {key:"stock_realized_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+      {key:"combined_realized",label:"Total realized",format:fmtMoney,num:true,className:cls}
+    ], {title:"Per-year realized P&L", wide:true})}
+  `;
 }
 function renderPositions(){
-  $('positions').innerHTML = `<h2>Assigned Holdings</h2>${table(data.positions.inventory,[{key:'ticker',label:'Ticker'},{key:'buy_date',label:'Buy date',format:dateFmt},{key:'shares',label:'Shares',num:true},{key:'cost_per_share',label:'Cost/share',format:money2,num:true},{key:'current_price',label:'Current',format:money2,num:true},{key:'covered_shares',label:'Covered',num:true},{key:'covered_strike',label:'Cover strike',format:money2,num:true},{key:'unrealized_pnl',label:'Unrealized',format:money,num:true,className:cls},{key:'source',label:'Source'}])}<h2>Open Option Shorts</h2>${renderRiskCards(data.positions.open_option_shorts)}<div style="height:12px"></div>${table(data.positions.open_option_shorts,[{key:'ticker',label:'Ticker'},{key:'option_type',label:'Type'},{key:'strike',label:'Strike',format:money2,num:true},{key:'expiration',label:'Expiry',format:dateFmt},{key:'days_to_expiration',label:'DTE',num:true},{key:'quantity',label:'Qty',num:true},{key:'current_price',label:'Current',format:money2,num:true},{key:'moneyness',label:'Moneyness',format:pct,num:true},{key:'premium_collected',label:'Premium',format:money2,num:true},{key:'covered_status',label:'Coverage'}])}`;
+  const shorts = openShortRows();
+  $("positions").innerHTML = `
+    ${sectionHead("Assigned Holdings and Exposure", "Inventory comes first; open shorts are monitored separately below.")}
+    ${dataTable("inventory", data.positions.inventory || [], [
+      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+      {key:"buy_date",label:"Buy date",format:fmtDate},
+      {key:"shares",label:"Shares",num:true},
+      {key:"cost_per_share",label:"Cost/share",format:v=>fmtMoney(v,2),num:true},
+      {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
+      {key:"covered_shares",label:"Covered shares",num:true},
+      {key:"covered_strike",label:"Covered strike",format:v=>fmtMoney(v,2),num:true},
+      {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls},
+      {key:"source",label:"Source"}
+    ], {title:"Assigned holdings", subtitle:"Covered strike caps assigned holdings when covered calls are open.", wide:true})}
+    ${sectionHead("Open Option Shorts", `${shorts.length} rows after filters.`)}
+    ${openShortToolbar()}
+    ${dataTable("positions-open-shorts", shorts, openShortColumns(), {title:"Open option shorts", subtitle:"Moneyness colors match the Streamlit control dashboard.", rowClass:rowRiskClass, wide:true})}
+  `;
 }
 function renderPerformance(){
-  $('performance').innerHTML = `<h2>Yearly Performance</h2>${table(data.yearly.years,[{key:'year',label:'Year',num:true},{key:'realized_options_pnl',label:'Options',format:money,num:true,className:cls},{key:'realized_stock_pnl',label:'Stock',format:money,num:true,className:cls},{key:'dividends',label:'Dividends',format:money,num:true},{key:'total_realized_pnl',label:'Realized',format:money,num:true,className:cls},{key:'total_pnl_including_unrealized',label:'With unrealized',format:money,num:true,className:cls},{key:'avg_capital',label:'Avg capital',format:money,num:true},{key:'peak_capital',label:'Peak capital',format:money,num:true},{key:'roac_year',label:'RoAC',format:pct,num:true},{key:'ropc_year',label:'RoPC',format:pct,num:true},{key:'annualized_twr',label:'Ann. TWR',format:pct,num:true}])}<h2>Benchmark Metrics</h2>${table(data.tables.benchmark_metrics,[{key:'Series',label:'Series'},{key:'CAGR',label:'CAGR',format:pct,num:true},{key:'Volatility',label:'Volatility',format:pct,num:true},{key:'Sharpe',label:'Sharpe',format:(v)=>dec(v,2),num:true},{key:'Sortino',label:'Sortino',format:(v)=>dec(v,2),num:true},{key:'Max Drawdown',label:'Max DD',format:pct,num:true},{key:'Return 3M',label:'3M',format:pct,num:true},{key:'Return 6M',label:'6M',format:pct,num:true},{key:'Return YTD',label:'YTD',format:pct,num:true},{key:'Return SI',label:'Since inception',format:pct,num:true}])}<h2>Benchmark Growth</h2>${chartLine(data.charts.benchmark_growth,'Date','Growth','Series')}`;
+  const benchmark = (data.charts.benchmark_growth_by_range || {})[appState.range] || data.charts.benchmark_growth || [];
+  const pnlRows = rangeFiltered(data.tables.options_cycle_pnl || [], "Date");
+  $("performance").innerHTML = `
+    ${sectionHead("Yearly Performance", "Realized yearly table plus unrealized-adjusted current-year view.")}
+    ${dataTable("yearly-mobile", data.yearly.years || [], [
+      {key:"year",label:"Year",num:true},
+      {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
+      {key:"realized_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+      {key:"dividends",label:"Dividends",format:fmtMoney,num:true},
+      {key:"total_realized_pnl",label:"Realized",format:fmtMoney,num:true,className:cls},
+      {key:"total_pnl_including_unrealized",label:"With unrealized",format:fmtMoney,num:true,className:cls},
+      {key:"avg_capital",label:"Avg capital",format:fmtMoney,num:true},
+      {key:"peak_capital",label:"Peak capital",format:fmtMoney,num:true},
+      {key:"roac_year",label:"RoAC",format:fmtPct,num:true,className:cls},
+      {key:"ropc_year",label:"RoPC",format:fmtPct,num:true,className:cls},
+      {key:"annualized_twr",label:"Ann. TWR",format:fmtPct,num:true,className:cls},
+      {key:"annualized_twr_unrealized_adjusted",label:"Ann. TWR adj.",format:fmtPct,num:true,className:cls}
+    ], {title:"Yearly performance", wide:true})}
+    <div style="height:12px"></div>
+    <div class="grid two-even">${lineChart("Cumulative Growth vs Benchmarks", benchmark, "Date", "Growth", "Series", v=>fmtDec(v,2)+"x")}${barChart("P&L by Options Cycle", pnlRows, "Date", "pnl")}</div>
+    ${sectionHead("Benchmark Metrics")}
+    ${dataTable("benchmark-metrics", data.tables.benchmark_metrics || [], [
+      {key:"Series",label:"Series"},
+      {key:"CAGR",label:"CAGR",format:fmtPct,num:true},
+      {key:"Volatility",label:"Volatility",format:fmtPct,num:true},
+      {key:"Sharpe",label:"Sharpe",format:v=>fmtDec(v,2),num:true},
+      {key:"Sortino",label:"Sortino",format:v=>fmtDec(v,2),num:true},
+      {key:"Max Drawdown",label:"Max DD",format:fmtPct,num:true},
+      {key:"Return 3M",label:"3M",format:fmtPct,num:true},
+      {key:"Return 6M",label:"6M",format:fmtPct,num:true},
+      {key:"Return YTD",label:"YTD",format:fmtPct,num:true},
+      {key:"Return 1Y",label:"1Y",format:fmtPct,num:true},
+      {key:"Return SI",label:"Since inception",format:fmtPct,num:true}
+    ], {title:"Key performance metrics versus benchmarks", wide:true})}
+    ${sectionHead("Expectancy Analysis")}
+    ${dataTable("expectancy", data.tables.expectancy || [], [
+      {key:"Category",label:"Category"},
+      {key:"Count",label:"Count",num:true},
+      {key:"Win rate",label:"Win rate",format:fmtPct,num:true},
+      {key:"Avg win",label:"Avg win",format:fmtMoney,num:true,className:cls},
+      {key:"Avg loss",label:"Avg loss",format:fmtMoney,num:true,className:cls},
+      {key:"Expectancy",label:"Expectancy",format:fmtMoney,num:true,className:cls},
+      {key:"Total P&L",label:"Total P&L",format:fmtMoney,num:true,className:cls}
+    ], {title:"Expectancy", small:true})}
+  `;
 }
 function renderDiagnostics(){
-  const iss=data.issues, sum=iss.summary||{}, aud=iss.audit_summary||{}, fresh=data.dashboard.data_freshness||{};
-  const currentCoverage = fresh.price_coverage || {};
-  const currentPriced = currentCoverage.priced_count ?? currentCoverage.stocks_fetched ?? currentCoverage.fetched ?? 0;
-  const currentRequired = currentCoverage.required_count ?? currentCoverage.stocks_requested ?? currentCoverage.requested ?? 0;
-  $('diagnostics').innerHTML = `<h2>Data Health</h2><div class="grid metrics">${card('Actionable issues', num(sum.total_count||0),'Warnings/errors requiring attention',(sum.total_count||0)>0?'neg':'pos')}${card('Audit notes', num(aud.total_count||0),'Expected IBKR classification notes','')}${card('Source rows', num(data.source.row_count),'IBKR Flex imported rows','')}${card('Prices updated', fresh.prices_updated_at || 'n/a','Current price snapshot','')}</div><h2>Actionable Issues</h2>${table(iss.issues||[],[{key:'severity',label:'Severity'},{key:'category',label:'Category'},{key:'message',label:'Message'}])}<h2>Coverage</h2><div class="grid three">${card('Current prices', `${currentPriced}/${currentRequired}`,'Missing prices block unrealized metrics if required')}${card('Historical prices', `${iss.coverage?.historical_prices?.fetched ?? 0}/${iss.coverage?.historical_prices?.requested ?? 0}`,'Capital and benchmark coverage')}${card('Dividends', `${iss.coverage?.dividends?.failed_tickers?.length ?? 0} failed`,'Dividend cashflow coverage')}</div><h2>Reconciliation Notes</h2><div class="note-list">${data.reconciliation_notes.map(n=>`<div class="note"><strong>${n.case} - ${n.status}</strong><span class="muted">${n.detail}</span></div>`).join('')}</div><h2>Audit Notes</h2><details><summary>Show ${aud.total_count||0} audit notes</summary>${table((iss.audit_notes||[]).slice(0,500),[{key:'category',label:'Category'},{key:'severity',label:'Severity'},{key:'message',label:'Message'}])}</details>`;
+  const iss=data.issues || {}, sum=iss.summary || {}, aud=iss.audit_summary || {}, fresh=data.dashboard.data_freshness || {}, coverage=fresh.price_coverage || {};
+  const priced=coverage.priced_count ?? coverage.stocks_fetched ?? coverage.fetched ?? 0;
+  const required=coverage.required_count ?? coverage.stocks_requested ?? coverage.requested ?? 0;
+  $("diagnostics").innerHTML = `
+    ${sectionHead("Data Health", "Actionable issues are separated from expected IBKR audit notes.")}
+    <div class="grid metrics">
+      ${card("Actionable issues", fmtNum(sum.total_count || 0), "Warnings/errors requiring attention", (sum.total_count || 0) ? "neg" : "pos")}
+      ${card("Audit notes", fmtNum(aud.total_count || 0), "Expected classification notes")}
+      ${card("Current prices", `${safe(priced)}/${safe(required)}`, "Required pricing coverage", (required && priced < required) ? "neg" : "pos")}
+      ${card("Source rows", fmtNum(data.source.row_count), data.source.kind || "source")}
+    </div>
+    ${sectionHead("Actionable Issues")}
+    ${dataTable("issues", iss.issues || [], [
+      {key:"severity",label:"Severity"},
+      {key:"category",label:"Category"},
+      {key:"message",label:"Message"}
+    ], {title:"Warnings and errors", wide:true})}
+    ${sectionHead("Source and Coverage")}
+    <div class="grid two-even">
+      ${dataTable("sheet-counts", data.source.sheet_counts || [], [
+        {key:"source_sheet",label:"Source",value:r=>r.source_sheet || r.sheet || r.name},
+        {key:"rows",label:"Rows",num:true,value:r=>r.rows}
+      ], {title:"Loaded rows by source", small:true})}
+      ${dataTable("stock-prices", data.tables.stock_prices || [], [
+        {key:"ticker",label:"Ticker"},
+        {key:"price",label:"Price",format:v=>fmtMoney(v,2),num:true}
+      ], {title:"Stock prices used", small:true, maxHeight:360})}
+    </div>
+    ${sectionHead("Unrealized and Cashflow Detail")}
+    <div class="grid two-even">
+      ${dataTable("unrealized-by-ticker", data.tables.unrealized_by_ticker || [], [
+        {key:"ticker",label:"Ticker"},
+        {key:"unrealized_pnl",label:"Unrealized P&L",format:fmtMoney,num:true,className:cls}
+      ], {title:"Unrealized by ticker", small:true, maxHeight:360})}
+      ${dataTable("dividends", data.tables.dividends || [], [
+        {key:"ex_date",label:"Ex/pay date",format:fmtDate},
+        {key:"ticker",label:"Ticker"},
+        {key:"shares",label:"Shares",num:true},
+        {key:"per_share",label:"Per share",format:v=>fmtMoney(v,2),num:true},
+        {key:"cash",label:"Cash",format:fmtMoney,num:true,className:cls}
+      ], {title:"Dividends", small:true, maxHeight:360})}
+    </div>
+    ${sectionHead("Reconciliation Notes")}
+    <div class="note-list">${(data.reconciliation_notes || []).map(n=>`<div class="note"><strong>${safe(n.case)} - ${safe(n.status)}</strong><span class="muted">${safe(n.detail)}</span></div>`).join("")}</div>
+    ${sectionHead("Audit Notes")}
+    <details><summary>Show ${fmtNum(aud.total_count || 0)} audit notes</summary><div style="height:10px"></div>${dataTable("audit-notes", (iss.audit_notes || []).slice(0,600), [
+      {key:"category",label:"Category"},
+      {key:"severity",label:"Severity"},
+      {key:"message",label:"Message"}
+    ], {title:"Wheel audit notes", subtitle:"Expected non-wheel exclusions and classification notes.", wide:true})}</details>
+    ${sectionHead("Capital Tail")}
+    ${dataTable("capital-tail", data.tables.capital_daily_tail || [], [
+      {key:"date",label:"Date",format:fmtDate},
+      {key:"total",label:"Total capital",format:fmtMoney,num:true},
+      {key:"shares_invested",label:"Shares invested",format:fmtMoney,num:true},
+      {key:"puts_reserve",label:"Put reserve",format:fmtMoney,num:true}
+    ], {title:"Capital daily tail", wide:true})}
+  `;
 }
 function renderMethodology(){
-  $('methodology').innerHTML = `<h2>Methodology</h2><div class="grid two"><div class="card"><h3>Source</h3><p>Production web and iOS read from imported IBKR Flex data in Firestore. Streamlit Cloud remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included only when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>Realized P&L stays separate from projected values. Open expiring incremental premium is additive for projected month P&L. Roll-adjusted open premium is a display/reconciliation field and is not added again.</p></div><div class="card"><h3>Unrealized snapshot</h3><p>Current unrealized values are a monitoring snapshot, not full option mark-to-market accounting. Missing required current prices suppress unrealized totals.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns against aligned benchmark monthly series where coverage is complete.</p><h3>Refresh</h3><p>The refresh button rebuilds the cached backend context and current price overlay. It does not mutate accounting rules.</p></div></div>`;
+  $("methodology").innerHTML = `
+    ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
+    <div class="grid two-even">
+      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>Realized P&L stays separate from projected values. Open expiring incremental premium is additive. Roll-adjusted open premium is displayed for reconciliation and is not added again.</p></div>
+      <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh rebuilds the cached backend context and price overlay without changing accounting rules.</p></div>
+    </div>
+  `;
 }
-initHeader(); renderOverview(); renderMonthly(); renderTickers(); renderPositions(); renderPerformance(); renderDiagnostics(); renderMethodology();
+function bindControls(){
+  document.querySelectorAll("#rangeControl button").forEach(btn => btn.addEventListener("click", () => { appState.range = btn.dataset.value; render(); }));
+  const risk = $("riskControl"); if (risk) risk.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => { appState.openRisk = btn.dataset.value; render(); }));
+  const coverage = $("coverageControl"); if (coverage) coverage.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => { appState.openCoverage = btn.dataset.value; render(); }));
+  const openSearch = $("openSearch"); if (openSearch) openSearch.addEventListener("input", (e) => { appState.openSearch = e.target.value; render(); });
+  const tickerSearch = $("tickerSearch"); if (tickerSearch) tickerSearch.addEventListener("input", (e) => { appState.tickerSearch = e.target.value; render(); });
+  const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
+}
+function render(){
+  try {
+    renderHeader();
+    [...$("nav").children].forEach(b => b.classList.toggle("active", b.dataset.section === appState.active));
+    renderSection("dashboard", renderDashboard);
+    renderSection("monthly", renderMonthly);
+    renderSection("tickers", renderTickers);
+    renderSection("positions", renderPositions);
+    renderSection("performance", renderPerformance);
+    renderSection("diagnostics", renderDiagnostics);
+    renderSection("methodology", renderMethodology);
+    document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
+    bindControls();
+  } catch (err) {
+    const target = $(appState.active);
+    if (target) {
+      target.innerHTML = `<div class="panel"><h2>Section failed to render</h2><p class="error">${safe(err && (err.stack || err.message) || err)}</p></div>`;
+    }
+    console.error(err);
+  }
+}
+function renderSection(id, fn){
+  try {
+    fn();
+  } catch (err) {
+    const target = $(id);
+    if (target) {
+      target.innerHTML = `<div class="panel"><h2>${safe(id)} failed to render</h2><p class="error">${safe(err && (err.stack || err.message) || err)}</p></div>`;
+    }
+    console.error(err);
+  }
+}
+function initNav(){
+  $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}">${safe(label)}</button>`).join("");
+  [...$("nav").children].forEach(btn => btn.addEventListener("click", () => { appState.active = btn.dataset.section; render(); window.scrollTo({top:0,behavior:"instant"}); }));
+}
+initNav();
+render();
 </script>
 </body>
 </html>""".replace(
