@@ -2018,3 +2018,80 @@ def test_ibkr_wheel_option_executions_include_calls_only_against_assignment_inve
     assert [row.otype for row in included] == ["Put", "Call"]
     assert not excluded
     assert not issues
+
+
+def test_ibkr_vertical_put_spread_is_excluded_from_wheel_put_pnl():
+    long_put_open = _trade(
+        symbol="SPY   230217P00350000",
+        underlyingSymbol="SPY",
+        description="SPY 17FEB23 350 P",
+        conid="SPY-LONG-PUT",
+        tradeID="SPY-LONG-OPEN",
+        transactionID="SPY-LONG-X1",
+        ibExecID="SPY-LONG-E1",
+        tradeDate="20221228",
+        dateTime="20221228;141554",
+        expiry="20230217",
+        strike="350",
+        putCall="P",
+        buySell="BUY",
+        openCloseIndicator="O",
+        quantity="10",
+        tradePrice="3.30",
+        proceeds="-3300",
+        ibCommission="-10",
+        netCash="-3310",
+    )
+    short_put_open = _trade(
+        symbol="SPY   230217P00353000",
+        underlyingSymbol="SPY",
+        description="SPY 17FEB23 353 P",
+        conid="SPY-SHORT-PUT",
+        tradeID="SPY-SHORT-OPEN",
+        transactionID="SPY-SHORT-X1",
+        ibExecID="SPY-SHORT-E1",
+        tradeDate="20221228",
+        dateTime="20221228;141554",
+        expiry="20230217",
+        strike="353",
+        putCall="P",
+        buySell="SELL",
+        openCloseIndicator="O",
+        quantity="-10",
+        tradePrice="3.83",
+        proceeds="3830",
+        ibCommission="-10",
+        netCash="3820",
+    )
+    short_put_close = _trade(
+        symbol="SPY   230217P00353000",
+        underlyingSymbol="SPY",
+        description="SPY 17FEB23 353 P",
+        conid="SPY-SHORT-PUT",
+        tradeID="SPY-SHORT-CLOSE",
+        transactionID="SPY-SHORT-X2",
+        ibExecID="SPY-SHORT-E2",
+        tradeDate="20230110",
+        dateTime="20230110;154607",
+        expiry="20230217",
+        strike="353",
+        putCall="P",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="10",
+        tradePrice="1.27",
+        proceeds="-1270",
+        ibCommission="-10",
+        netCash="-1280",
+    )
+
+    executions = option_executions_from_rows(
+        [long_put_open, short_put_open, short_put_close],
+        short_strategy_only=False,
+    )
+    included, excluded, issues = wheel_option_executions(executions, [])
+
+    assert not included
+    assert [row.trade_id for row in excluded] == ["SPY-LONG-OPEN", "SPY-SHORT-OPEN", "SPY-SHORT-CLOSE"]
+    assert any("put spread contracts" in issue for issue in issues)
+    assert any("put spread close contracts" in issue for issue in issues)

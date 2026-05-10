@@ -487,15 +487,18 @@ def wheel_option_executions(
     assigned put. Calls without that inventory are covered-call trades, not
     wheel trades for this dashboard.
     """
+    all_executions = list(executions)
     segments = list(holding_segments)
     included: list[IbkrOptionExecution] = []
     excluded: list[IbkrOptionExecution] = []
     issues: list[str] = []
+    spread_short_open_qty = _vertical_spread_short_open_quantities(all_executions)
+    excluded_put_lots: dict[tuple, list[dict]] = {}
     open_call_lots: dict[tuple, list[dict]] = {}
     excluded_call_lots: dict[tuple, list[dict]] = {}
     excluded_roll_groups: set[tuple] = set()
 
-    def call_key(execution: IbkrOptionExecution) -> tuple:
+    def option_key(execution: IbkrOptionExecution) -> tuple:
         return (execution.ticker, execution.otype, execution.strike, execution.expiration)
 
     def roll_group_key(execution: IbkrOptionExecution) -> Optional[tuple]:
@@ -520,8 +523,8 @@ def wheel_option_executions(
                 else:
                     allocations.pop(key, None)
 
-    def append_call_lot(allocations: dict[tuple, list[dict]], execution: IbkrOptionExecution) -> None:
-        allocations.setdefault(call_key(execution), []).append(
+    def append_option_lot(allocations: dict[tuple, list[dict]], execution: IbkrOptionExecution) -> None:
+        allocations.setdefault(option_key(execution), []).append(
             {
                 "ticker": execution.ticker,
                 "qty": execution.qty,
@@ -530,10 +533,10 @@ def wheel_option_executions(
             }
         )
 
-    def consume_call_lots(allocations: dict[tuple, list[dict]], execution: IbkrOptionExecution, qty: float) -> float:
+    def consume_option_lots(allocations: dict[tuple, list[dict]], execution: IbkrOptionExecution, qty: float) -> float:
         remaining = qty
         consumed = 0.0
-        key = call_key(execution)
+        key = option_key(execution)
         buckets = allocations.get(key, [])
         while remaining > 1e-9 and buckets:
             lot = buckets[0]
@@ -558,7 +561,7 @@ def wheel_option_executions(
 
     def add_excluded_sell(execution: IbkrOptionExecution) -> None:
         excluded.append(execution)
-        append_call_lot(excluded_call_lots, execution)
+        append_option_lot(excluded_call_lots, execution)
 
     def allocated_call_shares(ticker: str) -> float:
         return sum(
@@ -595,9 +598,42 @@ def wheel_option_executions(
             ),
         )
 
-    for execution in executions:
+    for execution in all_executions:
         if execution.otype == "Put":
-            included.append(execution)
+            if execution.action == "Sell" and execution.open_close == "O":
+                spread_qty = min(spread_short_open_qty.get(_execution_key(execution), 0.0), execution.qty)
+                if spread_qty > 1e-9:
+                    spread_part, remaining_part = split_execution(execution, spread_qty)
+                    if spread_part is not None:
+                        excluded.append(spread_part)
+                        append_option_lot(excluded_put_lots, spread_part)
+                        issues.append(
+                            f"Excluded {spread_part.qty:g} {execution.ticker} put spread contracts on {execution.date.date()} "
+                            "because the short put was opened with a protective long put."
+                        )
+                    if remaining_part is not None:
+                        included.append(remaining_part)
+                    continue
+                included.append(execution)
+                continue
+
+            if execution.action == "Buy" and execution.open_close == "C":
+                excluded_qty = consume_option_lots(excluded_put_lots, execution, execution.qty)
+                if excluded_qty > 1e-9:
+                    excluded_part, remaining_part = split_execution(execution, excluded_qty)
+                    if excluded_part is not None:
+                        excluded.append(excluded_part)
+                        issues.append(
+                            f"Excluded {excluded_part.qty:g} {execution.ticker} put spread close contracts on {execution.date.date()} "
+                            "because they close a non-wheel spread put lot."
+                        )
+                    if remaining_part is not None:
+                        included.append(remaining_part)
+                    continue
+                included.append(execution)
+                continue
+
+            excluded.append(execution)
             continue
         if execution.otype != "Call":
             excluded.append(execution)
@@ -608,9 +644,9 @@ def wheel_option_executions(
         open_close = execution.open_close
 
         if action == "Buy" and open_close == "C":
-            included_qty = consume_call_lots(open_call_lots, execution, execution.qty)
+            included_qty = consume_option_lots(open_call_lots, execution, execution.qty)
             remaining = execution.qty - included_qty
-            excluded_qty = consume_call_lots(excluded_call_lots, execution, remaining) if remaining > 1e-9 else 0.0
+            excluded_qty = consume_option_lots(excluded_call_lots, execution, remaining) if remaining > 1e-9 else 0.0
             unmatched_qty = execution.qty - included_qty - excluded_qty
 
             included_part, after_included = split_execution(execution, included_qty)
@@ -640,6 +676,10 @@ def wheel_option_executions(
             excluded.append(execution)
             continue
 
+        if open_close != "O":
+            excluded.append(execution)
+            continue
+
         if open_close == "O" and is_excluded_roll_replacement(execution):
             add_excluded_sell(execution)
             issues.append(
@@ -647,6 +687,20 @@ def wheel_option_executions(
                 "because the closed call lot was non-wheel."
             )
             continue
+
+        if open_close == "O":
+            spread_qty = min(spread_short_open_qty.get(_execution_key(execution), 0.0), execution.qty)
+            if spread_qty > 1e-9:
+                spread_part, remaining_part = split_execution(execution, spread_qty)
+                if spread_part is not None:
+                    add_excluded_sell(spread_part)
+                    issues.append(
+                        f"Excluded {spread_part.qty:g} {execution.ticker} call spread contracts on {execution.date.date()} "
+                        "because the short call was opened with a protective long call."
+                    )
+                if remaining_part is None:
+                    continue
+                execution = remaining_part
 
         held_shares = held_shares_for(execution)
         required_shares = execution.qty * execution.multiplier
@@ -669,7 +723,7 @@ def wheel_option_executions(
         included_part, excluded_part = split_execution(execution, include_qty)
         if included_part is not None:
             included.append(included_part)
-            append_call_lot(open_call_lots, included_part)
+            append_option_lot(open_call_lots, included_part)
         if excluded_part is None:
             continue
 
@@ -680,6 +734,70 @@ def wheel_option_executions(
         )
 
     return included, excluded, issues
+
+
+def _execution_key(execution: IbkrOptionExecution) -> tuple:
+    return (
+        execution.date,
+        execution.ticker,
+        execution.otype,
+        execution.action,
+        execution.open_close,
+        execution.expiration,
+        execution.strike,
+        execution.trade_id,
+        execution.transaction_id,
+        execution.ib_exec_id,
+    )
+
+
+def _vertical_spread_short_open_quantities(executions: Iterable[IbkrOptionExecution]) -> dict[tuple, float]:
+    long_open_buckets: dict[tuple, list[dict]] = {}
+    short_open_executions: list[IbkrOptionExecution] = []
+    for execution in executions:
+        if execution.open_close != "O":
+            continue
+        group_key = (execution.date, execution.ticker, execution.otype, execution.expiration)
+        if execution.action == "Buy":
+            long_open_buckets.setdefault(group_key, []).append(
+                {
+                    "strike": execution.strike,
+                    "qty": execution.qty,
+                }
+            )
+        elif execution.action == "Sell":
+            short_open_executions.append(execution)
+
+    for buckets in long_open_buckets.values():
+        buckets.sort(key=lambda item: item["strike"])
+
+    spread_qty_by_execution: dict[tuple, float] = {}
+    for execution in short_open_executions:
+        group_key = (execution.date, execution.ticker, execution.otype, execution.expiration)
+        buckets = long_open_buckets.get(group_key, [])
+        if not buckets:
+            continue
+        remaining = execution.qty
+        matched = 0.0
+        for bucket in buckets:
+            if remaining <= 1e-9:
+                break
+            if bucket["qty"] <= 1e-9:
+                continue
+            protective = (
+                execution.otype == "Put" and bucket["strike"] < execution.strike
+            ) or (
+                execution.otype == "Call" and bucket["strike"] > execution.strike
+            )
+            if not protective:
+                continue
+            take = min(remaining, bucket["qty"])
+            bucket["qty"] -= take
+            remaining -= take
+            matched += take
+        if matched > 1e-9:
+            spread_qty_by_execution[_execution_key(execution)] = matched
+    return spread_qty_by_execution
 
 
 def _ibkr_roll_execution_group(ib_exec_id: Optional[str]) -> Optional[str]:
@@ -833,7 +951,7 @@ def yearly_performance_from_report(
         as_of=through_ts,
     )
     option_executions_all = filter_executions(
-        option_executions_from_report(report),
+        option_executions_from_report(report, short_strategy_only=False),
         since=since,
         through=through,
     )

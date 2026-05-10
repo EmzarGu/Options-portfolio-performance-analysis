@@ -120,7 +120,7 @@ def main() -> int:
     sheet = _sheet_yearly(app, as_of=as_of.date(), sheets=sheets)
     comparison = _comparison_table(sheet, yearly)
 
-    all_option_executions = filter_executions(option_executions_from_report(report), since=since, through=as_of)
+    all_option_executions = filter_executions(option_executions_from_report(report, short_strategy_only=False), since=since, through=as_of)
     movements = wheel_stock_movements_from_report(report)
     realized, segments, stock_issues = compute_wheel_stock_realized_and_segments(movements, as_of=as_of)
     option_executions, excluded_option_executions, option_issues = wheel_option_executions(all_option_executions, segments)

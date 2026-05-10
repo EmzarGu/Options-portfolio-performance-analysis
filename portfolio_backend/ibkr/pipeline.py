@@ -73,7 +73,7 @@ def wheel_option_trade_rows_from_report(
         as_of=pd.to_datetime(through).normalize() if through is not None else None,
     )
     executions = filter_executions(
-        option_executions_from_report(report),
+        option_executions_from_report(report, short_strategy_only=False),
         since=since,
         through=through,
     )
@@ -101,7 +101,7 @@ def wheel_options_dataframe_from_report(
         as_of=pd.to_datetime(through).normalize() if through is not None else None,
     )
     executions = filter_executions(
-        option_executions_from_report(report),
+        option_executions_from_report(report, short_strategy_only=False),
         since=since,
         through=through,
     )
@@ -302,7 +302,7 @@ def ibkr_option_positions_from_report(
         as_of=pd.to_datetime(as_of).normalize(),
     )
     executions = filter_executions(
-        option_executions_from_report(report),
+        option_executions_from_report(report, short_strategy_only=False),
         through=pd.to_datetime(as_of).normalize(),
     )
     included, _, option_issues = wheel_option_executions(executions, holding_segments)
