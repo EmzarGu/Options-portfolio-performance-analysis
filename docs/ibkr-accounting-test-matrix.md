@@ -27,7 +27,7 @@ test. If a case is not covered, it is not production-ready.
 | PUT-CLOSE-001 | Short put bought to close | Realize open credit minus close debit/fees on close date. Remaining partial quantity stays open. | `test_ibkr_partial_buy_to_close_preserves_remaining_short_lot` | Covered |
 | PUT-ASSIGN-001 | Short put assigned | Realize option premium at assignment. Create stock buy only when option-side put assignment and stock-side buy evidence match. | `test_ibkr_short_put_assignment_creates_stock_buy`; `test_ibkr_assignment_book_trade_does_not_mask_assignment`; `test_ibkr_stock_side_buy_without_put_assignment_does_not_seed_wheel_call_inventory` | Covered |
 | CALL-NOWHEEL-001 | Call without prior assigned-put inventory | Exclude call open/close/assignment from wheel option P&L. Do not include dividends. | `test_ibkr_yearly_performance_excludes_call_without_prior_put_assignment_inventory`; `test_ibkr_wheel_option_executions_include_calls_only_against_assignment_inventory`; `test_ibkr_stock_side_buy_without_put_assignment_does_not_seed_wheel_call_inventory` | Covered |
-| CALL-EXP-001 | Wheel covered call expires worthless | Include only if covered by assignment-derived shares. Realize premium on expiration. Keep stock inventory open. | Covered indirectly through option lifecycle and call-eligibility tests. Needs explicit end-to-end expiration test. | Gap |
+| CALL-EXP-001 | Wheel covered call expires worthless | Include only if covered by assignment-derived shares. Realize premium on expiration. Keep stock inventory open. | `test_ibkr_wheel_covered_call_expiration_realizes_premium_and_keeps_stock` | Covered |
 | CALL-CLOSE-001 | Wheel covered call bought to close | Include only if backed by assignment-derived shares. Realize open credit minus close debit/fees on close date. | `test_ibkr_wheel_call_filter_does_not_reuse_same_shares_for_overlapping_calls` | Covered |
 | CALL-ASSIGN-001 | Wheel covered call assigned | Realize call premium. Sell only matched assignment-derived shares FIFO. | `test_ibkr_short_call_assignment_creates_stock_sell`; `test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_uncovered_calls` | Covered |
 | CALL-PARTIAL-ASSIGN-001 | Partial call assignment after put assignment | Sell only assigned quantity, realize stock P&L for sold shares, leave remaining assignment-derived inventory open. | `test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_remaining_inventory` | Covered |
@@ -37,31 +37,30 @@ test. If a case is not covered, it is not production-ready.
 | ROLL-CALL-001 | Same-order call roll | If close and replacement share IBKR execution group, net replacement credit into old close event and keep replacement open with zero unrecognized premium. | `test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_counting_replacement`; `test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized_premium` | Covered |
 | ROLL-CALL-002 | Same-day unrelated call close/open | Do not net unless IBKR execution group proves a roll. | `test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open` | Covered |
 | ROLL-CALL-003 | Non-wheel call roll chain | Exclude close and replacement when the original call was non-wheel. Replacement must not enter wheel P&L later. | `test_ibkr_wheel_call_filter_keeps_excluded_roll_chain_out_of_wheel_pnl` | Covered |
-| ROLL-PUT-001 | Same-order put roll | Same execution-group roll netting as calls, with no stock effect unless later assigned. | No explicit put-roll end-to-end test. | Gap |
+| ROLL-PUT-001 | Same-order put roll | Same execution-group roll netting as calls, with no stock effect unless later assigned. | `test_ibkr_pipeline_nets_same_order_put_roll_without_double_counting_replacement` | Covered |
 | LONG-OPT-001 | Long option open/close | Preserve raw transactions. Exclude from short-option wheel metrics until long-option strategy support exists. | `test_ibkr_long_option_legs_are_excluded_from_short_strategy_adapter` | Covered |
 | STOCK-ASSIGN-001 | Stock bought through assigned put | Include only when matched to option-side put assignment. Cost basis from stock-side row/strike. | `test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_uncovered_calls`; `test_ibkr_stock_side_buy_without_put_assignment_does_not_seed_wheel_call_inventory` | Covered |
 | STOCK-CALL-SELL-001 | Stock sold through assigned call | Consume assignment-derived inventory FIFO; ignore unmatched assigned-call shares. | `test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_uncovered_calls`; `test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_remaining_inventory` | Covered |
-| STOCK-MANUAL-SELL-001 | Assignment-derived stock later sold manually | Manual stock sell should consume assignment-derived inventory FIFO and realize wheel stock P&L; unrelated manual stock sells remain excluded. | Current tests preserve stock trades but do not assert wheel consumption of manual sells after assignment. | Gap |
+| STOCK-MANUAL-SELL-001 | Assignment-derived stock later sold manually | Manual stock sell consumes assignment-derived inventory FIFO and realizes wheel stock P&L for the matched shares only; unrelated manual stock sells remain excluded. | `test_ibkr_manual_stock_sell_consumes_assignment_inventory_only` | Covered |
 | STOCK-MANUAL-BUY-001 | Manual stock buy followed by covered call | Exclude stock, call, dividends, and stock P&L from wheel metrics. | `test_ibkr_manual_stock_trade_is_preserved_as_normalized_transaction_but_not_option_row`; call exclusion tests | Covered |
 | DIV-001 | Dividend during assignment-derived holding period | Include net dividend/withholding only for eligible assignment-derived shares and holding dates. | `test_ibkr_cashflows_preserve_net_dividend_components`; `test_ibkr_yearly_performance_combines_option_cash_stock_realized_and_net_dividends` | Covered |
-| DIV-PRORATE-001 | Dividend on mixed wheel/non-wheel shares | Include only assignment-derived share portion. Use ex-date for eligibility when available. | Covered in implementation path, but no explicit mixed-share regression. | Gap |
+| DIV-PRORATE-001 | Dividend on mixed wheel/non-wheel shares | Include only assignment-derived share portion. Use ex-date for eligibility when available. | `test_ibkr_dividends_are_prorated_to_assignment_derived_shares` | Covered |
 | CASH-001 | Interest, fees, deposits, withdrawals | Store/classify separately; exclude from wheel option/stock/dividend P&L unless directly attached to a trade. | No explicit end-to-end exclusion tests for interest/fees/transfers. | Gap |
-| PRIOR-001 | Positions before import window | Use backfill from `2022-11-01` as baseline. If a required basis predates available data, flag missing basis instead of inventing P&L. | Import range planning tests exist; accounting seed behavior is not fully tested. | Gap |
+| PRIOR-001 | Positions before import window | Use automated backfill from `2022-11-01` as baseline for the agreed wheel inception date. If Firestore is empty or has gaps, auto mode plans the missing 365-day Flex ranges plus recent overlap. Pre-inception position seeding remains out of scope unless real evidence appears. | `test_plan_missing_import_ranges_backfills_full_inception_after_reset`; `test_plan_missing_import_ranges_backfills_gaps_and_recent_overlap`; `test_plan_missing_import_ranges_only_recent_overlap_when_coverage_complete` | Covered for agreed inception scope |
 | CORP-001 | Corporate action adjusts shares/contracts/basis | Preserve and flag first. Implement specific action only when encountered and documented. | No accounting regression yet. | Deferred |
 
-## Immediate Blockers Before IBKR Becomes Production Source
+## Remaining Non-Blocking Gaps
 
-These gaps are material because they can change reported P&L, inventory, or
-dividends:
+These are not blockers for the agreed wheel scope, but they must become
+documented blockers if real IBKR activity matching the case appears:
 
-1. `STOCK-MANUAL-SELL-001`: assignment-derived stock sold manually after a put
-   assignment must be included in wheel stock P&L. This is the Apple-style case.
-2. `ROLL-PUT-001`: put rolls need the same explicit end-to-end protection as
-   call rolls.
-3. `DIV-PRORATE-001`: dividend allocation must be explicitly tested for mixed
-   wheel/non-wheel holdings.
-4. `CALL-EXP-001`: wheel covered-call expiration needs a direct pipeline test.
-5. `PRIOR-001`: missing baseline/basis must fail loudly or warn clearly.
+1. `CASH-001`: interest, account fees, deposits, and withdrawals need explicit
+   end-to-end exclusion/classification tests.
+2. `CORP-001`: corporate actions should remain preserved and flagged until a
+   real encountered action is documented and implemented.
+3. Pre-`2022-11-01` position seeding is out of scope because the agreed options
+   history starts in November 2022. If evidence of earlier wheel positions
+   appears, `PRIOR-001` must be reopened before production use.
 
 ## Change Procedure
 

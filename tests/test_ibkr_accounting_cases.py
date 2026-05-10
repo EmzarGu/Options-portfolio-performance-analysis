@@ -639,6 +639,280 @@ def test_ibkr_partial_call_assignment_sells_only_assigned_quantity_and_keeps_rem
     assert not [issue for issue in state.issues if "EMN call" in issue or "assigned-call sold shares of EMN" in issue]
 
 
+def test_ibkr_manual_stock_sell_consumes_assignment_inventory_only():
+    put_open = _trade(
+        symbol="AAPL  260117P00100000",
+        underlyingSymbol="AAPL",
+        description="AAPL 17JAN26 100 P",
+        conid="8001",
+        tradeID="AAPL-PUT-OPEN",
+        transactionID="AAPL-X1",
+        ibExecID="AAPL-E1",
+        tradeDate="20260110",
+        dateTime="20260110;154500",
+        expiry="20260117",
+        strike="100",
+        putCall="P",
+        quantity="-1",
+        proceeds="250",
+        ibCommission="-1",
+        netCash="249",
+    )
+    put_assignment = _option_eae(
+        symbol="AAPL  260117P00100000",
+        underlyingSymbol="AAPL",
+        description="AAPL 17JAN26 100 P",
+        conid="8001",
+        tradeID="AAPL-PUT-OPEN",
+        date="20260117",
+        expiry="20260117",
+        strike="100",
+        putCall="P",
+        quantity="-1",
+        multiplier="100",
+    )
+    assigned_buy = _stock_eae(
+        symbol="AAPL",
+        tradeID="AAPL-STOCK-BUY",
+        date="20260117",
+        transactionType="Buy",
+        quantity="100",
+        tradePrice="100",
+        proceeds="-10000",
+    )
+    manual_sell = _trade(
+        assetCategory="STK",
+        symbol="AAPL",
+        underlyingSymbol="",
+        description="AAPL",
+        conid="9001",
+        tradeID="AAPL-STOCK-SELL",
+        transactionID="AAPL-SX1",
+        ibExecID="AAPL-SE1",
+        tradeDate="20260210",
+        dateTime="20260210;154500",
+        expiry="",
+        strike="",
+        putCall="",
+        buySell="SELL",
+        openCloseIndicator="",
+        quantity="-100",
+        multiplier="1",
+        tradePrice="120",
+        proceeds="12000",
+        ibCommission="0",
+        netCash="12000",
+    )
+    unrelated_sell = _trade(
+        assetCategory="STK",
+        symbol="MSFT",
+        underlyingSymbol="",
+        description="MSFT",
+        conid="9002",
+        tradeID="MSFT-STOCK-SELL",
+        transactionID="MSFT-SX1",
+        ibExecID="MSFT-SE1",
+        tradeDate="20260210",
+        dateTime="20260210;154500",
+        expiry="",
+        strike="",
+        putCall="",
+        buySell="SELL",
+        openCloseIndicator="",
+        quantity="-100",
+        multiplier="1",
+        tradePrice="300",
+        proceeds="30000",
+        ibCommission="0",
+        netCash="30000",
+    )
+
+    report = _report(
+        {
+            "Trade": [put_open, manual_sell, unrelated_sell],
+            "OptionEAE": [put_assignment, assigned_buy],
+        }
+    )
+
+    state = build_ibkr_base_pipeline(
+        report,
+        as_of=pd.Timestamp("2026-02-28").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(txn.ticker, txn.side, txn.shares, txn.price, txn.source) for txn in state.stock_txns] == [
+        ("AAPL", "BUY", 100, 100.0, "Assigned Put"),
+        ("AAPL", "SELL", 100, 120.0, "Manual Stock Sell"),
+    ]
+    assert [(sale.ticker, sale.shares, sale.proceeds, sale.cost, sale.pnl, sale.source) for sale in state.realized_sales] == [
+        ("AAPL", 100, 12000.0, 10000.0, 2000.0, "Manual Stock Sell")
+    ]
+    assert not state.ending_inventory
+    assert not [
+        issue
+        for issue in state.issues
+        if "MSFT" in issue or "manually sold shares" in issue or "assigned-call sold shares of AAPL" in issue
+    ]
+
+
+def test_ibkr_wheel_covered_call_expiration_realizes_premium_and_keeps_stock():
+    put_open = _trade(
+        symbol="ABC  260117P00100000",
+        description="ABC 17JAN26 100 P",
+        expiry="20260117",
+        strike="100",
+        putCall="P",
+        quantity="-1",
+        proceeds="250",
+        ibCommission="-1",
+        netCash="249",
+    )
+    put_assignment = _option_eae(date="20260117", expiry="20260117", strike="100", putCall="P", quantity="-1")
+    assigned_buy = _stock_eae(date="20260117", transactionType="Buy", quantity="100", tradePrice="100", proceeds="-10000")
+    call_open = _trade(
+        symbol="ABC  260220C00110000",
+        description="ABC 20FEB26 110 C",
+        conid="2001",
+        tradeID="CALL-OPEN",
+        transactionID="CALL-X1",
+        ibExecID="CALL-E1",
+        tradeDate="20260120",
+        dateTime="20260120;154500",
+        expiry="20260220",
+        strike="110",
+        putCall="C",
+        quantity="-1",
+        proceeds="150",
+        ibCommission="-1",
+        netCash="149",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report({"Trade": [put_open, call_open], "OptionEAE": [put_assignment, assigned_buy]}),
+        as_of=pd.Timestamp("2026-02-28").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert [(event.ticker, event.otype, event.qty, event.pnl, event.reason) for event in state.realized_option_events] == [
+        ("ABC", "Put", 1, pytest.approx(249.0), "assignment"),
+        ("ABC", "Call", 1, pytest.approx(149.0), "expiration"),
+    ]
+    assert [(lot.ticker, lot.shares_remaining, lot.cost_per_share) for lot in state.ending_inventory] == [
+        ("ABC", 100, 100.0)
+    ]
+
+
+def test_ibkr_pipeline_nets_same_order_put_roll_without_double_counting_replacement():
+    open_old = _trade(
+        putCall="P",
+        symbol="ABC  251219P00100000",
+        description="ABC 19DEC25 100 P",
+        tradeDate="20251101",
+        dateTime="20251101;154500",
+        expiry="20251219",
+        strike="100",
+        quantity="-1",
+        proceeds="1000",
+        ibCommission="-1",
+        netCash="999",
+    )
+    close_old = _trade(
+        putCall="P",
+        symbol="ABC  251219P00100000",
+        description="ABC 19DEC25 100 P",
+        tradeID="PUT-CLOSE",
+        transactionID="PUT-X2",
+        ibExecID="00014247.PUTROLL.03.01",
+        tradeDate="20251117",
+        dateTime="20251117;154500",
+        expiry="20251219",
+        strike="100",
+        buySell="BUY",
+        openCloseIndicator="C",
+        quantity="1",
+        proceeds="-5000",
+        ibCommission="-1",
+        netCash="-5001",
+    )
+    open_new = _trade(
+        putCall="P",
+        symbol="ABC  260220P00090000",
+        description="ABC 20FEB26 90 P",
+        tradeID="PUT-OPEN-NEW",
+        transactionID="PUT-X3",
+        ibExecID="00014247.PUTROLL.02.01",
+        tradeDate="20251117",
+        dateTime="20251117;154600",
+        expiry="20260220",
+        strike="90",
+        quantity="-1",
+        proceeds="5300",
+        ibCommission="-1",
+        netCash="5299",
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report({"Trade": [open_old, close_old, open_new]}),
+        as_of=pd.Timestamp("2026-03-01").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    yearly = state.yearly.set_index("year")
+    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(1297.0)
+    assert 2026 not in yearly.index or yearly.loc[2026, "realized_options_pnl"] == pytest.approx(0.0)
+    assert [(event.date, event.otype, event.pnl, event.reason) for event in state.realized_option_events] == [
+        (pd.Timestamp("2025-11-17"), "Put", pytest.approx(1297.0), "close"),
+        (pd.Timestamp("2026-02-20"), "Put", pytest.approx(0.0), "expiration"),
+    ]
+
+
+def test_ibkr_dividends_are_prorated_to_assignment_derived_shares():
+    put_open = _trade()
+    put_assignment = _option_eae(date="20260117", quantity="-1", strike="100", putCall="P")
+    assigned_buy = _stock_eae(date="20260117", transactionType="Buy", quantity="100", tradePrice="100", proceeds="-10000")
+    dividend = IbkrRawRow(
+        "CashTransaction",
+        {
+            "dateTime": "20260125;120000",
+            "exDate": "20260124",
+            "symbol": "ABC",
+            "description": "ABC DIVIDEND USD 1.00 PER SHARE",
+            "amount": "300",
+            "type": "Dividends",
+            "transactionID": "DIV-GROSS",
+            "actionID": "DIV-ACTION",
+        },
+    )
+    withholding = IbkrRawRow(
+        "CashTransaction",
+        {
+            "dateTime": "20260125;120000",
+            "exDate": "20260124",
+            "symbol": "ABC",
+            "amount": "-45",
+            "type": "Withholding Tax",
+            "transactionID": "DIV-WHT",
+            "actionID": "DIV-ACTION",
+        },
+    )
+
+    state = build_ibkr_base_pipeline(
+        _report({"Trade": [put_open], "OptionEAE": [put_assignment, assigned_buy], "CashTransaction": [dividend, withholding]}),
+        as_of=pd.Timestamp("2026-01-31").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+
+    assert state.div_df[["ticker", "cash_type", "cash"]].to_dict("records") == [
+        {"ticker": "ABC", "cash_type": "Dividends", "cash": pytest.approx(100.0)},
+        {"ticker": "ABC", "cash_type": "Withholding Tax", "cash": pytest.approx(-15.0)},
+    ]
+    assert state.monthly_cycles.loc[pd.Timestamp("2026-01-31"), "dividends"] == pytest.approx(85.0)
+
+
 def test_ibkr_wheel_options_dataframe_preserves_prorated_call_execution():
     report = _report(
         {

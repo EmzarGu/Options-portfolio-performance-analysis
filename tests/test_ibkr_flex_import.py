@@ -234,6 +234,21 @@ def test_plan_missing_import_ranges_backfills_gaps_and_recent_overlap():
     ]
 
 
+def test_plan_missing_import_ranges_backfills_full_inception_after_reset():
+    planned = plan_missing_import_ranges(
+        target=DateRange(date(2022, 11, 1), date(2026, 5, 8)),
+        existing=[],
+        recent_overlap_days=14,
+    )
+
+    assert planned == [
+        DateRange(date(2022, 11, 1), date(2023, 10, 31)),
+        DateRange(date(2023, 11, 1), date(2024, 10, 30)),
+        DateRange(date(2024, 10, 31), date(2025, 10, 30)),
+        DateRange(date(2025, 10, 31), date(2026, 5, 8)),
+    ]
+
+
 def test_plan_missing_import_ranges_only_recent_overlap_when_coverage_complete():
     planned = plan_missing_import_ranges(
         target=DateRange(date(2022, 11, 1), date(2026, 5, 8)),

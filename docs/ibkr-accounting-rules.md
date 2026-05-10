@@ -204,6 +204,11 @@ Recommended defaults:
     one open position with summed quantity and weighted-average open price.
     Example: two IBKR fills of `CCJ 18JUN26 120 C`, quantity 1 each, display as
     one open call position with quantity 2.
+13. Manual stock sells consume assignment-derived stock inventory FIFO before
+    they can affect wheel stock P&L. Only the matched assignment-derived share
+    quantity is included. Manual stock sells with no assignment-derived
+    inventory are treated as unrelated portfolio activity and excluded from the
+    wheel dashboard.
 
 ## Open Decisions
 

@@ -218,6 +218,39 @@ def wheel_stock_movements_from_rows(option_eae_rows: Iterable[IbkrRawRow]) -> li
     return sorted(movements, key=lambda row: (row.date, row.ticker, row.side, row.trade_id or ""))
 
 
+def manual_stock_sell_movements_from_rows(trade_rows: Iterable[IbkrRawRow]) -> list[WheelStockMovement]:
+    movements: list[WheelStockMovement] = []
+    for row in trade_rows:
+        attrs = row.attrs
+        if attrs.get("assetCategory") != "STK":
+            continue
+        if str(attrs.get("buySell", "")).upper() != "SELL":
+            continue
+        date = _date_or_nat(attrs.get("tradeDate") or attrs.get("dateTime"))
+        if pd.isna(date):
+            continue
+        shares = abs(_float_or_zero(attrs.get("quantity")))
+        if shares <= 1e-9:
+            continue
+        proceeds = _float_or_zero(attrs.get("netCash"))
+        if abs(proceeds) <= 1e-9:
+            proceeds = _float_or_zero(attrs.get("proceeds"))
+        price = abs(proceeds) / shares if shares else 0.0
+        movements.append(
+            WheelStockMovement(
+                date=pd.to_datetime(date).normalize(),
+                ticker=(_blank_to_none(attrs.get("symbol")) or "").upper(),
+                side="SELL",
+                shares=shares,
+                price=price,
+                proceeds=proceeds,
+                source="Manual Stock Sell",
+                trade_id=_blank_to_none(attrs.get("tradeID")),
+            )
+        )
+    return sorted(movements, key=lambda row: (row.date, row.ticker, row.trade_id or ""))
+
+
 def _wheel_assignment_stock_links(option_eae_rows: Iterable[IbkrRawRow]) -> list[dict]:
     links: list[dict] = []
     for row in option_eae_rows:
@@ -280,7 +313,13 @@ def _consume_assignment_stock_link(
 
 
 def wheel_stock_movements_from_report(report: IbkrFlexReport) -> list[WheelStockMovement]:
-    return wheel_stock_movements_from_rows(report.rows("OptionEAE"))
+    return sorted(
+        [
+            *wheel_stock_movements_from_rows(report.rows("OptionEAE")),
+            *manual_stock_sell_movements_from_rows(report.rows("Trade")),
+        ],
+        key=lambda row: (row.date, row.ticker, 0 if row.side == "BUY" else 1, row.trade_id or ""),
+    )
 
 
 def compute_wheel_stock_realized_and_segments(
@@ -342,6 +381,13 @@ def compute_wheel_stock_realized_and_segments(
                     source=movement.source,
                 )
             )
+        if remaining > 1e-9 and movement.source == "Manual Stock Sell":
+            if matched_shares > 1e-9:
+                issues.append(
+                    f"Ignored {remaining:g} manually sold shares of {movement.ticker} on {movement.date.date()} "
+                    "because no additional assignment-derived stock inventory was available."
+                )
+            continue
         if remaining > 1e-9:
             issues.append(
                 f"Ignored {remaining:g} assigned-call sold shares of {movement.ticker} on {movement.date.date()} "

@@ -362,7 +362,8 @@ Definitions:
   are included only while prior put-assignment stock inventory is held.
 - `stock_realized_pnl`: wheel-scoped stock P&L only. Assigned-put stock buys
   are matched FIFO to assigned-call stock sells from IBKR `OptionEAE` stock-side
-  rows. Unrelated IBKR stock trades are excluded.
+  rows and to manual stock sells. Only the matched assignment-derived share
+  quantity is included; unrelated IBKR stock trades are excluded.
 - `dividends_net`: wheel-scoped IBKR cash rows for `Dividends`,
   `Payment In Lieu Of Dividends`, `Withholding Tax`, and `871(m) Withholding`,
   included only while assignment-derived shares are held.

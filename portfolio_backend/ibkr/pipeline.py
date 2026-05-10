@@ -272,10 +272,17 @@ def wheel_stock_transactions_from_report(
                     "SELL",
                     matched,
                     movement.price,
-                    "Assigned Call",
+                    "Manual Stock Sell" if movement.source == "Manual Stock Sell" else "Assigned Call",
                 )
             )
         unmatched = shares - matched
+        if unmatched > 0 and movement.source == "Manual Stock Sell":
+            if matched > 0:
+                issues.append(
+                    f"Ignored {unmatched:g} manually sold shares of {movement.ticker} on {movement.date.date()} "
+                    "because no additional assignment-derived stock inventory was available."
+                )
+            continue
         if unmatched > 0:
             issues.append(
                 f"Ignored {unmatched:g} assigned-call sold shares of {movement.ticker} on {movement.date.date()} "

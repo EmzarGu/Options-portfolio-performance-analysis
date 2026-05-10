@@ -94,7 +94,7 @@ def main() -> int:
                 "notes": [
                     "IBKR option_cashflow_pnl is execution-date option premium/close cash including commissions.",
                     "IBKR option_cashflow_pnl is wheel-scoped: puts are included, but calls are included only while prior put-assignment stock inventory is held.",
-                    "IBKR stock_realized_pnl is wheel-scoped: assigned-put stock buys matched FIFO to assigned-call stock sells from OptionEAE stock-side rows.",
+                    "IBKR stock_realized_pnl is wheel-scoped: assigned-put stock buys matched FIFO to assigned-call stock sells and manual stock sells.",
                     "IBKR dividends_net is wheel-scoped: dividend/payment-in-lieu/withholding cash is included only while assignment-derived shares are held.",
                     "Deposits/withdrawals, interest, and account fees are reported separately and excluded from realized_strategy_cash_pnl.",
                 ],
