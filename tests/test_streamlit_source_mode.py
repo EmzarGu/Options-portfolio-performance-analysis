@@ -31,8 +31,26 @@ def test_streamlit_sheet_source_mode_stays_backend_default(monkeypatch):
 
 def test_streamlit_app_source_mode_defaults_to_ibkr(monkeypatch):
     monkeypatch.delenv("OPTIONS_DATA_SOURCE", raising=False)
+    monkeypatch.delenv("IBKR_REPORT_SOURCE", raising=False)
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "firestore"
+
+
+def test_streamlit_ibkr_source_mode_defaults_report_source_to_firestore(monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.delenv("IBKR_REPORT_SOURCE", raising=False)
+
+    assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "firestore"
+
+
+def test_streamlit_ibkr_source_mode_preserves_explicit_report_source(monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setenv("IBKR_REPORT_SOURCE", "local_json")
+
+    assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_IBKR
+    assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") == "local_json"
 
 
 def test_streamlit_sheet_source_mode_remains_explicit_rollback(monkeypatch):

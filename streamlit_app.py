@@ -138,6 +138,8 @@ STREAMLIT_ENV_SECRET_KEYS = (
     "IBKR_FLEX_QUERY_ID",
     "FIRESTORE_PROJECT_ID",
     "FIRESTORE_DATABASE",
+    "FIRESTORE_SERVICE_ACCOUNT_JSON",
+    "GOOGLE_SERVICE_ACCOUNT_JSON",
     "PRICE_HISTORY_STORE",
     "DIVIDEND_HISTORY_STORE",
     "AUDIT_STORE",
@@ -491,8 +493,12 @@ def data_source_mode() -> str:
 def streamlit_app_source_mode() -> str:
     sync_streamlit_secrets_to_env()
     if not os.getenv("OPTIONS_DATA_SOURCE"):
+        os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
         return DATA_SOURCE_IBKR
-    return data_source_mode()
+    mode = data_source_mode()
+    if mode == DATA_SOURCE_IBKR:
+        os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
+    return mode
 
 
 def is_ibkr_source_mode() -> bool:
