@@ -18,6 +18,12 @@ def firestore_client(*, project: Optional[str] = None, database: str = "(default
 
 
 def service_account_credentials_from_config():
+    # On Cloud Run, Firestore access should use the runtime service account.
+    # GOOGLE_SERVICE_ACCOUNT_JSON is also used for the legacy Google Sheets path
+    # and may not have Firestore IAM.
+    if _is_google_runtime() and not os.getenv("FIRESTORE_SERVICE_ACCOUNT_JSON"):
+        return None, None
+
     raw = _service_account_secret()
     if raw is None:
         return None, None
@@ -33,6 +39,10 @@ def service_account_credentials_from_config():
 
 
 def _service_account_secret() -> Any:
+    raw = os.getenv("FIRESTORE_SERVICE_ACCOUNT_JSON")
+    if raw:
+        return raw
+
     raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if raw:
         return raw
@@ -49,6 +59,10 @@ def _service_account_secret() -> Any:
     except Exception:
         return None
     return None
+
+
+def _is_google_runtime() -> bool:
+    return bool(os.getenv("K_SERVICE") or os.getenv("GAE_SERVICE") or os.getenv("FUNCTION_TARGET"))
 
 
 def _parse_service_account_info(raw: Any) -> dict[str, Any]:
