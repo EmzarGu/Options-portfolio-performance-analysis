@@ -1100,14 +1100,12 @@ function barChart(title, rows, xKey, yKey){
   const grid = gridVals.map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
   return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg></div>`;
 }
-function monthlyTargetBarChart(title, rows){
+function monthlyPnlBarChart(title, rows){
   const clean=(rows || []).filter(r=>numeric(r.projected_month_pnl ?? r.total_realized_pnl)!==null);
   if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
   const w=640,h=300,pad={l:70,r:20,t:24,b:56};
   const values=clean.map(r=>numeric(r.projected_month_pnl ?? r.total_realized_pnl) || 0);
-  const targets=clean.map(r=>numeric(r.target_pnl)).filter(v=>v!==null);
-  const target = targets.length ? targets.reduce((a,b)=>a+b,0)/targets.length : null;
-  let yMin=Math.min(0,...values, ...(target!==null?[target]:[])), yMax=Math.max(0,...values, ...(target!==null?[target]:[]));
+  let yMin=Math.min(0,...values), yMax=Math.max(0,...values);
   const span = yMax - yMin || 1;
   yMin = Math.min(0, yMin - span*.12);
   yMax = yMax + span*.18;
@@ -1115,29 +1113,55 @@ function monthlyTargetBarChart(title, rows){
   const zero=sy(0);
   const slot=(w-pad.l-pad.r)/clean.length;
   const bw=Math.max(10,slot*.62);
-  const targetY = target === null ? null : sy(target);
-  const targetBand = target === null ? "" : `<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${Math.max(targetY-pad.t,0)}" fill="rgba(126,224,146,.08)"></rect><rect x="${pad.l}" y="${targetY}" width="${w-pad.l-pad.r}" height="${Math.max(h-pad.b-targetY,0)}" fill="rgba(255,111,120,.07)"></rect><line x1="${pad.l}" y1="${targetY}" x2="${w-pad.r}" y2="${targetY}" stroke="#f6c25b" stroke-width="2" stroke-dasharray="6 5"></line>`;
   const bars=clean.map((r,i)=>{
     const v=numeric(r.projected_month_pnl ?? r.total_realized_pnl) || 0;
-    const rowTarget=numeric(r.target_pnl);
-    let klass = v >= 0 ? "bar-pos" : "bar-neg";
-    let fill = "";
-    if (rowTarget !== null) {
-      fill = v >= rowTarget ? "#7ee092" : v >= rowTarget*.85 ? "#f6c25b" : "#ff7078";
-      klass = "";
-    }
     const x=pad.l+i*slot+(slot-bw)/2;
     const y= v >= 0 ? sy(v) : zero;
     const bh=Math.abs(sy(v)-zero);
     const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
     const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(r.month || r.Date).split(" ")[0])}</text>`:"";
     const valueLabel=clean.length<=12 && Math.abs(v)>0 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtCompactMoney(v))}</text>` : "";
-    return `<rect class="${klass}" ${fill ? `fill="${fill}"` : ""} x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(r.month || r.Date))}: ${safe(fmtMoney(v))}${rowTarget!==null ? ` / target ${safe(fmtMoney(rowTarget))}` : ""}</title></rect>${valueLabel}${xLabel}`;
+    return `<rect class="${v>=0?"bar-pos":"bar-neg"}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(r.month || r.Date))}: ${safe(fmtMoney(v))}</title></rect>${valueLabel}${xLabel}`;
+  }).join("");
+  const gridVals = yMin < 0 && yMax > 0 ? [yMax, 0, yMin] : [yMax, (yMax+yMin)/2, yMin];
+  const grid = [...new Set(gridVals.map(v=>Math.round(v)))].map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
+  const legend = `<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#66d37a"></span>Positive P&L</span><span class="legend-item"><span class="legend-swatch" style="background:#ff7078"></span>Negative P&L</span></div>`;
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg>${legend}</div>`;
+}
+function monthlyReturnTargetChart(title, rows){
+  const clean=(rows || []).filter(r=>numeric(r.projected_return_roac ?? r.return_roac ?? r.return)!==null);
+  if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
+  const w=640,h=300,pad={l:70,r:20,t:24,b:56};
+  const values=clean.map(r=>numeric(r.projected_return_roac ?? r.return_roac ?? r.return) || 0);
+  const targets=clean.map(r=>numeric(r.target_return ?? data.monthly?.target_return)).filter(v=>v!==null);
+  const target = targets.length ? targets.reduce((a,b)=>a+b,0)/targets.length : numeric(data.monthly?.target_return);
+  let yMin=Math.min(0,...values, ...(target!==null?[target]:[])), yMax=Math.max(0,...values, ...(target!==null?[target]:[]));
+  const span = yMax - yMin || 0.01;
+  yMin = Math.min(0, yMin - span*.16);
+  yMax = yMax + span*.18;
+  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
+  const zero=sy(0);
+  const slot=(w-pad.l-pad.r)/clean.length;
+  const bw=Math.max(10,slot*.62);
+  const targetY = target === null ? null : sy(target);
+  const targetLayer = target === null ? "" : `<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${Math.max(targetY-pad.t,0)}" fill="rgba(126,224,146,.08)"></rect><rect x="${pad.l}" y="${targetY}" width="${w-pad.l-pad.r}" height="${Math.max(zero-targetY,0)}" fill="rgba(246,194,91,.07)"></rect><rect x="${pad.l}" y="${zero}" width="${w-pad.l-pad.r}" height="${Math.max(h-pad.b-zero,0)}" fill="rgba(255,111,120,.07)"></rect><line x1="${pad.l}" y1="${targetY}" x2="${w-pad.r}" y2="${targetY}" stroke="#f6c25b" stroke-width="2" stroke-dasharray="6 5"></line>`;
+  const bars=clean.map((r,i)=>{
+    const v=numeric(r.projected_return_roac ?? r.return_roac ?? r.return) || 0;
+    const rowTarget=numeric(r.target_return ?? data.monthly?.target_return);
+    const fill = rowTarget !== null && v >= rowTarget ? "#7ee092" : v >= 0 ? "#f6c25b" : "#ff7078";
+    const x=pad.l+i*slot+(slot-bw)/2;
+    const y= v >= 0 ? sy(v) : zero;
+    const bh=Math.abs(sy(v)-zero);
+    const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
+    const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(r.month || r.Date).split(" ")[0])}</text>`:"";
+    const valueLabel=clean.length<=12 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtPct(v))}</text>` : "";
+    return `<rect fill="${fill}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(r.month || r.Date))}: ${safe(fmtPct(v))}${rowTarget!==null ? ` / target ${safe(fmtPct(rowTarget))}` : ""}</title></rect>${valueLabel}${xLabel}`;
   }).join("");
   const gridVals = target !== null ? [yMax, target, 0] : [yMax, (yMax+yMin)/2, yMin];
-  const grid = [...new Set(gridVals.map(v=>Math.round(v)))].map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
-  const legend = `<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#7ee092"></span>At/above target</span><span class="legend-item"><span class="legend-swatch" style="background:#f6c25b"></span>Near target</span><span class="legend-item"><span class="legend-swatch" style="background:#ff7078"></span>Below target</span></div>`;
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${targetBand}${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg>${legend}</div>`;
+  const grid = [...new Set(gridVals.map(v=>Math.round(v*10000)/10000))].map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtPct(v))}</text>`).join("");
+  const targetLabel = target === null ? "" : `<span class="legend-item"><span class="legend-swatch" style="background:#f6c25b"></span>Target ${safe(fmtPct(target))}</span>`;
+  const legend = `<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#7ee092"></span>At/above target</span><span class="legend-item"><span class="legend-swatch" style="background:#f6c25b"></span>Positive, below target</span><span class="legend-item"><span class="legend-swatch" style="background:#ff7078"></span>Negative</span>${targetLabel}</div>`;
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${targetLayer}${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg>${legend}</div>`;
 }
 function growthFromReturns(rows){
   let growth=1;
@@ -1249,9 +1273,11 @@ function renderMonthly(){
     ${sectionHead("Monthly Performance", "Calendar-month realized results plus explicit current/future projection fields.")}
     ${rangePicker()}
     <div class="grid two-even">
-      ${lineChart("Cumulative Growth by Month", returns, "month", "Growth", "Series", v=>fmtDec(v,2)+"x")}
-      ${monthlyTargetBarChart("Monthly P&L vs Target", filtered)}
+      ${monthlyReturnTargetChart("Monthly Return vs Target", filtered)}
+      ${monthlyPnlBarChart("Monthly P&L", filtered)}
     </div>
+    <div style="height:12px"></div>
+    ${lineChart("Cumulative Growth by Month", returns, "month", "Growth", "Series", v=>fmtDec(v,2)+"x")}
     <div style="height:12px"></div>
     ${dataTable("monthly-table", rows, [
       {key:"month",label:"Month",format:monthName},

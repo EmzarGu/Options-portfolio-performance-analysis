@@ -112,6 +112,8 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert "With unrealized" in response.text
     assert "Reload app" in response.text
     assert "Open Shorts Monitor" in response.text
+    assert "Monthly Return vs Target" in response.text
+    assert "Monthly P&amp;L vs Target" not in response.text
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["expires"] == "0"
