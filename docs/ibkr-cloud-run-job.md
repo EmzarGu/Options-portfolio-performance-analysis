@@ -174,66 +174,47 @@ gcloud run jobs execute ibkr-flex-import \
   --args=-m,portfolio_backend.ibkr.import_job,--from,2026-05-01,--to,2026-05-08
 ```
 
-## Manual Cloud Validation
+## Current Production Validation
 
-Manual validation completed on `2026-05-09`. No scheduler was enabled.
-
-Validated image:
-
-```text
-europe-west6-docker.pkg.dev/options-performance-dashboard/cloud-run-source-deploy/options-portfolio-performance-analysis/ibkr-flex-import:manual-20260509T203310Z
-```
-
-Created job:
+Current job:
 
 ```text
 Job: ibkr-flex-import
 Region: europe-west6
 Runtime service account: 595990983720-compute@developer.gserviceaccount.com
+Scheduler: ibkr-flex-import-daily, 30 7 * * *, Europe/Zurich
+Flex Query ID: 1504277
 ```
 
-The first attempted range, `2026-05-01` through `2026-05-09`, failed with IBKR
-error `1003: Statement is not available`. This was an IBKR report-availability
-failure, not a Google Cloud IAM/runtime failure.
-
-The second range, `2026-05-01` through `2026-05-08`, succeeded:
-
-| Metric | Value |
-|---|---:|
-| Execution | `ibkr-flex-import-4v7k4` |
-| XML bytes | 309,967 |
-| `ibkr_raw_rows` inserted | 119 |
-| `ibkr_transactions` inserted | 16 |
-
-Raw XML object:
+Production uses lean Activity Flex Query `1504277`, containing only:
 
 ```text
-gs://options-portfolio-ibkr-raw-595990983720/ibkr/flex/activity/query-1503002/run_date=2026-05-09/run_id=ibkr-flex-1503002-20260509T203751Z-20260501-20260508/activity.xml
+Trades
+Option Exercises, Assignments and Expirations
+Cash Transactions
 ```
 
-A dedupe rerun wrote a second raw archive object and produced `0` new rows:
+Manual validation of the lean query completed on `2026-05-10`:
 
 | Metric | Value |
 |---|---:|
-| Execution | `ibkr-flex-import-zqp7g` |
-| `ibkr_raw_rows` inserted | 0 |
-| `ibkr_raw_rows` updated | 119 |
+| Execution | `ibkr-flex-import-hlhdn` |
+| Status | `succeeded_with_deferred` |
+| Succeeded chunks | 4 |
+| Deferred chunks | 1 |
+| Deferred date | `2026-05-09` |
+| `ibkr_raw_rows` inserted | 109 |
+| `ibkr_raw_rows` updated | 3,293 |
 | `ibkr_transactions` inserted | 0 |
-| `ibkr_transactions` updated | 16 |
+| `ibkr_transactions` updated | 2,156 |
 
-Final Firestore counts after manual validation:
+Current Firestore state after old-query cleanup:
 
 | Collection | Count |
 |---|---:|
-| `ibkr_import_runs` | 2 |
-| `ibkr_raw_rows` | 119 |
-| `ibkr_transactions` | 16 |
-| `refresh_runs` | 18 |
+| `ibkr_import_runs` | 4 |
+| `ibkr_raw_rows` | 3,402 |
+| `ibkr_transactions` | 2,156 |
 
-The validation confirms:
-
-- Secret access works for `ibkr-flex-token` and `ibkr-flex-query-id`.
-- Bucket writes work for `options-portfolio-ibkr-raw-595990983720`.
-- Firestore writes work for import runs, raw rows, normalized transactions, and
-  refresh audit entries.
-- Dedupe is idempotent across repeated imports of the same IBKR date range.
+Old raw XML and Firestore rows for query `1503002` were deleted after the lean
+query was validated.

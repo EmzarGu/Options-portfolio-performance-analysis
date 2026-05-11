@@ -1,7 +1,7 @@
 # Cloud Run Web Dashboard
 
-The production web dashboard is a separate FastAPI entrypoint from the Streamlit
-backup app.
+The production web dashboard is a FastAPI entrypoint exposed through the
+`options-roi-web` Cloud Run service.
 
 ## Entrypoint
 
@@ -10,8 +10,7 @@ uvicorn web_dashboard:app --host 0.0.0.0 --port ${PORT:-8080}
 ```
 
 The service reuses the same IBKR backend context and mobile DTO builders as the
-iOS API. Streamlit remains a backup/testing surface while the browser dashboard
-is the production web UI.
+iOS API.
 
 ## Required Runtime Config
 
@@ -86,8 +85,8 @@ web_dashboard_smoke ok source=ibkr_flex rows=<n> actionable_issues=0
 
 ## Rollback
 
-The web dashboard is deployed as its own Cloud Run service. Rolling it back does not affect:
+The web dashboard is deployed as its own Cloud Run service. Rolling it back does
+not affect:
 
-- Streamlit Cloud sheet backup
 - `options-roi-mobile-api`
 - iOS app configuration

@@ -1,6 +1,6 @@
 # Cloud Operations Current State
 
-Last reviewed: 2026-05-10.
+Last reviewed: 2026-05-11.
 
 ## Production Services
 
@@ -8,10 +8,13 @@ Last reviewed: 2026-05-10.
 - Region: `europe-west6`
 - Mobile API service: `options-roi-mobile-api`
 - Web dashboard service: `options-roi-web`
-- Streamlit backup/testing service: `options-roi-streamlit`
 - IBKR import job: `ibkr-flex-import`
 - IBKR import scheduler: `ibkr-flex-import-daily`, `30 7 * * *`,
   `Europe/Zurich`
+
+There is no separate Cloud Run Streamlit service. The old
+`options-roi-streamlit` service was deleted after the FastAPI web dashboard
+became the production web UI.
 
 Production mobile and web reads use:
 
