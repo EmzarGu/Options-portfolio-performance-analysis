@@ -268,6 +268,14 @@ class FakePriceYF:
         return self._data
 
 
+class FailingPriceHistoryStore:
+    def get_many_history(self, tickers, start, end):
+        raise RuntimeError("store unavailable")
+
+    def upsert_history(self, ticker, series, start, end):
+        raise AssertionError("fallback history should not be written when store is unavailable")
+
+
 def test_yfinance_price_history_provider_caches_repeated_ticker_range_fetches():
     price_data = pd.DataFrame(
         {"Adj Close": [101.0, 102.0]},
@@ -371,6 +379,47 @@ def test_fetch_price_history_uses_bundled_fallback_before_yfinance(monkeypatch, 
     monkeypatch.setattr(data_sources, "BUNDLED_PRICE_HISTORY_FALLBACK_PATH", fallback_path)
     monkeypatch.setattr(data_sources, "_BUNDLED_PRICE_HISTORY_DOCS", None)
     monkeypatch.setattr(data_sources, "get_default_price_history_store", MemoryPriceHistoryStore)
+
+    history, errors, summary = fetch_price_history_yf(
+        {"AAA"},
+        pd.Timestamp("2024-05-20"),
+        pd.Timestamp("2024-05-21"),
+        yf_module,
+    )
+
+    assert yf_module.calls == []
+    assert errors == []
+    assert summary == {"requested": 1, "fetched": 1}
+    assert history["AAA"].tolist() == [101.0, 102.0]
+
+
+def test_fetch_price_history_does_not_write_bundled_fallback_when_store_unavailable(monkeypatch, tmp_path):
+    fallback_path = tmp_path / "fallback.json"
+    fallback_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "documents": {
+                    "AAA:2024": {
+                        "schema_version": 1,
+                        "ticker": "AAA",
+                        "year": 2024,
+                        "coverage_start": "2024-05-20",
+                        "coverage_end": "2024-05-21",
+                        "prices": [
+                            {"date": "2024-05-20", "close": 101.0},
+                            {"date": "2024-05-21", "close": 102.0},
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    yf_module = FakePriceYF(pd.DataFrame())
+    monkeypatch.setattr(data_sources, "BUNDLED_PRICE_HISTORY_FALLBACK_PATH", fallback_path)
+    monkeypatch.setattr(data_sources, "_BUNDLED_PRICE_HISTORY_DOCS", None)
+    monkeypatch.setattr(data_sources, "get_default_price_history_store", FailingPriceHistoryStore)
 
     history, errors, summary = fetch_price_history_yf(
         {"AAA"},

@@ -391,12 +391,15 @@ def fetch_price_history_yf(
     yfinance_fetches = 0
     try:
         cached_by_ticker = store.get_many_history(tickers, start, end)
+        store_available = True
     except Exception as exc:
         logger.warning("price_history_store_bulk_read_failed error=%s", exc)
         cached_by_ticker = {}
+        store_available = False
     for ticker in tickers:
         try:
             cached = cached_by_ticker.get(str(ticker).upper().strip())
+            from_bundled_fallback = False
             if cached is not None and cached.fully_covered:
                 cache_hits += 1
                 series = cached.series
@@ -405,10 +408,11 @@ def fetch_price_history_yf(
                 series = _get_bundled_price_history(ticker, start, end)
                 if not series.empty:
                     bundled_fallback_hits += 1
+                    from_bundled_fallback = True
                 else:
                     yfinance_fetches += 1
                     series = provider.get_price_history(ticker, start, end)
-                if not series.empty:
+                if not series.empty and store_available and not from_bundled_fallback:
                     try:
                         store.upsert_history(ticker, series, start, end)
                         cache_writes += 1
