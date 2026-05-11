@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 from datetime import date
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
 import pytest
 
 from portfolio_backend.ibkr.dedupe import dedupe_key, raw_row_id
-from portfolio_backend.ibkr.flex_client import DateRange, plan_backfill_ranges, processing_message
+from portfolio_backend.ibkr.flex_client import DateRange, FlexClient, plan_backfill_ranges, processing_message
 from portfolio_backend.ibkr.flex_parser import count_trade_asset_categories, parse_flex_xml_file
 from portfolio_backend.ibkr.import_job import (
     _auto_summary,
@@ -289,7 +290,7 @@ def test_plan_missing_import_ranges_backfills_gaps_and_recent_overlap():
         DateRange(date(2023, 11, 1), date(2024, 10, 30)),
         DateRange(date(2024, 10, 31), date(2024, 10, 31)),
         DateRange(date(2026, 4, 25), date(2026, 5, 1)),
-        DateRange(date(2026, 5, 2), date(2026, 5, 8)),
+        DateRange(date(2026, 5, 4), date(2026, 5, 8)),
     ]
 
 
@@ -369,6 +370,69 @@ def test_plan_missing_import_ranges_only_recent_overlap_when_coverage_complete()
     )
 
     assert planned == [DateRange(date(2026, 4, 25), date(2026, 5, 8))]
+
+
+def test_plan_missing_import_ranges_skips_weekend_only_trailing_gap():
+    planned = plan_missing_import_ranges(
+        target=DateRange(date(2022, 11, 1), date(2026, 5, 10)),
+        existing=[DateRange(date(2022, 11, 1), date(2026, 5, 8))],
+        recent_overlap_days=14,
+    )
+
+    assert planned == [DateRange(date(2026, 4, 27), date(2026, 5, 8))]
+
+
+def test_plan_missing_import_ranges_trims_weekend_edges_from_missing_gap():
+    planned = plan_missing_import_ranges(
+        target=DateRange(date(2026, 5, 2), date(2026, 5, 11)),
+        existing=[],
+        recent_overlap_days=0,
+    )
+
+    assert planned == [DateRange(date(2026, 5, 4), date(2026, 5, 11))]
+
+
+def test_flex_client_paces_send_requests(monkeypatch):
+    slept = []
+    monkeypatch.setattr("portfolio_backend.ibkr.flex_client.time.monotonic", lambda: 102.0)
+    monkeypatch.setattr("portfolio_backend.ibkr.flex_client.time.sleep", slept.append)
+
+    client = FlexClient("token", "query", send_min_interval_seconds=6.5)
+    client._last_send_request_at = 100.0
+    client._pace_send_request()
+
+    assert slept == [4.5]
+
+
+def test_flex_client_retries_rate_limited_send_request(monkeypatch):
+    class FakeFlexClient(FlexClient):
+        def __init__(self):
+            super().__init__(
+                "token",
+                "query",
+                rate_limit_retries=1,
+                rate_limit_retry_seconds=0.1,
+            )
+            self.responses = [
+                ET.fromstring(
+                    "<FlexStatementResponse><Status>Fail</Status><ErrorCode>1018</ErrorCode>"
+                    "<ErrorMessage>Too many requests have been made from this token. Please try again shortly."
+                    "</ErrorMessage></FlexStatementResponse>"
+                ),
+                ET.fromstring(
+                    "<FlexStatementResponse><Status>Success</Status><ReferenceCode>123</ReferenceCode>"
+                    "</FlexStatementResponse>"
+                ),
+            ]
+
+        def _request_xml(self, path, params):
+            return self.responses.pop(0)
+
+    slept = []
+    monkeypatch.setattr("portfolio_backend.ibkr.flex_client.time.sleep", slept.append)
+
+    assert FakeFlexClient().send_request() == "123"
+    assert slept == [0.1]
 
 
 def test_backfill_split_helpers_isolate_unavailable_ranges():

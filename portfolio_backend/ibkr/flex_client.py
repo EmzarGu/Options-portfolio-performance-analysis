@@ -16,6 +16,8 @@ from portfolio_backend.ibkr.flex_parser import strip_namespace
 
 BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 MAX_FLEX_RANGE_DAYS = 365
+DEFAULT_SEND_MIN_INTERVAL_SECONDS = 6.5
+DEFAULT_RATE_LIMIT_RETRY_SECONDS = 65.0
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,9 @@ class FlexClient:
         base_url: str = BASE_URL,
         user_agent: str = "options-portfolio-ibkr-flex/1.0",
         timeout: int = 30,
+        send_min_interval_seconds: float = 0.0,
+        rate_limit_retries: int = 0,
+        rate_limit_retry_seconds: float = DEFAULT_RATE_LIMIT_RETRY_SECONDS,
     ) -> None:
         if not token:
             raise ValueError("IBKR Flex token is required")
@@ -98,6 +103,10 @@ class FlexClient:
         self.base_url = base_url.rstrip("/")
         self.user_agent = user_agent
         self.timeout = timeout
+        self.send_min_interval_seconds = max(0.0, float(send_min_interval_seconds))
+        self.rate_limit_retries = max(0, int(rate_limit_retries))
+        self.rate_limit_retry_seconds = max(0.0, float(rate_limit_retry_seconds))
+        self._last_send_request_at: float | None = None
 
     @classmethod
     def from_env(
@@ -111,6 +120,13 @@ class FlexClient:
         return cls(
             token=os.environ.get(token_env, "").strip(),
             query_id=os.environ.get(query_id_env, "").strip(),
+            send_min_interval_seconds=float(
+                os.environ.get("IBKR_FLEX_SEND_MIN_INTERVAL_SECONDS", str(DEFAULT_SEND_MIN_INTERVAL_SECONDS))
+            ),
+            rate_limit_retries=int(os.environ.get("IBKR_FLEX_RATE_LIMIT_RETRIES", "1")),
+            rate_limit_retry_seconds=float(
+                os.environ.get("IBKR_FLEX_RATE_LIMIT_BACKOFF_SECONDS", str(DEFAULT_RATE_LIMIT_RETRY_SECONDS))
+            ),
         )
 
     def send_request(self, date_range: Optional[DateRange] = None) -> str:
@@ -119,14 +135,29 @@ class FlexClient:
             if date_range.days_inclusive > MAX_FLEX_RANGE_DAYS:
                 raise ValueError("IBKR Flex date override ranges must be 365 days or less")
             params.update({"fd": date_range.fd, "td": date_range.td})
-        root = self._request_xml("/SendRequest", params)
-        error = _error_from_xml(root)
-        if error:
-            raise RuntimeError(f"IBKR SendRequest error: {error}")
-        reference = _xml_text(root, "ReferenceCode", "referenceCode")
-        if not reference:
-            raise RuntimeError("IBKR SendRequest did not return a reference code")
-        return reference
+        for attempt in range(self.rate_limit_retries + 1):
+            self._pace_send_request()
+            root = self._request_xml("/SendRequest", params)
+            self._last_send_request_at = time.monotonic()
+            error = _error_from_xml(root)
+            if error and _is_rate_limit_error(error) and attempt < self.rate_limit_retries:
+                time.sleep(self.rate_limit_retry_seconds)
+                continue
+            if error:
+                raise RuntimeError(f"IBKR SendRequest error: {error}")
+            reference = _xml_text(root, "ReferenceCode", "referenceCode")
+            if not reference:
+                raise RuntimeError("IBKR SendRequest did not return a reference code")
+            return reference
+        raise RuntimeError("IBKR SendRequest failed after rate-limit retries")
+
+    def _pace_send_request(self) -> None:
+        if self.send_min_interval_seconds <= 0 or self._last_send_request_at is None:
+            return
+        elapsed = time.monotonic() - self._last_send_request_at
+        remaining = self.send_min_interval_seconds - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
 
     def get_statement(self, reference_code: str) -> bytes:
         return self._request_bytes("/GetStatement", {"t": self.token, "q": reference_code, "v": "3"})
@@ -199,6 +230,11 @@ def _error_from_xml(root: ET.Element) -> Optional[str]:
     if code or message:
         return f"{code or 'ERROR'}: {message or 'No message'}"
     return None
+
+
+def _is_rate_limit_error(error: str) -> bool:
+    lowered = str(error or "").lower()
+    return "1018" in lowered and "too many requests" in lowered
 
 
 def iter_existing_reports(output_dir: Path) -> Iterator[Path]:

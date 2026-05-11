@@ -11,6 +11,8 @@ Last reviewed: 2026-05-11.
 - IBKR import job: `ibkr-flex-import`
 - IBKR import scheduler: `ibkr-flex-import-daily`, `30 7 * * *`,
   `Europe/Zurich`
+- IBKR import job retries: `0`, so IBKR token pacing errors are not amplified
+  by immediate Cloud Run retries.
 
 There is no separate Cloud Run Streamlit service. The old
 `options-roi-streamlit` service was deleted after the FastAPI web dashboard
@@ -27,6 +29,10 @@ IBKR_RAW_BUCKET=options-portfolio-ibkr-raw-595990983720
 Current IBKR Activity Flex Query ID: `1504277`. This is the lean production
 query containing only `Trades`, `Option Exercises, Assignments and Expirations`,
 and `Cash Transactions`.
+
+The import planner treats standalone weekend-only Activity Flex gaps as
+non-importable, and the Flex client spaces `SendRequest` calls to stay within
+IBKR pacing limits.
 
 ## Persistent Storage
 

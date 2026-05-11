@@ -96,13 +96,34 @@ def plan_missing_import_ranges(
     missing = _missing_ranges(target, covered)
     planned: list[DateRange] = []
     for date_range in missing:
-        planned.extend(plan_backfill_ranges(date_range.start, date_range.end, max_days=max_days))
+        business_range = _trim_weekend_edges(date_range)
+        if business_range is not None:
+            planned.extend(plan_backfill_ranges(business_range.start, business_range.end, max_days=max_days))
     if recent_overlap_days > 0:
         overlap_start = max(target.start, target.end - timedelta(days=recent_overlap_days - 1))
         recent_target = DateRange(overlap_start, target.end)
         for date_range in _clip_ranges(covered, recent_target):
             planned.extend(plan_backfill_ranges(date_range.start, date_range.end, max_days=max_days))
     return _dedupe_ranges(planned)
+
+
+def _trim_weekend_edges(date_range: DateRange) -> DateRange | None:
+    """Avoid standalone weekend gaps for Activity Flex statements.
+
+    IBKR Activity Flex statements are business-day based. Once coverage reaches
+    a Friday, the following Saturday/Sunday should not be treated as missing
+    import coverage; otherwise the daily job repeatedly requests unavailable
+    weekend-only statements.
+    """
+    start = date_range.start
+    end = date_range.end
+    while start <= end and start.weekday() >= 5:
+        start += timedelta(days=1)
+    while end >= start and end.weekday() >= 5:
+        end -= timedelta(days=1)
+    if start > end:
+        return None
+    return DateRange(start, end)
 
 
 def split_trailing_target_day(ranges: Iterable[DateRange], target_end: date) -> list[DateRange]:

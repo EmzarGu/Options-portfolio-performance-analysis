@@ -184,7 +184,12 @@ Region: europe-west6
 Runtime service account: 595990983720-compute@developer.gserviceaccount.com
 Scheduler: ibkr-flex-import-daily, 30 7 * * *, Europe/Zurich
 Flex Query ID: 1504277
+Max retries: 0
 ```
+
+The importer skips standalone weekend-only gaps for Activity Flex statements,
+spaces Flex `SendRequest` calls to stay inside IBKR token pacing limits, and
+backs off once if IBKR returns rate-limit error `1018`.
 
 Production uses lean Activity Flex Query `1504277`, containing only:
 
