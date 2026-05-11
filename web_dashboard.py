@@ -791,10 +791,11 @@ __BASE_CSS__
 :root{--bg2:#0c1114;--panel3:#10161a;--panel4:#151f23;--line2:#26383b;--blue:#7aa7ff;--amber:#f6c25b;--red:#ff6f78;--green:#7ee092;--teal:#45d2c5}
 body{background:#080c0f;color:var(--text)}
 .topbar{position:sticky;top:0;z-index:40;background:rgba(8,12,15,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line2)}
-.topbar-inner{max-width:1420px;margin:0 auto;padding:9px 18px;display:flex;gap:14px;align-items:center;justify-content:space-between}
+.topbar-inner{max-width:1420px;margin:0 auto;padding:9px 18px;display:flex;gap:16px;align-items:center;justify-content:space-between}
 .brand{font-size:18px;font-weight:850;letter-spacing:.01em;white-space:nowrap}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:650;margin-top:-2px}
-.nav{display:flex;gap:3px;flex:1;justify-content:flex-start;min-width:0;overflow:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}.nav button,.segmented button,.segmented a{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active,.segmented button.active,.segmented a.active{color:#061a18;background:var(--accent);border-color:transparent}
-.actions{display:flex;gap:7px;align-items:center;flex:0 0 auto}.actions form{margin:0}.actions .primary,.actions .secondary{padding:9px 11px}.auth-user{display:none;color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav{display:flex;gap:2px;flex:1;justify-content:flex-start;min-width:0;overflow:auto;scrollbar-width:none;border-left:1px solid var(--line2);padding-left:12px}.nav::-webkit-scrollbar{display:none}.nav button{background:transparent;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:9px 9px 7px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+.segmented button,.segmented a{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:750;white-space:nowrap}.segmented button.active,.segmented a.active{color:#061a18;background:var(--accent);border-color:transparent}
+.actions{display:flex;gap:7px;align-items:center;flex:0 0 auto;border-left:1px solid var(--line2);padding-left:12px}.actions form{margin:0}.actions .primary,.actions .secondary{padding:9px 11px}.actions button[disabled]{opacity:.72;cursor:wait}.auth-user{display:none;color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shell{max-width:1420px;margin:0 auto;padding:22px 18px 64px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:4px 0 16px}
 .hero h1{font-size:34px;line-height:1.05;margin:0 0 8px}.sub{color:var(--muted);font-size:14px}.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
 .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:#111a1d;border-radius:999px;padding:5px 9px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap}.badge.good{color:#c6f6ce;border-color:#2f6941}.badge.warn{color:#ffe3a3;border-color:#73551d}.badge.bad{color:#ffc0c5;border-color:#70303b}.badge.blue{color:#cfe0ff;border-color:#355189}
@@ -806,12 +807,12 @@ body{background:#080c0f;color:var(--text)}
 h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select,.section-head select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
 .table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:#11191c}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-.table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.empty{padding:18px;color:var(--muted)}
+.table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.compact-table table{min-width:100%;table-layout:auto}.col-compact{width:1%;max-width:96px}.empty{padding:18px;color:var(--muted)}
 .risk-row-itm td{background:rgba(255,111,120,.12)}.risk-row-near td{background:rgba(246,194,91,.11)}.risk-row-clear td{background:rgba(69,210,197,.07)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--red)}.dot-warn{background:var(--amber)}.dot-good{background:var(--green)}.dot-blue{background:var(--blue)}
 .risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
 .chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
-.view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating{opacity:1;transform:translateY(0)}
+.view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating,body.is-loading .view-updating{opacity:1;transform:translateY(0)}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
 @media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart{height:270px}}
 @media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.metric-value{font-size:22px}.chart{height:250px}}
@@ -901,6 +902,16 @@ const fmtPct = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US
 const fmtNum = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{maximumFractionDigits:0}).format(Number(v));
 const fmtDec = (v,d=2) => numeric(v) === null ? "n/a" : Number(v).toFixed(d);
 const fmtDate = (v) => v ? String(v).slice(0,10) : "n/a";
+const fmtLocalTime = (v) => {
+  if (!v) return "n/a";
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? "n/a" : d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+};
+const fmtLocalDateTime = (v) => {
+  if (!v) return "n/a";
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? "n/a" : d.toLocaleString([], {year:"numeric", month:"short", day:"2-digit", hour:"2-digit", minute:"2-digit"});
+};
 const monthName = (v) => {
   if (!v) return "n/a";
   const d = new Date(String(v).slice(0,10) + "T00:00:00Z");
@@ -915,6 +926,15 @@ function labelize(v){
 function badge(text, type=""){ return `<span class="badge ${type}">${safe(text)}</span>`; }
 function card(label, value, note="", klass=""){
   return `<div class="card"><div class="metric-label">${safe(label)}</div><div class="metric-value mono ${klass}">${value}</div>${note ? `<div class="metric-note">${note}</div>` : ""}</div>`;
+}
+function statusPill(value, row={}){
+  const text = labelize(value || "n/a");
+  const projected = numeric(row.projected_return_roac);
+  const target = numeric(row.target_return || data.monthly?.target_return);
+  let tone = "warn";
+  if (String(value || "").toLowerCase().includes("beat") || (projected !== null && target !== null && projected >= target)) tone = "good";
+  if (String(value || "").toLowerCase().includes("below") || (projected !== null && target !== null && projected < target)) tone = "bad";
+  return `<span class="pill ${tone}">${text}</span>`;
 }
 function sectionHead(title, note="", right=""){
   return `<div class="section-head"><div><h2>${safe(title)}</h2>${note ? `<div class="section-note">${note}</div>` : ""}</div>${right}</div>`;
@@ -995,14 +1015,22 @@ function dataTable(tableId, rows, columns, opts={}){
   const tableRows = sortedRows(tableId, rows || [], columns);
   const title = opts.title ? `<div class="table-title"><div><strong>${safe(opts.title)}</strong>${opts.subtitle ? `<span>${safe(opts.subtitle)}</span>` : ""}</div>${opts.count === false ? "" : badge(`${fmtNum(tableRows.length)} rows`,"blue")}</div>` : "";
   if (!tableRows.length) return `<div class="table-card ${opts.small ? "small-table" : ""}">${title}<div class="empty">No rows.</div></div>`;
-  const head = `<tr>${columns.map(c => `<th class="${c.num ? "num" : ""}"><button type="button" onclick="sortTable('${tableId}','${c.key}')">${safe(c.label)}</button></th>`).join("")}</tr>`;
+  const head = `<tr>${columns.map(c => {
+    const thClass = [c.num ? "num" : "", c.compact ? "col-compact" : "", c.thClass || ""].filter(Boolean).join(" ");
+    return `<th class="${thClass}"><button type="button" onclick="sortTable('${tableId}','${c.key}')">${safe(c.label)}</button></th>`;
+  }).join("")}</tr>`;
   const body = tableRows.map(row => `<tr class="${opts.rowClass ? opts.rowClass(row) : ""}">${columns.map(c => {
     const raw = c.value ? c.value(row) : get(row, c.key);
     const value = c.format ? c.format(raw,row) : safe(raw);
-    const cellClass = [c.num ? "num" : "", c.className ? c.className(raw,row) : ""].filter(Boolean).join(" ");
+    const cellClass = [
+      c.num ? "num" : "",
+      c.compact ? "col-compact" : "",
+      c.cellClass || "",
+      c.className ? c.className(raw,row) : ""
+    ].filter(Boolean).join(" ");
     return `<td class="${cellClass}">${value}</td>`;
   }).join("")}</tr>`).join("");
-  return `<div class="table-card ${opts.small ? "small-table" : ""} ${opts.wide ? "wide-table" : ""}">${title}<div class="table-scroll" style="${opts.maxHeight ? `max-height:${opts.maxHeight}px` : ""}"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
+  return `<div class="table-card ${opts.small ? "small-table" : ""} ${opts.wide ? "wide-table" : ""} ${opts.compact ? "compact-table" : ""}">${title}<div class="table-scroll" style="${opts.maxHeight ? `max-height:${opts.maxHeight}px` : ""}"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
 }
 function sortTable(tableId,key){
   const current = appState.sort[tableId] || {};
@@ -1071,6 +1099,45 @@ function barChart(title, rows, xKey, yKey){
   const gridVals = yMin < 0 && yMax > 0 ? [yMax, 0, yMin] : [yMax, (yMax+yMin)/2, yMin];
   const grid = gridVals.map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
   return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg></div>`;
+}
+function monthlyTargetBarChart(title, rows){
+  const clean=(rows || []).filter(r=>numeric(r.projected_month_pnl ?? r.total_realized_pnl)!==null);
+  if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
+  const w=640,h=300,pad={l:70,r:20,t:24,b:56};
+  const values=clean.map(r=>numeric(r.projected_month_pnl ?? r.total_realized_pnl) || 0);
+  const targets=clean.map(r=>numeric(r.target_pnl)).filter(v=>v!==null);
+  const target = targets.length ? targets.reduce((a,b)=>a+b,0)/targets.length : null;
+  let yMin=Math.min(0,...values, ...(target!==null?[target]:[])), yMax=Math.max(0,...values, ...(target!==null?[target]:[]));
+  const span = yMax - yMin || 1;
+  yMin = Math.min(0, yMin - span*.12);
+  yMax = yMax + span*.18;
+  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
+  const zero=sy(0);
+  const slot=(w-pad.l-pad.r)/clean.length;
+  const bw=Math.max(10,slot*.62);
+  const targetY = target === null ? null : sy(target);
+  const targetBand = target === null ? "" : `<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${Math.max(targetY-pad.t,0)}" fill="rgba(126,224,146,.08)"></rect><rect x="${pad.l}" y="${targetY}" width="${w-pad.l-pad.r}" height="${Math.max(h-pad.b-targetY,0)}" fill="rgba(255,111,120,.07)"></rect><line x1="${pad.l}" y1="${targetY}" x2="${w-pad.r}" y2="${targetY}" stroke="#f6c25b" stroke-width="2" stroke-dasharray="6 5"></line>`;
+  const bars=clean.map((r,i)=>{
+    const v=numeric(r.projected_month_pnl ?? r.total_realized_pnl) || 0;
+    const rowTarget=numeric(r.target_pnl);
+    let klass = v >= 0 ? "bar-pos" : "bar-neg";
+    let fill = "";
+    if (rowTarget !== null) {
+      fill = v >= rowTarget ? "#7ee092" : v >= rowTarget*.85 ? "#f6c25b" : "#ff7078";
+      klass = "";
+    }
+    const x=pad.l+i*slot+(slot-bw)/2;
+    const y= v >= 0 ? sy(v) : zero;
+    const bh=Math.abs(sy(v)-zero);
+    const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
+    const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(r.month || r.Date).split(" ")[0])}</text>`:"";
+    const valueLabel=clean.length<=12 && Math.abs(v)>0 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtCompactMoney(v))}</text>` : "";
+    return `<rect class="${klass}" ${fill ? `fill="${fill}"` : ""} x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(r.month || r.Date))}: ${safe(fmtMoney(v))}${rowTarget!==null ? ` / target ${safe(fmtMoney(rowTarget))}` : ""}</title></rect>${valueLabel}${xLabel}`;
+  }).join("");
+  const gridVals = target !== null ? [yMax, target, 0] : [yMax, (yMax+yMin)/2, yMin];
+  const grid = [...new Set(gridVals.map(v=>Math.round(v)))].map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
+  const legend = `<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#7ee092"></span>At/above target</span><span class="legend-item"><span class="legend-swatch" style="background:#f6c25b"></span>Near target</span><span class="legend-item"><span class="legend-swatch" style="background:#ff7078"></span>Below target</span></div>`;
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${targetBand}${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg>${legend}</div>`;
 }
 function growthFromReturns(rows){
   let growth=1;
@@ -1144,13 +1211,11 @@ function renderHeader(){
   const required=price.required_count ?? price.stocks_requested ?? price.requested ?? 0;
   const missing=price.missing_count ?? Math.max(required-priced,0);
   $("heroTitle").textContent = pageTitles[appState.active] || "Dashboard";
-  $("subtitle").textContent = `${data.source.label} - as of ${fmtDate(d.request?.as_of)} - generated ${fmtDate(data.generated_at)}`;
+  $("subtitle").textContent = `${data.source.label} - portfolio as of ${fmtDate(d.request?.as_of)}`;
   $("statusStrip").innerHTML = [
     badge(`${priced}/${required} priced`, missing > 0 ? "bad" : "good"),
     badge(`${issue.total_count ?? 0} actionable issues`, (issue.total_count || 0) ? "bad" : "good"),
-    badge(`${fmtNum(data.source.row_count)} source rows`, "blue"),
-    badge(`Updated ${freshness.prices_updated_at ? String(freshness.prices_updated_at).slice(11,19) : "n/a"}`),
-    badge(`App ${String(data.app?.revision || "local").replace(/^options-roi-web-/,"")}`)
+    badge(`Prices updated ${fmtLocalTime(freshness.prices_updated_at)}`)
   ].join("");
   renderBasisControl();
 }
@@ -1185,7 +1250,7 @@ function renderMonthly(){
     ${rangePicker()}
     <div class="grid two-even">
       ${lineChart("Cumulative Growth by Month", returns, "month", "Growth", "Series", v=>fmtDec(v,2)+"x")}
-      ${barChart("Monthly Realized P&L", filtered.map(r=>({Date:r.month,pnl:r.total_realized_pnl})), "Date", "pnl")}
+      ${monthlyTargetBarChart("Monthly P&L vs Target", filtered)}
     </div>
     <div style="height:12px"></div>
     ${dataTable("monthly-table", rows, [
@@ -1202,7 +1267,7 @@ function renderMonthly(){
       {key:"open_expiring_roll_adjusted_premium",label:"Open roll-adjusted",format:fmtMoney,num:true,className:cls},
       {key:"projected_month_pnl",label:"Projected P&L",format:fmtMoney,num:true,className:cls},
       {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true,className:cls},
-      {key:"monthly_target_status",label:"Target status"}
+      {key:"monthly_target_status",label:"Target status",format:statusPill}
     ], {title:"Monthly table", subtitle:"Historical/current rows with explicit projection semantics.", wide:true})}
     ${sectionHead("Future Open Expiry Months", "Future months are shown separately so iOS/web do not infer roll semantics client-side.")}
     ${dataTable("future-months", future, [
@@ -1226,7 +1291,7 @@ function renderTickers(){
     ${sectionHead("Per-Ticker P&L", "Ticker totals include realized options, realized stock, dividends, unrealized snapshot, and total P&L.")}
     <div class="toolbar"><input id="tickerSearch" value="${safe(appState.tickerSearch)}" placeholder="Filter ticker"></div>
     ${dataTable("ticker-totals", filtered, [
-      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
       {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
       {key:"realized_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
       {key:"dividends",label:"Dividends",format:fmtMoney,num:true,className:cls},
@@ -1234,17 +1299,17 @@ function renderTickers(){
       {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls},
       {key:"total_pnl",label:"Total P&L",format:fmtMoney,num:true,className:cls},
       {key:"current_price",label:"Price",format:v=>fmtMoney(v,2),num:true},
-      {key:"open_option_count",label:"Open options",num:true},
-      {key:"inventory_share_count",label:"Shares",num:true}
-    ], {title:"Ticker totals", subtitle:"Cumulative ticker results.", wide:true})}
+      {key:"open_option_count",label:"Open options",num:true,compact:true},
+      {key:"inventory_share_count",label:"Shares",num:true,compact:true}
+    ], {title:"Ticker totals", subtitle:"Cumulative ticker results.", compact:true})}
     ${sectionHead("Per-Year Ticker Realized P&L", "Year filter applies to this table.", `<select id="tickerYear">${years.map(y=>`<option value="${safe(y)}" ${y===appState.tickerYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
     ${dataTable("ticker-yearly", yearly, [
-      {key:"year",label:"Year",num:true},
-      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+      {key:"year",label:"Year",num:true,compact:true},
+      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
       {key:"options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
       {key:"stock_realized_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
       {key:"combined_realized",label:"Total realized",format:fmtMoney,num:true,className:cls}
-    ], {title:"Per-year realized P&L", wide:true})}
+    ], {title:"Per-year realized P&L", compact:true})}
   `;
 }
 function renderPositions(){
@@ -1271,7 +1336,7 @@ function renderPerformance(){
   const benchmark = (data.charts.benchmark_growth_by_range || {})[appState.range] || data.charts.benchmark_growth || [];
   const pnlRows = rangeFiltered(data.tables.options_cycle_pnl || [], "Date");
   $("performance").innerHTML = `
-    ${sectionHead("Yearly Performance", "Realized yearly table plus unrealized-adjusted current-year view.")}
+    ${sectionHead("Yearly Performance", "Includes active-month TWR so inactive periods do not dilute trading-period performance.")}
     ${dataTable("yearly-mobile", yearlyRows(), [
       {key:"year",label:"Year",num:true},
       {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
@@ -1284,7 +1349,7 @@ function renderPerformance(){
       {key:"roac_year",label:"RoAC",format:fmtPct,num:true,className:cls},
       {key:"ropc_year",label:"RoPC",format:fmtPct,num:true,className:cls},
       {key:"annualized_twr",label:"Ann. TWR",format:fmtPct,num:true,className:cls},
-      {key:"annualized_twr_unrealized_adjusted",label:"Ann. TWR adj.",format:fmtPct,num:true,className:cls}
+      {key:"annualized_twr_active",label:"Ann. TWR active",format:fmtPct,num:true,className:cls}
     ], {title:"Yearly performance", wide:true})}
     <div style="height:12px"></div>
     ${sectionHead("Performance Charts", "Period control applies only to these charts.")}
@@ -1338,6 +1403,9 @@ function renderDiagnostics(){
       ${card("Audit notes", fmtNum(aud.total_count || 0), "Expected classification notes")}
       ${card("Current prices", `${safe(priced)}/${safe(required)}`, "Required pricing coverage", (required && priced < required) ? "neg" : "pos")}
       ${card("Source rows", fmtNum(data.source.row_count), data.source.kind || "source")}
+      ${card("Prices updated", fmtLocalDateTime(fresh.prices_updated_at), "Local browser time")}
+      ${card("Payload generated", fmtLocalDateTime(data.generated_at), "Local browser time")}
+      ${card("App revision", String(data.app?.revision || "local").replace(/^options-roi-web-/,""), "Cloud Run revision")}
     </div>
     ${sectionHead("Actionable Issues")}
     ${dataTable("issues", iss.issues || [], [
@@ -1392,7 +1460,7 @@ function renderMethodology(){
     ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
     <div class="grid two-even">
       <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>Realized P&L stays separate from projected values. Open expiring incremental premium is additive. Roll-adjusted open premium is displayed for reconciliation and is not added again.</p></div>
-      <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh rebuilds the cached backend context and price overlay without changing accounting rules.</p></div>
+      <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh checks whether the IBKR source changed. If not, it updates current prices only and keeps the existing accounting pipeline.</p></div>
     </div>
   `;
 }
@@ -1419,6 +1487,9 @@ function bindControls(){
   if (reloadApp && !reloadApp.dataset.bound) {
     reloadApp.dataset.bound = "1";
     reloadApp.addEventListener("click", () => {
+      reloadApp.disabled = true;
+      reloadApp.textContent = "Reloading...";
+      setUpdating(true, "Reloading app...");
       const url = new URL(window.location.href);
       url.searchParams.set("v", Date.now().toString());
       window.location.replace(url.toString());
@@ -1427,6 +1498,17 @@ function bindControls(){
   const refreshForm = $("refreshForm");
   if (refreshForm) {
     refreshForm.action = `/refresh?include_unrealized=${appState.includeUnrealized ? "1" : "0"}&section=${encodeURIComponent(appState.active)}`;
+    if (!refreshForm.dataset.bound) {
+      refreshForm.dataset.bound = "1";
+      refreshForm.addEventListener("submit", () => {
+        const button = refreshForm.querySelector("button");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Refreshing...";
+        }
+        setUpdating(true, "Refreshing data...");
+      });
+    }
   }
   document.querySelectorAll("[data-basis-control] button").forEach(btn => btn.addEventListener("click", () => {
     const next = btn.dataset.value !== "0";
@@ -1459,8 +1541,11 @@ const sectionRenderers = {
   diagnostics: renderDiagnostics,
   methodology: renderMethodology
 };
-function setUpdating(isUpdating){
+function setUpdating(isUpdating, message="Updating view..."){
+  const indicator = $("viewUpdating");
+  if (indicator) indicator.textContent = message;
   document.body.classList.toggle("is-rendering", Boolean(isUpdating));
+  document.body.classList.toggle("is-loading", Boolean(isUpdating) && message !== "Updating view...");
 }
 function scheduleRender(){
   window.clearTimeout(appState.renderTimer);
