@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from datetime import date
 from types import SimpleNamespace
@@ -416,6 +417,11 @@ def test_local_ibkr_import_service_writes_raw_rows_and_transactions(tmp_path):
     assert Path(first.raw_report.local_path).exists()
     assert len(list((tmp_path / "firestore_sim" / "ibkr_raw_rows").glob("*.json"))) == 6
     assert len(list((tmp_path / "firestore_sim" / "ibkr_transactions").glob("*.json"))) == 3
+    latest_path = tmp_path / "firestore_sim" / "app_metadata" / "ibkr_latest_import_1503002.json"
+    latest = json.loads(latest_path.read_text())
+    assert latest["run_id"] == "run-2"
+    assert latest["status"] == "succeeded"
+    assert latest["query_id"] == "1503002"
 
 
 def test_local_import_store_reports_successful_import_ranges(tmp_path):

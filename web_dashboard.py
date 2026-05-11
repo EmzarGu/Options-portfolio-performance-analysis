@@ -381,7 +381,15 @@ def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebui
     # tests that intentionally rely on sheet mode defaults.
     os.environ.setdefault("OPTIONS_DATA_SOURCE", "ibkr")
     os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
-    cache_bust = mobile_api._refresh_cache_bust() if force_rebuild else None
+    if force_rebuild:
+        context, cache_bust, _refresh_metadata = mobile_api._smart_refresh_context(
+            as_of=as_of,
+            include_unrealized=include_unrealized,
+            selected_sheets=None,
+            cache_bust=None,
+        )
+        return context, cache_bust
+    cache_bust = None
     context = mobile_api._context(
         as_of=as_of,
         include_unrealized=include_unrealized,
@@ -389,8 +397,6 @@ def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebui
         cache_bust=cache_bust,
         force_rebuild=force_rebuild,
     )
-    if force_rebuild:
-        mobile_api._set_active_cache_bust(cache_bust)
     return context, cache_bust
 
 

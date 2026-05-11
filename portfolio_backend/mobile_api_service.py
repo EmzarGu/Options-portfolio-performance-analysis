@@ -58,6 +58,7 @@ class MobilePayloadContext:
     request: Dict[str, Any]
     available_sheets: Optional[List[str]]
     source_metadata: Dict[str, Any]
+    base_state: Optional[PipelineState] = None
 
 
 def _now_iso() -> str:
@@ -128,6 +129,7 @@ def build_mobile_payload_context(
         request=_request_dict(request),
         available_sheets=[str(sheet) for sheet in available_sheets] if available_sheets is not None else None,
         source_metadata=metadata,
+        base_state=base_state,
     )
 
 

@@ -84,6 +84,9 @@ class ImportRecordStore(Protocol):
     def finish_run(self, run_id: str, updates: dict[str, Any]) -> None:
         ...
 
+    def mark_latest_successful_run(self, *, query_id: str, run_doc: dict[str, Any]) -> None:
+        ...
+
     def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
         ...
 
@@ -156,6 +159,11 @@ class LocalJsonImportStore:
         path = self._doc_path("ibkr_import_runs", run_id)
         existing = _read_json(path) if path.exists() else {"run_id": run_id}
         self._write_doc("ibkr_import_runs", run_id, {**existing, **updates})
+
+    def mark_latest_successful_run(self, *, query_id: str, run_doc: dict[str, Any]) -> None:
+        doc_id = f"ibkr_latest_import_{query_id}"
+        self._write_doc("app_metadata", doc_id, run_doc)
+        self._write_doc("app_metadata", "ibkr_latest_import", run_doc)
 
     def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
         ranges: list[DateRange] = []
@@ -273,6 +281,11 @@ class FirestoreImportStore:
     def finish_run(self, run_id: str, updates: dict[str, Any]) -> None:
         self.client.collection(self.import_runs_collection).document(run_id).set(updates, merge=True)
 
+    def mark_latest_successful_run(self, *, query_id: str, run_doc: dict[str, Any]) -> None:
+        metadata = self.client.collection("app_metadata")
+        metadata.document(f"ibkr_latest_import_{query_id}").set(run_doc, merge=True)
+        metadata.document("ibkr_latest_import").set(run_doc, merge=True)
+
     def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
         query = self.client.collection(self.import_runs_collection).where("query_id", "==", str(query_id))
         ranges: list[DateRange] = []
@@ -374,6 +387,15 @@ class IbkrImportService:
             "skipped_duplicates": updated_raw + updated_txn,
         }
         self.record_store.finish_run(resolved_run_id, finish_doc)
+        self.record_store.mark_latest_successful_run(
+            query_id=query_id,
+            run_doc={
+                **run_doc,
+                **finish_doc,
+                "updated_at": finished_at,
+                "schema_version": 1,
+            },
+        )
         return IbkrImportResult(
             run_id=resolved_run_id,
             query_id=query_id,

@@ -23,6 +23,7 @@ import streamlit_app as dashboard_app
 import pandas as pd
 from portfolio_backend.audit_store import RefreshAuditRecord, get_default_audit_store
 from portfolio_backend.mobile_api_service import (
+    MobilePayloadContext,
     MobilePayloadRequest,
     MobileServiceDependencies,
     build_mobile_dashboard_payload,
@@ -38,6 +39,11 @@ from portfolio_backend.mobile_api_service import (
 from portfolio_backend.mobile_payloads import build_mobile_config
 from portfolio_backend.ibkr.mobile_service import build_ibkr_mobile_payload_context
 from portfolio_backend.ibkr.repository import load_flex_report_from_env
+from portfolio_backend.pipeline import (
+    apply_live_price_overlay,
+    apply_unrealized_adjusted_display,
+    current_price_tickers_for_state,
+)
 
 
 app = FastAPI(title="Options ROI Mobile API", version="0.1.0")
@@ -51,6 +57,23 @@ DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
 PUBLIC_PATHS = {"/v1/mobile/health"}
+PRICE_ONLY_RELOAD_ENDPOINTS = [
+    "/v1/mobile/dashboard",
+    "/v1/mobile/positions",
+    "/v1/mobile/open-option-shorts",
+    "/v1/mobile/tickers",
+    "/v1/mobile/performance/yearly",
+    "/v1/mobile/issues",
+]
+FULL_RELOAD_ENDPOINTS = [
+    "/v1/mobile/dashboard",
+    "/v1/mobile/positions",
+    "/v1/mobile/open-option-shorts",
+    "/v1/mobile/tickers",
+    "/v1/mobile/performance/monthly",
+    "/v1/mobile/performance/yearly",
+    "/v1/mobile/issues",
+]
 
 _context_cache_lock = threading.Lock()
 _context_cache: "OrderedDict[Tuple[str, str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
@@ -343,6 +366,15 @@ def _context_cache_key(request: MobilePayloadRequest) -> Tuple[str, str, str, bo
     )
 
 
+def _cached_context_for_request(request: MobilePayloadRequest) -> Any:
+    key = _context_cache_key(request)
+    with _context_cache_lock:
+        cached = _context_cache.get(key)
+        if cached is not None:
+            _context_cache.move_to_end(key)
+        return cached
+
+
 def _remember_context(key: Tuple[str, str, str, bool, Tuple[str, ...], int], context: Any) -> None:
     with _context_cache_lock:
         _context_cache[key] = context
@@ -378,6 +410,174 @@ def _resolve_dependencies(source_metadata: Dict[str, Any]) -> MobileServiceDepen
     return _dependencies()
 
 
+def _refresh_source_marker(timing_recorder=None) -> Optional[Dict[str, Any]]:
+    """Return the newest successful IBKR import marker for smart refresh checks."""
+    started_at = perf_counter()
+    query_id = os.getenv("IBKR_FLEX_QUERY_ID", "").strip()
+    if not query_id:
+        if timing_recorder is not None:
+            timing_recorder("source_check_ms", _elapsed_ms(started_at))
+        return None
+    try:
+        from portfolio_backend.gcp import firestore_client
+
+        client = firestore_client()
+        metadata_snap = client.collection("app_metadata").document(f"ibkr_latest_import_{query_id}").get()
+        if metadata_snap.exists:
+            doc = metadata_snap.to_dict() or {}
+            if str(doc.get("status")) == "succeeded":
+                latest = _ibkr_import_marker_from_doc(doc, fallback_id=metadata_snap.id, query_id=query_id)
+                if latest is not None:
+                    return latest
+
+        try:
+            from google.cloud.firestore_v1 import FieldFilter
+
+            docs = (
+                client.collection("ibkr_import_runs")
+                .where(filter=FieldFilter("query_id", "==", str(query_id)))
+                .stream()
+            )
+        except Exception:
+            docs = client.collection("ibkr_import_runs").where("query_id", "==", str(query_id)).stream()
+        latest: Optional[Dict[str, Any]] = None
+        for snap in docs:
+            doc = snap.to_dict() or {}
+            if str(doc.get("status")) != "succeeded":
+                continue
+            candidate = _ibkr_import_marker_from_doc(doc, fallback_id=snap.id, query_id=query_id)
+            if candidate is not None and (
+                latest is None or str(candidate.get("finished_at") or "") > str(latest.get("finished_at") or "")
+            ):
+                latest = candidate
+        if latest is None:
+            return None
+        try:
+            client.collection("app_metadata").document(f"ibkr_latest_import_{query_id}").set(latest, merge=True)
+        except Exception as exc:
+            logger.warning("ibkr_refresh_marker_cache_write_failed error=%s", exc)
+        return latest
+    except Exception as exc:
+        logger.warning("ibkr_refresh_source_check_failed error=%s", exc)
+        return None
+    finally:
+        if timing_recorder is not None:
+            timing_recorder("source_check_ms", _elapsed_ms(started_at))
+
+
+def _ibkr_import_marker_from_doc(
+    doc: Dict[str, Any],
+    *,
+    fallback_id: str,
+    query_id: str,
+) -> Optional[Dict[str, Any]]:
+    if str(doc.get("query_id") or query_id) != str(query_id):
+        return None
+    marker = {
+        "import_run_id": str(doc.get("run_id") or doc.get("import_run_id") or fallback_id),
+        "query_id": str(doc.get("query_id") or query_id),
+        "status": str(doc.get("status") or "succeeded"),
+        "finished_at": doc.get("finished_at"),
+        "from_date": doc.get("from_date"),
+        "to_date": doc.get("to_date"),
+        "inserted_raw_rows": doc.get("inserted_raw_rows"),
+        "updated_raw_rows": doc.get("updated_raw_rows"),
+        "inserted_transactions": doc.get("inserted_transactions"),
+        "updated_transactions": doc.get("updated_transactions"),
+    }
+    marker["source_snapshot_id"] = (
+        f"ibkr-flex:{marker['query_id']}:{marker.get('finished_at') or marker['import_run_id']}"
+    )
+    return marker
+
+
+def _source_metadata_for_marker(marker: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not marker:
+        return {}
+    return {
+        "source_kind": "ibkr_flex",
+        "source_name": "IBKR Flex",
+        "source_version": marker.get("query_id"),
+        "source_downloaded_at": marker.get("finished_at"),
+        "source_modified_at": marker.get("finished_at"),
+        "source_snapshot_id": marker.get("source_snapshot_id"),
+        "source_selected_sheets": ["IBKR Flex"],
+        "source_sheet_counts": [{"name": "IBKR Flex", "rows": None}],
+        "ibkr_import_run_id": marker.get("import_run_id"),
+        "ibkr_import_finished_at": marker.get("finished_at"),
+        "ibkr_import_from_date": marker.get("from_date"),
+        "ibkr_import_to_date": marker.get("to_date"),
+    }
+
+
+def _source_marker_matches(context: Any, marker: Optional[Dict[str, Any]]) -> bool:
+    if not marker:
+        return False
+    metadata = dict(getattr(context, "source_metadata", {}) or {})
+    return (
+        str(metadata.get("source_snapshot_id") or "") == str(marker.get("source_snapshot_id") or "")
+        and str(metadata.get("ibkr_import_run_id") or "") == str(marker.get("import_run_id") or "")
+    )
+
+
+def _refresh_prices_from_cached_base(
+    context: MobilePayloadContext,
+    *,
+    request: MobilePayloadRequest,
+    available: List[str],
+    source_marker: Optional[Dict[str, Any]],
+    timing_recorder=None,
+) -> Optional[MobilePayloadContext]:
+    base_state = getattr(context, "base_state", None)
+    if base_state is None:
+        return None
+    metadata = dict(getattr(context, "source_metadata", {}) or {})
+    metadata.update(_source_metadata_for_marker(source_marker))
+    dependencies = _resolve_dependencies(metadata)
+    if dependencies.fetch_current_prices is None:
+        return None
+
+    started_at = perf_counter()
+    tickers = list(current_price_tickers_for_state(base_state))
+    if timing_recorder is not None:
+        timing_recorder("price_ticker_resolution_ms", _elapsed_ms(started_at))
+
+    started_at = perf_counter()
+    live_prices, price_errors, price_summary = dependencies.fetch_current_prices(tickers)
+    if timing_recorder is not None:
+        timing_recorder("price_fetch_ms", _elapsed_ms(started_at))
+
+    prices_updated_at = _now_iso()
+    metadata["prices_updated_at"] = prices_updated_at
+    started_at = perf_counter()
+    state = apply_live_price_overlay(
+        base_state,
+        live_prices,
+        price_errors,
+        price_summary,
+        prices_updated_at,
+    )
+    if timing_recorder is not None:
+        timing_recorder("price_overlay_ms", _elapsed_ms(started_at))
+
+    started_at = perf_counter()
+    state = apply_unrealized_adjusted_display(state, request.include_unrealized)
+    if timing_recorder is not None:
+        timing_recorder("unrealized_adjustment_ms", _elapsed_ms(started_at))
+
+    return MobilePayloadContext(
+        state=state,
+        request={
+            "as_of": request.as_of,
+            "include_unrealized": request.include_unrealized,
+            "selected_sheets": request.selected_sheets,
+        },
+        available_sheets=[str(sheet) for sheet in available] if available is not None else None,
+        source_metadata=metadata,
+        base_state=base_state,
+    )
+
+
 def _context(
     *,
     as_of: Optional[date],
@@ -386,6 +586,7 @@ def _context(
     cache_bust: Optional[int],
     force_rebuild: bool = False,
     timing_recorder=None,
+    source_metadata_override: Optional[Dict[str, Any]] = None,
 ):
     request, available = _common_request(
         as_of=as_of,
@@ -412,11 +613,15 @@ def _context(
         timing_recorder("context_cache_hit", 0)
 
     started_at = perf_counter()
-    source_metadata: Dict[str, Any] = {}
+    source_metadata: Dict[str, Any] = dict(source_metadata_override or {})
     if _data_source() == DATA_SOURCE_IBKR:
+        if "source_snapshot_id" not in source_metadata:
+            source_metadata.update(_source_metadata_for_marker(_refresh_source_marker(timing_recorder=timing_recorder)))
         context_kwargs = {"available_sheets": available}
         if _supports_keyword(build_ibkr_mobile_payload_context, "source_metadata"):
             context_kwargs["source_metadata"] = source_metadata
+        if timing_recorder is not None and _supports_timing_recorder(build_ibkr_mobile_payload_context):
+            context_kwargs["timing_recorder"] = timing_recorder
         context = build_ibkr_mobile_payload_context(
             request,
             _resolve_dependencies(source_metadata),
@@ -438,6 +643,135 @@ def _context(
         timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
     _remember_context(key, context)
     return context
+
+
+def _smart_refresh_context(
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    selected_sheets: Optional[List[str]],
+    cache_bust: Optional[int],
+    timing_recorder=None,
+) -> Tuple[Any, int, Dict[str, Any]]:
+    resolved_cache_bust = cache_bust if cache_bust is not None else _refresh_cache_bust()
+    if _data_source() != DATA_SOURCE_IBKR:
+        context = _context(
+            as_of=as_of,
+            include_unrealized=include_unrealized,
+            selected_sheets=selected_sheets,
+            cache_bust=resolved_cache_bust,
+            force_rebuild=True,
+            timing_recorder=timing_recorder,
+        )
+        _set_active_cache_bust(resolved_cache_bust)
+        return (
+            context,
+            resolved_cache_bust,
+            {
+                "scope": "full",
+                "pipeline_refreshed": True,
+                "prices_refreshed": bool((getattr(context, "source_metadata", {}) or {}).get("prices_updated_at")),
+                "source_checked": False,
+                "source_changed": True,
+                "reload_endpoints": FULL_RELOAD_ENDPOINTS,
+            },
+        )
+
+    source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
+    active_request, active_available = _common_request(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=_resolve_cache_bust(None),
+        timing_recorder=timing_recorder,
+    )
+    cached_context = _cached_context_for_request(active_request)
+    if cached_context is not None and _source_marker_matches(cached_context, source_marker):
+        if timing_recorder is not None:
+            timing_recorder("context_cache_hit", 1)
+        refreshed_context = _refresh_prices_from_cached_base(
+            cached_context,
+            request=MobilePayloadRequest(
+                sheet_id=active_request.sheet_id,
+                as_of=active_request.as_of,
+                selected_sheets=active_request.selected_sheets,
+                include_unrealized=active_request.include_unrealized,
+                cache_bust=resolved_cache_bust,
+            ),
+            available=active_available,
+            source_marker=source_marker,
+            timing_recorder=timing_recorder,
+        )
+        if refreshed_context is not None:
+            key = _context_cache_key(
+                MobilePayloadRequest(
+                    sheet_id=active_request.sheet_id,
+                    as_of=active_request.as_of,
+                    selected_sheets=active_request.selected_sheets,
+                    include_unrealized=active_request.include_unrealized,
+                    cache_bust=resolved_cache_bust,
+                )
+            )
+            _remember_context(key, refreshed_context)
+            _set_active_cache_bust(resolved_cache_bust)
+            return (
+                refreshed_context,
+                resolved_cache_bust,
+                {
+                    "scope": "prices_only",
+                    "pipeline_refreshed": False,
+                    "prices_refreshed": bool(refreshed_context.source_metadata.get("prices_updated_at")),
+                    "source_checked": True,
+                    "source_changed": False,
+                    "source_snapshot_id": (source_marker or {}).get("source_snapshot_id"),
+                    "reload_endpoints": PRICE_ONLY_RELOAD_ENDPOINTS,
+                },
+            )
+
+    if timing_recorder is not None:
+        timing_recorder("context_cache_hit", 0)
+    context = _context(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=resolved_cache_bust,
+        force_rebuild=True,
+        timing_recorder=timing_recorder,
+        source_metadata_override=_source_metadata_for_marker(source_marker),
+    )
+    context.source_metadata.update(_source_metadata_for_marker(source_marker))
+    _set_active_cache_bust(resolved_cache_bust)
+    return (
+        context,
+        resolved_cache_bust,
+        {
+            "scope": "full",
+            "pipeline_refreshed": True,
+            "prices_refreshed": bool(context.source_metadata.get("prices_updated_at")),
+            "source_checked": source_marker is not None,
+            "source_changed": cached_context is None or not _source_marker_matches(cached_context, source_marker),
+            "source_snapshot_id": (source_marker or {}).get("source_snapshot_id"),
+            "reload_endpoints": FULL_RELOAD_ENDPOINTS,
+        },
+    )
+
+
+def _apply_refresh_metadata(payload: Dict[str, Any], refresh_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    refresh = payload.get("refresh")
+    if isinstance(refresh, dict):
+        refresh.update(
+            {
+                "scope": refresh_metadata.get("scope", "full"),
+                "pipeline_refreshed": bool(refresh_metadata.get("pipeline_refreshed", True)),
+                "prices_refreshed": bool(refresh_metadata.get("prices_refreshed", refresh.get("prices_refreshed"))),
+                "source_checked": bool(refresh_metadata.get("source_checked", False)),
+                "source_changed": bool(refresh_metadata.get("source_changed", True)),
+                "reload_endpoints": list(refresh_metadata.get("reload_endpoints") or refresh.get("reload_endpoints") or []),
+            }
+        )
+        if refresh_metadata.get("source_snapshot_id"):
+            refresh["source_snapshot_id"] = refresh_metadata["source_snapshot_id"]
+    return payload
 
 
 def _record_refresh_audit(
@@ -529,21 +863,19 @@ def refresh_mobile_payloads(
 ) -> Dict[str, Any]:
     route_started_at = perf_counter()
     audit_started_at = _now_iso()
-    resolved_cache_bust = cache_bust if cache_bust is not None else _refresh_cache_bust()
-    context = _context(
+    context, resolved_cache_bust, refresh_metadata = _smart_refresh_context(
         as_of=as_of,
         include_unrealized=include_unrealized,
         selected_sheets=selected_sheets,
-        cache_bust=resolved_cache_bust,
-        force_rebuild=True,
+        cache_bust=cache_bust,
         timing_recorder=_timing_recorder(request),
     )
-    _set_active_cache_bust(resolved_cache_bust)
     started_at = perf_counter()
     payload = build_mobile_refresh_payload(
         context,
         cache_bust=resolved_cache_bust,
     )
+    payload = _apply_refresh_metadata(payload, refresh_metadata)
     _record_timing(request, "dto_build_ms", _elapsed_ms(started_at))
     _record_timing(request, "route_total_ms", _elapsed_ms(route_started_at))
     _record_refresh_audit(
