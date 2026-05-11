@@ -35,11 +35,30 @@ def test_streamlit_app_source_mode_defaults_to_sheet_backup(monkeypatch):
     monkeypatch.delenv("IBKR_REPORT_SOURCE", raising=False)
     monkeypatch.delenv("FIRESTORE_PROJECT_ID", raising=False)
     monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
+    monkeypatch.delenv("PRICE_HISTORY_STORE", raising=False)
+    monkeypatch.delenv("DIVIDEND_HISTORY_STORE", raising=False)
+    monkeypatch.delenv("AUDIT_STORE", raising=False)
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
     assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") is None
     assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") is None
     assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") is None
+    assert streamlit_app.os.getenv("PRICE_HISTORY_STORE") == "off"
+    assert streamlit_app.os.getenv("DIVIDEND_HISTORY_STORE") == "off"
+    assert streamlit_app.os.getenv("AUDIT_STORE") == "off"
+
+
+def test_streamlit_sheet_backup_disables_firestore_stores_from_hosting_secrets(monkeypatch):
+    monkeypatch.setenv("STREAMLIT_DASHBOARD_SOURCE", "google_sheets")
+    monkeypatch.setenv("FIRESTORE_PROJECT_ID", streamlit_app.DEFAULT_FIRESTORE_PROJECT_ID)
+    monkeypatch.setenv("PRICE_HISTORY_STORE", "firestore")
+    monkeypatch.setenv("DIVIDEND_HISTORY_STORE", "firestore")
+    monkeypatch.setenv("AUDIT_STORE", "firestore")
+
+    assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
+    assert streamlit_app.os.getenv("PRICE_HISTORY_STORE") == "off"
+    assert streamlit_app.os.getenv("DIVIDEND_HISTORY_STORE") == "off"
+    assert streamlit_app.os.getenv("AUDIT_STORE") == "off"
 
 
 def test_streamlit_ibkr_dashboard_source_defaults_report_source_to_firestore_rest(monkeypatch):

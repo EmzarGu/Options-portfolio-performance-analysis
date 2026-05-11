@@ -139,6 +139,11 @@ IBKR_SOURCE_LABEL = "IBKR Flex"
 DEFAULT_FIRESTORE_PROJECT_ID = "options-performance-dashboard"
 DEFAULT_IBKR_FLEX_QUERY_ID = "1503002"
 DEFAULT_STREAMLIT_IBKR_REPORT_SOURCE = "firestore_rest"
+STREAMLIT_SHEET_BACKUP_STORE_DEFAULTS = {
+    "PRICE_HISTORY_STORE": "off",
+    "DIVIDEND_HISTORY_STORE": "off",
+    "AUDIT_STORE": "off",
+}
 STREAMLIT_ENV_SECRET_KEYS = (
     "STREAMLIT_DASHBOARD_SOURCE",
     "OPTIONS_DATA_SOURCE",
@@ -513,6 +518,11 @@ def _normalize_streamlit_ibkr_report_source() -> None:
         os.environ["IBKR_REPORT_SOURCE"] = source
 
 
+def _normalize_streamlit_sheet_backup_stores() -> None:
+    for key, value in STREAMLIT_SHEET_BACKUP_STORE_DEFAULTS.items():
+        os.environ[key] = value
+
+
 def data_source_mode() -> str:
     sync_streamlit_secrets_to_env()
     value = os.getenv("OPTIONS_DATA_SOURCE", DATA_SOURCE_GOOGLE_SHEETS).strip().lower()
@@ -536,6 +546,8 @@ def streamlit_app_source_mode() -> str:
         _normalize_streamlit_ibkr_report_source()
         _set_env_default_if_blank("FIRESTORE_PROJECT_ID", DEFAULT_FIRESTORE_PROJECT_ID)
         _set_env_default_if_blank("IBKR_FLEX_QUERY_ID", DEFAULT_IBKR_FLEX_QUERY_ID)
+    else:
+        _normalize_streamlit_sheet_backup_stores()
     return mode
 
 
