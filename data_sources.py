@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import requests
 import warnings
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from portfolio_backend.dividend_history_store import get_default_dividend_history_store
-from portfolio_backend.price_history_store import get_default_price_history_store
+from portfolio_backend.price_history_store import _lookup_from_docs, get_default_price_history_store
 
 if TYPE_CHECKING:
     from portfolio_backend.models import HoldSeg, StockTxn
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 DIVIDEND_COLUMNS = ["ticker", "ex_date", "pay_date", "per_share", "shares", "cash"]
 DIVIDEND_HISTORY_CACHE: Dict[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]], pd.Series] = {}
+BUNDLED_PRICE_HISTORY_FALLBACK_PATH = Path(__file__).resolve().parent / "data" / "streamlit_price_history_fallback.json"
+_BUNDLED_PRICE_HISTORY_DOCS: Optional[Dict[str, Dict]] = None
 OPTION_COLUMN_MAP = {
     "Trans date": "trans_date",
     "Tiker": "ticker",
@@ -279,6 +282,31 @@ class YFinancePriceHistoryProvider(PriceHistoryProvider):
         return series.copy()
 
 
+def _load_bundled_price_history_docs() -> Dict[str, Dict]:
+    global _BUNDLED_PRICE_HISTORY_DOCS
+    if _BUNDLED_PRICE_HISTORY_DOCS is not None:
+        return _BUNDLED_PRICE_HISTORY_DOCS
+    if not BUNDLED_PRICE_HISTORY_FALLBACK_PATH.exists():
+        _BUNDLED_PRICE_HISTORY_DOCS = {}
+        return _BUNDLED_PRICE_HISTORY_DOCS
+    try:
+        payload = json.loads(BUNDLED_PRICE_HISTORY_FALLBACK_PATH.read_text(encoding="utf-8"))
+        docs = payload.get("documents") if isinstance(payload, dict) else None
+        _BUNDLED_PRICE_HISTORY_DOCS = docs if isinstance(docs, dict) else {}
+    except Exception as exc:
+        logger.warning("bundled_price_history_fallback_load_failed error=%s", exc)
+        _BUNDLED_PRICE_HISTORY_DOCS = {}
+    return _BUNDLED_PRICE_HISTORY_DOCS
+
+
+def _get_bundled_price_history(ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
+    docs = _load_bundled_price_history_docs()
+    if not docs:
+        return pd.Series(dtype=float, name=str(ticker or "").upper().strip())
+    lookup = _lookup_from_docs(docs, str(ticker or "").upper().strip(), start, end)
+    return lookup.series if lookup.fully_covered else pd.Series(dtype=float, name=str(ticker or "").upper().strip())
+
+
 def fetch_current_prices_yf(tickers, yf_module) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
     """Fetch latest stock prices; return prices, error messages, and coverage summary."""
     errors: List[str] = []
@@ -359,6 +387,7 @@ def fetch_price_history_yf(
     cache_hits = 0
     cache_misses = 0
     cache_writes = 0
+    bundled_fallback_hits = 0
     yfinance_fetches = 0
     try:
         cached_by_ticker = store.get_many_history(tickers, start, end)
@@ -373,8 +402,12 @@ def fetch_price_history_yf(
                 series = cached.series
             else:
                 cache_misses += 1
-                yfinance_fetches += 1
-                series = provider.get_price_history(ticker, start, end)
+                series = _get_bundled_price_history(ticker, start, end)
+                if not series.empty:
+                    bundled_fallback_hits += 1
+                else:
+                    yfinance_fetches += 1
+                    series = provider.get_price_history(ticker, start, end)
                 if not series.empty:
                     try:
                         store.upsert_history(ticker, series, start, end)
@@ -386,11 +419,12 @@ def fetch_price_history_yf(
         except Exception as exc:
             errors.append(f"Historical price download failed: {exc}")
     logger.warning(
-        "historical_price_cache_summary requested=%s fetched=%s cache_hits=%s cache_misses=%s cache_writes=%s yfinance_fetches=%s",
+        "historical_price_cache_summary requested=%s fetched=%s cache_hits=%s cache_misses=%s bundled_fallback_hits=%s cache_writes=%s yfinance_fetches=%s",
         summary["requested"],
         len(history),
         cache_hits,
         cache_misses,
+        bundled_fallback_hits,
         cache_writes,
         yfinance_fetches,
     )
