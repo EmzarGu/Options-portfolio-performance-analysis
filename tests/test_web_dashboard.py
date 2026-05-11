@@ -10,6 +10,7 @@ def _fake_dashboard_data():
         "app": {"revision": "options-roi-web-test", "restart_ts": ""},
         "generated_at": "2026-05-10T12:00:00+00:00",
         "source": {"label": "IBKR Flex", "kind": "ibkr_flex", "row_count": 1, "sheet_counts": []},
+        "web": {"include_unrealized": True, "target_return": 0.015},
         "dashboard": {
             "request": {"as_of": "2026-05-10", "include_unrealized": True, "selected_sheets": ["IBKR Flex"]},
             "data_freshness": {
@@ -112,11 +113,49 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert "With unrealized" in response.text
     assert "Reload app" in response.text
     assert "Open Shorts Monitor" in response.text
+    assert "Settings" in response.text
+    assert "Target return %" in response.text
     assert "Monthly Return vs Target" in response.text
     assert "Monthly P&amp;L vs Target" not in response.text
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["expires"] == "0"
+
+
+def test_web_dashboard_passes_target_return_from_query(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return _fake_dashboard_data()
+
+    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
+    client = TestClient(web_dashboard.app)
+
+    response = client.get("/?target_return_pct=2.25")
+
+    assert response.status_code == 200
+    assert captured["target_return"] == 0.0225
+    assert f"{web_dashboard.TARGET_RETURN_COOKIE_NAME}=0.022500" in response.headers["set-cookie"]
+
+
+def test_web_dashboard_reads_target_return_from_cookie(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return _fake_dashboard_data()
+
+    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
+    client = TestClient(web_dashboard.app)
+    client.cookies.set(web_dashboard.TARGET_RETURN_COOKIE_NAME, "0.03")
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert captured["target_return"] == 0.03
 
 
 def test_web_dashboard_api_requires_auth(monkeypatch):

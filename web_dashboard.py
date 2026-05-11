@@ -39,6 +39,7 @@ app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
 
 COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
+TARGET_RETURN_COOKIE_NAME = "options_roi_web_target_return"
 DEFAULT_SESSION_DAYS = 90
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -117,6 +118,55 @@ def _session_max_age_seconds() -> int:
     else:
         days = DEFAULT_SESSION_DAYS
     return days * 24 * 60 * 60
+
+
+def _web_monthly_target_return_default() -> float:
+    raw = os.getenv("WEB_MONTHLY_TARGET_RETURN", "").strip()
+    if not raw:
+        return 0.015
+    try:
+        value = float(raw)
+    except ValueError:
+        return 0.015
+    return min(max(value, 0.0), 1.0)
+
+
+def _coerce_target_return(value: Optional[str], *, percent: bool = False) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        target = float(value) / 100.0 if percent else float(value)
+    except ValueError:
+        return None
+    return min(max(target, 0.0), 1.0)
+
+
+def _target_return_from_query(request: Request) -> float:
+    pct = _coerce_target_return(request.query_params.get("target_return_pct"), percent=True)
+    if pct is not None:
+        return pct
+    raw = _coerce_target_return(request.query_params.get("target_return"))
+    if raw is not None:
+        return raw
+    cookie_value = _coerce_target_return(request.cookies.get(TARGET_RETURN_COOKIE_NAME))
+    if cookie_value is not None:
+        return cookie_value
+    return _web_monthly_target_return_default()
+
+
+def _target_return_was_submitted(request: Request) -> bool:
+    return "target_return_pct" in request.query_params or "target_return" in request.query_params
+
+
+def _set_target_return_cookie(response: Response, target_return: float) -> None:
+    response.set_cookie(
+        TARGET_RETURN_COOKIE_NAME,
+        f"{target_return:.6f}",
+        max_age=_session_max_age_seconds(),
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
 
 
 def _b64_json(data: Dict[str, Any]) -> str:
@@ -400,17 +450,27 @@ def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebui
     return context, cache_bust
 
 
-def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: bool = True) -> Dict[str, Any]:
+def _build_dashboard_data(
+    *,
+    as_of: Optional[date] = None,
+    include_unrealized: bool = True,
+    target_return: Optional[float] = None,
+) -> Dict[str, Any]:
     # The web UI can switch realized/unrealized presentation without a server
     # round trip, so build the full unrealized-capable context once and include
     # both presentation views in the payload.
     context, _ = _get_context(as_of=as_of, include_unrealized=True)
     state = context.state
-    dashboard = build_mobile_dashboard_payload(context)
+    monthly_target_return = _web_monthly_target_return_default() if target_return is None else target_return
+    dashboard = build_mobile_dashboard_payload(context, target_return=monthly_target_return)
     positions = build_mobile_positions_payload(context)
     open_shorts = build_mobile_open_option_shorts_payload(context, sort="moneyness_risk", limit=None)
     tickers = build_mobile_tickers_payload(context, include_history=False)
-    monthly = build_mobile_monthly_payload(context, monthly_range="since_inception")
+    monthly = build_mobile_monthly_payload(
+        context,
+        target_return=monthly_target_return,
+        monthly_range="since_inception",
+    )
     yearly = build_mobile_yearly_payload(context)
     issues = build_mobile_issues_payload(context)
 
@@ -431,6 +491,7 @@ def _build_dashboard_data(*, as_of: Optional[date] = None, include_unrealized: b
             },
             "web": {
                 "include_unrealized": bool(include_unrealized),
+                "target_return": float(monthly_target_return),
             },
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "source": {
@@ -636,13 +697,26 @@ def refresh(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    target_return = _target_return_from_query(request)
     section = request.query_params.get("section") or "dashboard"
-    if section not in {"dashboard", "performance", "monthly", "tickers", "positions", "diagnostics", "methodology"}:
+    if section not in {
+        "dashboard",
+        "performance",
+        "monthly",
+        "tickers",
+        "positions",
+        "settings",
+        "diagnostics",
+        "methodology",
+    }:
         section = "dashboard"
     context, cache_bust = _get_context(as_of=None, include_unrealized=include_unrealized, force_rebuild=True)
     build_mobile_refresh_payload(context, cache_bust=cache_bust)
     return RedirectResponse(
-        url=f"/?include_unrealized={1 if include_unrealized else 0}&section={section}&refreshed={cache_bust}",
+        url=(
+            f"/?include_unrealized={1 if include_unrealized else 0}"
+            f"&target_return={target_return:.6f}&section={section}&refreshed={cache_bust}"
+        ),
         status_code=303,
     )
 
@@ -652,7 +726,8 @@ def dashboard_json(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-    return JSONResponse(_build_dashboard_data(include_unrealized=include_unrealized))
+    target_return = _target_return_from_query(request)
+    return JSONResponse(_build_dashboard_data(include_unrealized=include_unrealized, target_return=target_return))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -661,14 +736,18 @@ def dashboard_page(request: Request) -> Response:
         return _redirect_to_login()
     try:
         include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-        payload = _build_dashboard_data(include_unrealized=include_unrealized)
+        target_return = _target_return_from_query(request)
+        payload = _build_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
     except Exception as exc:
         return HTMLResponse(_error_html(str(exc)), status_code=500)
     data_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).replace("</", "<\\/")
     user = html.escape(_authenticated_user(request) or "")
-    return HTMLResponse(
+    response = HTMLResponse(
         DASHBOARD_HTML.replace("__DASHBOARD_DATA__", data_json).replace("__AUTH_USER__", user)
     )
+    if _target_return_was_submitted(request):
+        _set_target_return_cookie(response, target_return)
+    return response
 
 
 def _configuration_error_html() -> str:
@@ -848,6 +927,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
   <section id="tickers" class="section"></section>
   <section id="positions" class="section"></section>
   <section id="performance" class="section"></section>
+  <section id="settings" class="section"></section>
   <section id="diagnostics" class="section"></section>
   <section id="methodology" class="section"></section>
 </main>
@@ -858,6 +938,7 @@ const appState = {
   active: "dashboard",
   range: "YTD",
   includeUnrealized: data.web?.include_unrealized !== false,
+  targetReturn: Number(data.web?.target_return ?? data.monthly?.target_return ?? 0.015),
   openRisk: "all",
   openType: "all",
   openSearch: "",
@@ -868,7 +949,7 @@ const appState = {
 };
 const sections = [
   ["dashboard","Dashboard"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
-  ["positions","Positions"], ["diagnostics","Diagnostics"],
+  ["positions","Positions"], ["settings","Settings"], ["diagnostics","Diagnostics"],
   ["methodology","Methodology"]
 ];
 const pageTitles = {
@@ -877,6 +958,7 @@ const pageTitles = {
   monthly: "Monthly",
   tickers: "Tickers",
   positions: "Positions",
+  settings: "Settings",
   diagnostics: "Diagnostics",
   methodology: "Methodology"
 };
@@ -899,6 +981,7 @@ const fmtCompactMoney = (v) => {
   return `${sign}$${abs.toFixed(0)}`;
 };
 const fmtPct = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1}).format(Number(v));
+const fmtPctNumber = (v) => numeric(v) === null ? "" : (Number(v) * 100).toFixed(2).replace(/\\.?0+$/,"");
 const fmtNum = (v) => numeric(v) === null ? "n/a" : new Intl.NumberFormat("en-US",{maximumFractionDigits:0}).format(Number(v));
 const fmtDec = (v,d=2) => numeric(v) === null ? "n/a" : Number(v).toFixed(d);
 const fmtDate = (v) => v ? String(v).slice(0,10) : "n/a";
@@ -950,6 +1033,7 @@ function updateUrlState(){
   const url = new URL(window.location.href);
   url.searchParams.set("section", appState.active);
   url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
+  url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
   url.searchParams.delete("refreshed");
   window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
@@ -1144,7 +1228,12 @@ function monthlyReturnTargetChart(title, rows){
   const slot=(w-pad.l-pad.r)/clean.length;
   const bw=Math.max(10,slot*.62);
   const targetY = target === null ? null : sy(target);
-  const targetLayer = target === null ? "" : `<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${Math.max(targetY-pad.t,0)}" fill="rgba(126,224,146,.08)"></rect><rect x="${pad.l}" y="${targetY}" width="${w-pad.l-pad.r}" height="${Math.max(zero-targetY,0)}" fill="rgba(246,194,91,.07)"></rect><rect x="${pad.l}" y="${zero}" width="${w-pad.l-pad.r}" height="${Math.max(h-pad.b-zero,0)}" fill="rgba(255,111,120,.07)"></rect><line x1="${pad.l}" y1="${targetY}" x2="${w-pad.r}" y2="${targetY}" stroke="#f6c25b" stroke-width="2" stroke-dasharray="6 5"></line>`;
+  const targetLayer = target === null ? "" : [
+    `<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${Math.max(targetY-pad.t,0)}" fill="rgba(126,224,146,.18)"></rect>`,
+    `<rect x="${pad.l}" y="${targetY}" width="${w-pad.l-pad.r}" height="${Math.max(zero-targetY,0)}" fill="rgba(246,194,91,.16)"></rect>`,
+    `<rect x="${pad.l}" y="${zero}" width="${w-pad.l-pad.r}" height="${Math.max(h-pad.b-zero,0)}" fill="rgba(255,111,120,.14)"></rect>`,
+    `<line x1="${pad.l}" y1="${targetY}" x2="${w-pad.r}" y2="${targetY}" stroke="#f6c25b" stroke-width="3" stroke-dasharray="7 5"></line>`
+  ].join("");
   const bars=clean.map((r,i)=>{
     const v=numeric(r.projected_return_roac ?? r.return_roac ?? r.return) || 0;
     const rowTarget=numeric(r.target_return ?? data.monthly?.target_return);
@@ -1481,6 +1570,33 @@ function renderDiagnostics(){
     ], {title:"Capital daily tail", wide:true})}
   `;
 }
+function renderSettings(){
+  const targetPct = fmtPctNumber(appState.targetReturn);
+  $("settings").innerHTML = `
+    ${sectionHead("Settings", "Adjust web dashboard assumptions without changing accounting logic.")}
+    <div class="grid two-even">
+      <div class="panel">
+        <h3>Monthly Target</h3>
+        <p class="muted">Used by the dashboard current-month card, monthly target status, and the Monthly Return vs Target chart. Values are applied as a percentage return target.</p>
+        <form method="get" action="/" class="toolbar" style="align-items:end">
+          <input type="hidden" name="section" value="settings">
+          <input type="hidden" name="include_unrealized" value="${appState.includeUnrealized ? "1" : "0"}">
+          <label>
+            <span class="control-label">Target return %</span>
+            <input name="target_return_pct" type="number" min="0" max="100" step="0.05" value="${safe(targetPct)}" style="min-width:160px">
+          </label>
+          <button class="primary" type="submit">Apply target</button>
+        </form>
+        <div class="footnote">Current target: ${safe(fmtPct(appState.targetReturn))}. The setting is kept in the URL so refreshed views and shared links use the same target.</div>
+      </div>
+      <div class="panel">
+        <h3>Display Basis</h3>
+        <p class="muted">The realized/unrealized switch remains on Dashboard and Performance because those are the only views whose top-level metrics change meaning.</p>
+        <div class="segmented" data-basis-control><button type="button" data-value="1" class="${appState.includeUnrealized ? "active" : ""}">With unrealized</button><button type="button" data-value="0" class="${!appState.includeUnrealized ? "active" : ""}">Realized only</button></div>
+      </div>
+    </div>
+  `;
+}
 function renderMethodology(){
   $("methodology").innerHTML = `
     ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
@@ -1523,7 +1639,11 @@ function bindControls(){
   }
   const refreshForm = $("refreshForm");
   if (refreshForm) {
-    refreshForm.action = `/refresh?include_unrealized=${appState.includeUnrealized ? "1" : "0"}&section=${encodeURIComponent(appState.active)}`;
+    refreshForm.action = (
+      `/refresh?include_unrealized=${appState.includeUnrealized ? "1" : "0"}`
+      + `&target_return=${encodeURIComponent(Number(appState.targetReturn || 0).toFixed(6))}`
+      + `&section=${encodeURIComponent(appState.active)}`
+    );
     if (!refreshForm.dataset.bound) {
       refreshForm.dataset.bound = "1";
       refreshForm.addEventListener("submit", () => {
@@ -1564,6 +1684,7 @@ const sectionRenderers = {
   tickers: renderTickers,
   positions: renderPositions,
   performance: renderPerformance,
+  settings: renderSettings,
   diagnostics: renderDiagnostics,
   methodology: renderMethodology
 };

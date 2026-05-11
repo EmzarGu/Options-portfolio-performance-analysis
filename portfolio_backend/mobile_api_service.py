@@ -133,10 +133,15 @@ def build_mobile_payload_context(
     )
 
 
-def build_mobile_dashboard_payload(context: MobilePayloadContext) -> Dict[str, Any]:
+def build_mobile_dashboard_payload(
+    context: MobilePayloadContext,
+    *,
+    target_return: float = 0.015,
+) -> Dict[str, Any]:
     return build_mobile_dashboard(
         context.state,
         context.request,
+        target_return=target_return,
         available_sheets=context.available_sheets,
         source_metadata=context.source_metadata,
     )
