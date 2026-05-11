@@ -145,6 +145,7 @@ STREAMLIT_SHEET_BACKUP_STORE_DEFAULTS = {
     "DIVIDEND_HISTORY_STORE": "firestore",
     "AUDIT_STORE": "off",
 }
+STREAMLIT_PIPELINE_CACHE_VERSION = 2
 STREAMLIT_ENV_SECRET_KEYS = (
     "STREAMLIT_DASHBOARD_SOURCE",
     "OPTIONS_DATA_SOURCE",
@@ -792,7 +793,7 @@ def build_pipeline_cache_key(
     selected_sheets: List[str],
     reload_token: int,
     source_mode: Optional[str] = None,
-) -> Tuple[str, str, Tuple[str, ...], int]:
+) -> Tuple[str, str, Tuple[str, ...], int, int]:
     source_mode = source_mode or data_source_mode()
     as_of_key = pd.to_datetime(as_of).date().isoformat()
     selected_sheets = normalize_selected_sheets_for_mode(selected_sheets, [IBKR_SOURCE_LABEL], source_mode)
@@ -802,6 +803,7 @@ def build_pipeline_cache_key(
         as_of_key,
         selected_sheets_key,
         int(reload_token or 0),
+        STREAMLIT_PIPELINE_CACHE_VERSION,
     )
 
 
@@ -811,7 +813,9 @@ def get_cached_pipeline(
     as_of_key: str,
     selected_sheets_key: Tuple[str, ...],
     reload_token: int,
+    cache_version: int,
 ) -> PipelineState:
+    _ = cache_version
     return build_base_pipeline(
         date.fromisoformat(as_of_key),
         list(selected_sheets_key),

@@ -1863,7 +1863,13 @@ def test_pipeline_cache_key_excludes_chart_period():
 
     assert key_before_chart_change == key_after_chart_change
     assert chart_period not in key_after_chart_change
-    assert key_after_chart_change == ("google_sheets", "2026-04-27", ("Options 2024", "Options 2025"), 3)
+    assert key_after_chart_change == (
+        "google_sheets",
+        "2026-04-27",
+        ("Options 2024", "Options 2025"),
+        3,
+        app.STREAMLIT_PIPELINE_CACHE_VERSION,
+    )
 
 
 def test_pipeline_cache_key_excludes_unrealized_adjusted_toggle():
@@ -1873,7 +1879,13 @@ def test_pipeline_cache_key_excludes_unrealized_adjusted_toggle():
     key_toggle_on = app.build_pipeline_cache_key(pd.Timestamp("2026-04-27").date(), True, selected_sheets, 3)
 
     assert key_toggle_off == key_toggle_on
-    assert key_toggle_on == ("google_sheets", "2026-04-27", ("Options 2024", "Options 2025"), 3)
+    assert key_toggle_on == (
+        "google_sheets",
+        "2026-04-27",
+        ("Options 2024", "Options 2025"),
+        3,
+        app.STREAMLIT_PIPELINE_CACHE_VERSION,
+    )
 
 
 def test_pipeline_cache_key_changes_when_reload_token_changes():
