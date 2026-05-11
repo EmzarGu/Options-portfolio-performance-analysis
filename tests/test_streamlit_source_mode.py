@@ -1,4 +1,29 @@
+import os
+
+import pytest
+
 import streamlit_app
+
+
+@pytest.fixture(autouse=True)
+def restore_streamlit_source_env():
+    keys = [
+        "STREAMLIT_DASHBOARD_SOURCE",
+        "OPTIONS_DATA_SOURCE",
+        "IBKR_REPORT_SOURCE",
+        "FIRESTORE_PROJECT_ID",
+        "IBKR_FLEX_QUERY_ID",
+        "PRICE_HISTORY_STORE",
+        "DIVIDEND_HISTORY_STORE",
+        "AUDIT_STORE",
+    ]
+    original = {key: os.environ.get(key) for key in keys}
+    yield
+    for key, value in original.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def test_streamlit_ibkr_source_mode_normalizes_selected_sheets(monkeypatch):
@@ -41,10 +66,10 @@ def test_streamlit_app_source_mode_defaults_to_sheet_backup(monkeypatch):
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
     assert streamlit_app.os.getenv("IBKR_REPORT_SOURCE") is None
-    assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") is None
     assert streamlit_app.os.getenv("IBKR_FLEX_QUERY_ID") is None
-    assert streamlit_app.os.getenv("PRICE_HISTORY_STORE") == "off"
-    assert streamlit_app.os.getenv("DIVIDEND_HISTORY_STORE") == "off"
+    assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") == "options-performance-dashboard"
+    assert streamlit_app.os.getenv("PRICE_HISTORY_STORE") == "firestore"
+    assert streamlit_app.os.getenv("DIVIDEND_HISTORY_STORE") == "firestore"
     assert streamlit_app.os.getenv("AUDIT_STORE") == "off"
 
 
@@ -56,8 +81,9 @@ def test_streamlit_sheet_backup_disables_firestore_stores_from_hosting_secrets(m
     monkeypatch.setenv("AUDIT_STORE", "firestore")
 
     assert streamlit_app.streamlit_app_source_mode() == streamlit_app.DATA_SOURCE_GOOGLE_SHEETS
-    assert streamlit_app.os.getenv("PRICE_HISTORY_STORE") == "off"
-    assert streamlit_app.os.getenv("DIVIDEND_HISTORY_STORE") == "off"
+    assert streamlit_app.os.getenv("FIRESTORE_PROJECT_ID") == "options-performance-dashboard"
+    assert streamlit_app.os.getenv("PRICE_HISTORY_STORE") == "firestore"
+    assert streamlit_app.os.getenv("DIVIDEND_HISTORY_STORE") == "firestore"
     assert streamlit_app.os.getenv("AUDIT_STORE") == "off"
 
 
