@@ -824,6 +824,10 @@ def test_ticker_summary_rows_emit_mobile_contract_shape():
         "dividends": 12.5,
         "combined_realized_pnl": 30.0,
         "unrealized_pnl": 1500.0,
+        "current_option_premium_unrealized_pnl": 150.0,
+        "current_put_assignment_unrealized_pnl": 0.0,
+        "current_option_unrealized_pnl": 150.0,
+        "current_stock_unrealized_pnl": 1500.0,
         "total_pnl": 1530.0,
         "open_option_count": 1,
         "inventory_share_count": 100,
@@ -844,6 +848,10 @@ def test_ticker_summary_rows_emit_mobile_contract_shape():
     assert putt["dividends"] == 18.0
     assert putt["open_option_count"] == 2
     assert putt["inventory_share_count"] == 0
+    assert putt["current_option_premium_unrealized_pnl"] == 400.0
+    assert putt["current_put_assignment_unrealized_pnl"] == 0.0
+    assert putt["current_option_unrealized_pnl"] == 400.0
+    assert putt["current_stock_unrealized_pnl"] == 0.0
     assert putt["risk_labels"] == ["In the money"]
     assert [row["id"] for row in putt["history"]] == ["year:2025:ticker:PUTT", "year:2026:ticker:PUTT"]
 
@@ -865,8 +873,73 @@ def test_ticker_summary_rows_support_year_filter_and_blocked_unrealized():
     assert putt["combined_realized_pnl"] == 150.0
     assert putt["dividends"] == 11.0
     assert putt["unrealized_pnl"] is None
+    assert putt["current_option_premium_unrealized_pnl"] is None
+    assert putt["current_put_assignment_unrealized_pnl"] is None
+    assert putt["current_option_unrealized_pnl"] is None
+    assert putt["current_stock_unrealized_pnl"] is None
     assert putt["total_pnl"] is None
     assert [row["id"] for row in putt["history"]] == ["year:2026:ticker:PUTT"]
+
+
+def test_ticker_summary_rows_split_open_itm_put_unrealized_components():
+    state = SimpleNamespace(
+        as_of=pd.Timestamp("2026-05-03"),
+        open_options=pd.DataFrame(
+            [
+                {
+                    "ticker": "FUTU",
+                    "type": "Put",
+                    "strike": 140.0,
+                    "qty": 1,
+                    "expiration": pd.Timestamp("2026-05-17"),
+                    "trans_date": pd.Timestamp("2026-04-01"),
+                    "open_price": 1.37,
+                }
+            ]
+        ),
+        stock_prices={"FUTU": 137.12},
+        inv_df=pd.DataFrame(
+            [
+                {
+                    "ticker": "FUTU",
+                    "buy_date": pd.NaT,
+                    "shares": 100,
+                    "cost_per_share": 140.0,
+                    "current_price": 137.12,
+                    "covered_shares": 0,
+                    "covered_strike": 140.0,
+                    "unrealized_pnl": -288.0,
+                    "source": "put_gap",
+                }
+            ]
+        ),
+        per_ticker=pd.DataFrame(columns=["year", "ticker", "options_pnl", "stock_realized_pnl", "combined_realized"]),
+        per_ticker_totals=pd.DataFrame(
+            [
+                {
+                    "ticker": "FUTU",
+                    "options_pnl": 0.0,
+                    "stock_realized_pnl": 0.0,
+                    "combined_realized": 0.0,
+                    "unrealized_pnl": -151.0,
+                    "total_pnl": -151.0,
+                }
+            ]
+        ),
+        div_df=pd.DataFrame(columns=["ticker", "pay_date", "cash"]),
+        missing_required_price_tickers=[],
+        unrealized_blocked=False,
+    )
+
+    futu = build_ticker_summary_rows(state)[0]
+
+    assert futu["realized_options_pnl"] == 0.0
+    assert futu["unrealized_pnl"] == -151.0
+    assert futu["current_option_premium_unrealized_pnl"] == 137.0
+    assert futu["current_put_assignment_unrealized_pnl"] == -288.0
+    assert futu["current_option_unrealized_pnl"] == -151.0
+    assert futu["current_stock_unrealized_pnl"] == 0.0
+    assert futu["total_pnl"] == -151.0
 
 
 def test_mobile_tickers_composes_contract_payload():

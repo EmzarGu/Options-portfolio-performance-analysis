@@ -522,6 +522,10 @@ Response:
       "dividends": 0.0,
       "combined_realized_pnl": 12480.0,
       "unrealized_pnl": 18354.0,
+      "current_option_premium_unrealized_pnl": 1120.0,
+      "current_put_assignment_unrealized_pnl": 0.0,
+      "current_option_unrealized_pnl": 1120.0,
+      "current_stock_unrealized_pnl": 17234.0,
       "total_pnl": 30834.0,
       "open_option_count": 1,
       "inventory_share_count": 100,
@@ -545,6 +549,10 @@ Response:
       "dividends": 0.0,
       "combined_realized_pnl": 9140.0,
       "unrealized_pnl": -7676.0,
+      "current_option_premium_unrealized_pnl": 900.0,
+      "current_put_assignment_unrealized_pnl": 0.0,
+      "current_option_unrealized_pnl": 900.0,
+      "current_stock_unrealized_pnl": -8576.0,
       "total_pnl": 1464.0,
       "open_option_count": 1,
       "inventory_share_count": 200,
@@ -560,6 +568,12 @@ Nullability:
 - Ticker `id` is mandatory and must follow the stable row ID rules above.
 - History row `id` is mandatory when `history` is populated. Use `year:{YYYY}:ticker:{ticker}`.
 - `unrealized_pnl` and `total_pnl` are `null` when unrealized snapshot is blocked.
+- `current_option_premium_unrealized_pnl`, `current_put_assignment_unrealized_pnl`, `current_option_unrealized_pnl`, and `current_stock_unrealized_pnl` are `null` when unrealized snapshot is blocked.
+- `current_option_premium_unrealized_pnl` is open short option premium by ticker. It is not realized P&L.
+- `current_put_assignment_unrealized_pnl` is the open ITM put assignment gap by ticker. It is negative when assignment would immediately create a stock loss.
+- `current_option_unrealized_pnl` is `current_option_premium_unrealized_pnl + current_put_assignment_unrealized_pnl`.
+- `current_stock_unrealized_pnl` is actual held-stock unrealized P&L by ticker. It excludes open put assignment exposure because those shares are not owned yet.
+- For real pipeline data, `unrealized_pnl` is the ticker total unrealized snapshot: `current_option_unrealized_pnl + current_stock_unrealized_pnl`.
 - `current_price` is `null` when missing.
 - `dividends` is cumulative realized dividend cash for the ticker in the same optional `year` scope as the realized P&L fields. It is always present and is `0.0` when none.
 - `history` is `[]` unless `include_history=true`.

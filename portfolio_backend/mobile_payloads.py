@@ -1136,6 +1136,50 @@ def _totals_by_ticker(state) -> Dict[str, Dict[str, float]]:
     return records
 
 
+def _unrealized_split_by_ticker(state) -> Dict[str, Dict[str, float]]:
+    rows: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {
+            "current_option_premium_unrealized_pnl": 0.0,
+            "current_put_assignment_unrealized_pnl": 0.0,
+            "current_option_unrealized_pnl": 0.0,
+            "current_stock_unrealized_pnl": 0.0,
+        }
+    )
+
+    open_options = getattr(state, "open_options", pd.DataFrame())
+    if open_options is not None and not open_options.empty and {"ticker", "open_price", "qty"}.issubset(open_options.columns):
+        options = open_options.copy()
+        options["ticker"] = options["ticker"].astype(str).str.upper().str.strip()
+        options["open_price"] = pd.to_numeric(options["open_price"], errors="coerce")
+        options["qty"] = pd.to_numeric(options["qty"], errors="coerce").abs()
+        options["premium"] = options["open_price"] * options["qty"] * CONTRACT_MULTIPLIER
+        for ticker, premium in options.loc[options["ticker"].ne("")].groupby("ticker")["premium"].sum().items():
+            if pd.notna(premium):
+                rows[str(ticker)]["current_option_premium_unrealized_pnl"] += float(premium)
+
+    inventory = getattr(state, "inv_df", pd.DataFrame())
+    if inventory is not None and not inventory.empty and {"ticker", "source", "unrealized_pnl"}.issubset(inventory.columns):
+        inv = inventory.copy()
+        inv["ticker"] = inv["ticker"].astype(str).str.upper().str.strip()
+        inv["unrealized_pnl"] = pd.to_numeric(inv["unrealized_pnl"], errors="coerce").fillna(0.0)
+        for _, row in inv.loc[inv["ticker"].ne("")].iterrows():
+            ticker = str(row["ticker"])
+            source = str(row.get("source") or "")
+            unrealized = float(row["unrealized_pnl"])
+            if source == "put_gap":
+                rows[ticker]["current_put_assignment_unrealized_pnl"] += unrealized
+            elif source == "stock_lot":
+                rows[ticker]["current_stock_unrealized_pnl"] += unrealized
+
+    for values in rows.values():
+        values["current_option_unrealized_pnl"] = (
+            values["current_option_premium_unrealized_pnl"]
+            + values["current_put_assignment_unrealized_pnl"]
+        )
+
+    return dict(rows)
+
+
 def _history_by_ticker(state, year: Optional[int] = None) -> Dict[str, List[Dict[str, Any]]]:
     realized = getattr(state, "per_ticker", pd.DataFrame())
     if realized is None or realized.empty or "ticker" not in realized.columns:
@@ -1229,6 +1273,7 @@ def build_ticker_summary_rows(
     totals_by_ticker = _totals_by_ticker(state)
     realized_by_ticker = _realized_by_ticker(state, year) if year is not None else {}
     dividends_by_ticker = _dividends_by_ticker(state, year)
+    unrealized_split_by_ticker = _unrealized_split_by_ticker(state)
     history_by_ticker = _history_by_ticker(state, year) if include_history else {}
     open_counts, inventory_shares = _ticker_counts(state)
     open_rows = build_open_option_short_rows(state, sort="ticker")
@@ -1256,11 +1301,24 @@ def build_ticker_summary_rows(
             continue
         totals = totals_by_ticker.get(ticker, {})
         realized = realized_by_ticker.get(ticker, totals)
+        unrealized_split = unrealized_split_by_ticker.get(ticker, {})
         combined_realized = _number(realized.get("combined_realized_pnl")) or 0.0
         unrealized_pnl = None if unrealized_blocked else _number(totals.get("unrealized_pnl"))
         total_pnl = None if unrealized_blocked else _number(totals.get("total_pnl"))
         if total_pnl is None and not unrealized_blocked and unrealized_pnl is not None:
             total_pnl = combined_realized + unrealized_pnl
+        current_option_premium_unrealized = (
+            None if unrealized_blocked else _number(unrealized_split.get("current_option_premium_unrealized_pnl")) or 0.0
+        )
+        current_put_assignment_unrealized = (
+            None if unrealized_blocked else _number(unrealized_split.get("current_put_assignment_unrealized_pnl")) or 0.0
+        )
+        current_option_unrealized = (
+            None if unrealized_blocked else _number(unrealized_split.get("current_option_unrealized_pnl")) or 0.0
+        )
+        current_stock_unrealized = (
+            None if unrealized_blocked else _number(unrealized_split.get("current_stock_unrealized_pnl")) or 0.0
+        )
 
         current_price = _number(stock_prices.get(ticker))
         rows.append(
@@ -1273,6 +1331,10 @@ def build_ticker_summary_rows(
                 "dividends": json_safe(dividends_by_ticker.get(ticker, 0.0)),
                 "combined_realized_pnl": json_safe(combined_realized),
                 "unrealized_pnl": json_safe(unrealized_pnl),
+                "current_option_premium_unrealized_pnl": json_safe(current_option_premium_unrealized),
+                "current_put_assignment_unrealized_pnl": json_safe(current_put_assignment_unrealized),
+                "current_option_unrealized_pnl": json_safe(current_option_unrealized),
+                "current_stock_unrealized_pnl": json_safe(current_stock_unrealized),
                 "total_pnl": json_safe(total_pnl),
                 "open_option_count": int(open_counts.get(ticker, 0)),
                 "inventory_share_count": int(inventory_shares.get(ticker, 0)),
