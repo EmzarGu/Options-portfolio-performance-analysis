@@ -12,6 +12,10 @@ uvicorn web_dashboard:app --host 0.0.0.0 --port ${PORT:-8080}
 The service reuses the same IBKR backend context and mobile DTO builders as the
 iOS API.
 
+The page shell is served immediately. The heavier portfolio payload is loaded by
+the browser from `/api/dashboard`, so a cold Cloud Run instance or slow Firestore
+read no longer leaves the browser waiting for the first paint.
+
 ## Required Runtime Config
 
 Environment variables:
@@ -22,6 +26,7 @@ IBKR_REPORT_SOURCE=firestore
 FIRESTORE_PROJECT_ID=options-performance-dashboard
 IBKR_FLEX_QUERY_ID=1504277
 WEB_DASHBOARD_AUTH=1
+WEB_DASHBOARD_DATA_CACHE_SECONDS=300
 ```
 
 Secrets:
@@ -31,6 +36,10 @@ WEB_DASHBOARD_PASSWORD=web-dashboard-password:latest
 ```
 
 The browser dashboard uses a dedicated dashboard password. The mobile API key is not shown to users and is not accepted as the browser login password.
+
+`WEB_DASHBOARD_DATA_CACHE_SECONDS` controls the short in-process cache for the
+expensive dashboard JSON payload. The default is 300 seconds. Set it to `0` to
+disable caching while keeping the async page shell behavior.
 
 ## Browser Authentication
 

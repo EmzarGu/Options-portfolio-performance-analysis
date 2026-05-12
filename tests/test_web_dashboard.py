@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 import web_dashboard
+
+
+def _embedded_dashboard_data(html: str):
+    marker = '<script id="dashboard-data" type="application/json">'
+    start = html.index(marker) + len(marker)
+    end = html.index("</script>", start)
+    return json.loads(html[start:end])
 
 
 def _fake_dashboard_data():
@@ -100,12 +109,19 @@ def test_web_dashboard_redirects_to_login_without_session(monkeypatch):
 
 def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(
+        web_dashboard,
+        "_build_dashboard_data",
+        lambda **_: (_ for _ in ()).throw(AssertionError("dashboard page should render a shell only")),
+    )
     client = TestClient(web_dashboard.app)
 
     response = client.get("/")
 
     assert response.status_code == 200
+    shell_data = _embedded_dashboard_data(response.text)
+    assert shell_data["loading"] is True
+    assert shell_data["source"]["kind"] == "ibkr_flex"
     assert "Dashboard" in response.text
     assert "IBKR Flex" in response.text
     assert "dashboard-data" in response.text
@@ -124,38 +140,49 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
 
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    captured = {}
-
-    def fake_build(**kwargs):
-        captured.update(kwargs)
-        return _fake_dashboard_data()
-
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
     client = TestClient(web_dashboard.app)
 
     response = client.get("/?target_return_pct=2.25")
 
     assert response.status_code == 200
-    assert captured["target_return"] == 0.0225
+    assert _embedded_dashboard_data(response.text)["web"]["target_return"] == 0.0225
     assert f"{web_dashboard.TARGET_RETURN_COOKIE_NAME}=0.022500" in response.headers["set-cookie"]
 
 
 def test_web_dashboard_reads_target_return_from_cookie(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    captured = {}
-
-    def fake_build(**kwargs):
-        captured.update(kwargs)
-        return _fake_dashboard_data()
-
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
     client = TestClient(web_dashboard.app)
     client.cookies.set(web_dashboard.TARGET_RETURN_COOKIE_NAME, "0.03")
 
     response = client.get("/")
 
     assert response.status_code == 200
-    assert captured["target_return"] == 0.03
+    assert _embedded_dashboard_data(response.text)["web"]["target_return"] == 0.03
+
+
+def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setenv("WEB_DASHBOARD_DATA_CACHE_SECONDS", "300")
+    web_dashboard._clear_dashboard_data_cache()
+    calls = []
+
+    def fake_build(**kwargs):
+        calls.append(kwargs)
+        payload = _fake_dashboard_data()
+        payload["web"]["target_return"] = kwargs["target_return"]
+        return payload
+
+    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
+    client = TestClient(web_dashboard.app)
+
+    first = client.get("/api/dashboard?target_return_pct=2.25")
+    second = client.get("/api/dashboard?target_return_pct=2.25")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["web"]["target_return"] == 0.0225
+    assert calls == [{"as_of": None, "include_unrealized": True, "target_return": 0.0225}]
+    web_dashboard._clear_dashboard_data_cache()
 
 
 def test_web_dashboard_api_requires_auth(monkeypatch):

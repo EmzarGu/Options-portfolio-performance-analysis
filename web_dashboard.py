@@ -8,6 +8,7 @@ import json
 import math
 import os
 import secrets
+import threading
 from datetime import date, datetime
 from time import time
 from typing import Any, Dict, List, Optional
@@ -41,11 +42,16 @@ COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 TARGET_RETURN_COOKIE_NAME = "options_roi_web_target_return"
 DEFAULT_SESSION_DAYS = 90
+DEFAULT_DASHBOARD_DATA_CACHE_SECONDS = 300
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
     "Expires": "0",
 }
+
+_dashboard_data_cache_lock = threading.Lock()
+_dashboard_data_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
+_dashboard_data_key_locks: Dict[tuple, threading.Lock] = {}
 
 
 @app.middleware("http")
@@ -577,6 +583,133 @@ def _build_dashboard_data(
     )
 
 
+def _dashboard_data_cache_seconds() -> int:
+    raw = os.getenv("WEB_DASHBOARD_DATA_CACHE_SECONDS", str(DEFAULT_DASHBOARD_DATA_CACHE_SECONDS))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_DASHBOARD_DATA_CACHE_SECONDS
+
+
+def _dashboard_cache_key(
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    target_return: Optional[float],
+) -> tuple:
+    rounded_target = round(float(target_return if target_return is not None else _web_monthly_target_return_default()), 8)
+    return (as_of.isoformat() if as_of else "", bool(include_unrealized), rounded_target)
+
+
+def _clear_dashboard_data_cache() -> None:
+    with _dashboard_data_cache_lock:
+        _dashboard_data_cache.clear()
+        _dashboard_data_key_locks.clear()
+
+
+def _get_cached_dashboard_data(
+    *,
+    as_of: Optional[date] = None,
+    include_unrealized: bool = True,
+    target_return: Optional[float] = None,
+) -> Dict[str, Any]:
+    ttl_seconds = _dashboard_data_cache_seconds()
+    key = _dashboard_cache_key(as_of=as_of, include_unrealized=include_unrealized, target_return=target_return)
+    now = time()
+    with _dashboard_data_cache_lock:
+        cached = _dashboard_data_cache.get(key)
+        if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
+            return cached[1]
+        key_lock = _dashboard_data_key_locks.setdefault(key, threading.Lock())
+
+    with key_lock:
+        now = time()
+        with _dashboard_data_cache_lock:
+            cached = _dashboard_data_cache.get(key)
+            if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
+                return cached[1]
+
+        payload = _build_dashboard_data(
+            as_of=as_of,
+            include_unrealized=include_unrealized,
+            target_return=target_return,
+        )
+        if ttl_seconds > 0:
+            with _dashboard_data_cache_lock:
+                _dashboard_data_cache[key] = (time(), payload)
+                while len(_dashboard_data_cache) > 8:
+                    oldest_key = min(_dashboard_data_cache, key=lambda cache_key: _dashboard_data_cache[cache_key][0])
+                    _dashboard_data_cache.pop(oldest_key, None)
+                    _dashboard_data_key_locks.pop(oldest_key, None)
+        return payload
+
+
+def _dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> Dict[str, Any]:
+    return {
+        "loading": True,
+        "app": {
+            "revision": os.getenv("K_REVISION", "local"),
+            "restart_ts": os.getenv("WEB_RESTART_TS", ""),
+        },
+        "web": {
+            "include_unrealized": bool(include_unrealized),
+            "target_return": float(target_return),
+        },
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "source": {
+            "label": "IBKR Flex",
+            "kind": "ibkr_flex",
+            "row_count": None,
+            "sheet_counts": [],
+        },
+        "dashboard": {
+            "request": {"as_of": None, "include_unrealized": bool(include_unrealized), "selected_sheets": ["IBKR Flex"]},
+            "data_freshness": {"price_coverage": {"priced_count": 0, "required_count": 0, "missing_count": 0}},
+            "snapshot": {},
+            "monthly_target": {},
+            "open_option_short_preview": [],
+            "issue_summary": {"severity": "loading", "total_count": 0},
+        },
+        "positions": {"inventory": [], "open_option_shorts": []},
+        "open_shorts": {"items": []},
+        "tickers": {"items": []},
+        "monthly": {"target_return": float(target_return), "current_month": {}, "months": [], "future_months": []},
+        "yearly": {"years": []},
+        "views": {"snapshots": {"with_unrealized": {}, "realized_only": {}}, "yearly": {"with_unrealized": [], "realized_only": []}},
+        "issues": {
+            "summary": {"severity": "loading", "total_count": 0},
+            "issues": [],
+            "audit_summary": {"total_count": 0},
+            "audit_notes": [],
+            "coverage": {},
+        },
+        "tables": {
+            "monthly_cycles": [],
+            "yearly_realized": [],
+            "yearly_with_unrealized": [],
+            "per_ticker_yearly": [],
+            "per_ticker_totals": [],
+            "benchmark_metrics": [],
+            "expectancy": [],
+            "expectancy_by_year": [],
+            "inventory": [],
+            "open_options": [],
+            "options_cycle_pnl": [],
+            "stock_prices": [],
+            "unrealized_by_ticker": [],
+            "capital_daily_tail": [],
+            "dividends": [],
+        },
+        "charts": {
+            "benchmark_growth": [],
+            "benchmark_growth_by_range": {},
+            "monthly_returns": [],
+            "monthly_returns_unrealized_adjusted": [],
+        },
+        "reconciliation_notes": [],
+    }
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
@@ -710,8 +843,10 @@ def refresh(request: Request) -> Response:
         "methodology",
     }:
         section = "dashboard"
+    _clear_dashboard_data_cache()
     context, cache_bust = _get_context(as_of=None, include_unrealized=include_unrealized, force_rebuild=True)
     build_mobile_refresh_payload(context, cache_bust=cache_bust)
+    _clear_dashboard_data_cache()
     return RedirectResponse(
         url=(
             f"/?include_unrealized={1 if include_unrealized else 0}"
@@ -727,19 +862,20 @@ def dashboard_json(request: Request) -> JSONResponse:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
     target_return = _target_return_from_query(request)
-    return JSONResponse(_build_dashboard_data(include_unrealized=include_unrealized, target_return=target_return))
+    try:
+        payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(payload)
 
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard_page(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
-    try:
-        include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-        target_return = _target_return_from_query(request)
-        payload = _build_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
-    except Exception as exc:
-        return HTMLResponse(_error_html(str(exc)), status_code=500)
+    include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    target_return = _target_return_from_query(request)
+    payload = _dashboard_shell_data(include_unrealized=include_unrealized, target_return=target_return)
     data_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).replace("</", "<\\/")
     user = html.escape(_authenticated_user(request) or "")
     response = HTMLResponse(
@@ -891,6 +1027,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 .risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
 .chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
+.loading-panel{min-height:220px;display:grid;place-items:center;text-align:center}.loading-panel h2{margin:0 0 8px}.loading-panel p{margin:0;color:var(--muted)}.retry-load{margin-top:14px}
 .view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating,body.is-loading .view-updating{opacity:1;transform:translateY(0)}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
 @media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart{height:270px}}
@@ -933,7 +1070,8 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 </main>
 <script id="dashboard-data" type="application/json">__DASHBOARD_DATA__</script>
 <script>
-const data = JSON.parse(document.getElementById("dashboard-data").textContent);
+let data = JSON.parse(document.getElementById("dashboard-data").textContent);
+let dashboardLoaded = data.loading !== true;
 const appState = {
   active: "dashboard",
   range: "YTD",
@@ -1036,6 +1174,52 @@ function updateUrlState(){
   url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
   url.searchParams.delete("refreshed");
   window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
+function apiDashboardUrl(){
+  const url = new URL("/api/dashboard", window.location.origin);
+  url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
+  url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
+  return url;
+}
+function loadingPanel(message="Loading portfolio data...", detail="The dashboard shell is ready while Cloud Run builds or reads the latest IBKR snapshot.", error=""){
+  return `<div class="panel loading-panel"><div><h2>${safe(message)}</h2><p>${safe(detail)}</p>${error ? `<p class="error retry-load">${safe(error)}</p><button class="secondary retry-load" type="button" id="retryDashboardLoad">Retry</button>` : ""}</div></div>`;
+}
+async function loadDashboardData(){
+  setUpdating(true, "Loading portfolio data...");
+  try {
+    const response = await fetch(apiDashboardUrl().toString(), {
+      credentials: "same-origin",
+      headers: {"Accept": "application/json"}
+    });
+    if (response.status === 401) {
+      window.location.replace("/login");
+      return;
+    }
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text.slice(0, 400) || `HTTP ${response.status}`);
+    }
+    data = await response.json();
+    dashboardLoaded = true;
+    appState.includeUnrealized = data.web?.include_unrealized !== false;
+    appState.targetReturn = Number(data.web?.target_return ?? appState.targetReturn ?? 0.015);
+    render();
+  } catch (err) {
+    dashboardLoaded = false;
+    renderLoadingError(err && (err.message || err.stack) || String(err));
+  } finally {
+    setUpdating(false);
+  }
+}
+function renderLoadingError(message){
+  renderHeader();
+  [...$("nav").children].forEach(b => b.classList.toggle("active", b.dataset.section === appState.active));
+  document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
+  const target = $(appState.active) || $("dashboard");
+  if (target) target.innerHTML = loadingPanel("Dashboard data failed to load", "The service returned an error while building the portfolio payload.", message);
+  const retry = $("retryDashboardLoad");
+  if (retry) retry.addEventListener("click", loadDashboardData);
+  bindControls();
 }
 function renderBasisControl(){
   const target = $("basisControl");
@@ -1324,11 +1508,11 @@ function renderHeader(){
   const required=price.required_count ?? price.stocks_requested ?? price.requested ?? 0;
   const missing=price.missing_count ?? Math.max(required-priced,0);
   $("heroTitle").textContent = pageTitles[appState.active] || "Dashboard";
-  $("subtitle").textContent = `${data.source.label} - portfolio as of ${fmtDate(d.request?.as_of)}`;
+  $("subtitle").textContent = `${data.source?.label || "IBKR Flex"} - ${dashboardLoaded ? `portfolio as of ${fmtDate(d.request?.as_of)}` : "loading portfolio data"}`;
   $("statusStrip").innerHTML = [
-    badge(`${priced}/${required} priced`, missing > 0 ? "bad" : "good"),
+    dashboardLoaded ? badge(`${priced}/${required} priced`, missing > 0 ? "bad" : "good") : badge("Loading", "blue"),
     badge(`${issue.total_count ?? 0} actionable issues`, (issue.total_count || 0) ? "bad" : "good"),
-    badge(`Prices updated ${fmtLocalTime(freshness.prices_updated_at)}`)
+    dashboardLoaded ? badge(`Prices updated ${fmtLocalTime(freshness.prices_updated_at)}`) : badge("IBKR Flex")
   ].join("");
   renderBasisControl();
 }
@@ -1707,6 +1891,13 @@ function render(){
   try {
     renderHeader();
     [...$("nav").children].forEach(b => b.classList.toggle("active", b.dataset.section === appState.active));
+    if (!dashboardLoaded) {
+      const target = $(appState.active) || $("dashboard");
+      if (target) target.innerHTML = loadingPanel();
+      document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
+      bindControls();
+      return;
+    }
     const renderer = sectionRenderers[appState.active];
     if (renderer) renderSection(appState.active, renderer);
     document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
@@ -1747,6 +1938,7 @@ if (initialSection && sections.some(([id]) => id === initialSection)) {
 }
 initNav();
 render();
+loadDashboardData();
 </script>
 </body>
 </html>""".replace(
