@@ -1530,9 +1530,9 @@ function renderDashboard(){
       ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options net ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
-    ${sectionHead("Current Month", "Risk-adjusted view uses realized month P&L plus the current unrealized snapshot.")}
+    ${sectionHead("Current Month", "Risk-adjusted view uses realized month P&L plus current-month open option risk.")}
     <div class="grid metrics">
-      ${card("Risk-adjusted month P&L", fmtMoney(riskMonthPnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + current unrealized ${safe(fmtMoney(mt.current_unrealized_pnl ?? snap.current_unrealized_pnl))}`, cls(riskMonthPnl))}
+      ${card("Risk-adjusted month P&L", fmtMoney(riskMonthPnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + open option net ${safe(fmtMoney(mt.open_expiring_option_unrealized_pnl ?? mt.current_unrealized_pnl))}`, cls(riskMonthPnl))}
       ${card("Risk-adjusted return", `${safe(fmtPct(riskMonthReturn))} RoAC`, `Target ${safe(fmtPct(targetReturn))} - ${labelize(riskStatus)}`, cls((numeric(riskMonthReturn)||0) - targetReturn))}
       ${card("Remaining to target", fmtMoney(riskRemaining), "Based on risk-adjusted monthly target", cls(-1*(numeric(riskRemaining)||0)))}
       ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} contract(s) / ${safe(snap.itm_put_shares || 0)} shares`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
