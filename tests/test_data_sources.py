@@ -11,6 +11,7 @@ from data_sources import (
     YFinancePriceHistoryProvider,
     clear_dividend_history_cache,
     collect_dividend_cashflows,
+    fetch_current_prices_yf,
     fetch_price_history_yf,
 )
 from portfolio_backend.dividend_history_store import MemoryDividendHistoryStore
@@ -268,12 +269,86 @@ class FakePriceYF:
         return self._data
 
 
+class FakeCurrentTicker:
+    def __init__(self, fast_info=None, history=None):
+        self.fast_info = fast_info if fast_info is not None else {}
+        self._history = history if history is not None else pd.DataFrame()
+        self.history_calls = []
+
+    def history(self, **kwargs):
+        self.history_calls.append(kwargs)
+        return self._history
+
+
+class FakeCurrentPriceYF:
+    def __init__(self, download_data, ticker_mapping=None):
+        self._download_data = download_data
+        self._ticker_mapping = ticker_mapping or {}
+        self.download_calls = []
+        self.ticker_calls = []
+
+    def download(self, **kwargs):
+        self.download_calls.append(kwargs)
+        return self._download_data
+
+    def Ticker(self, ticker):
+        self.ticker_calls.append(ticker)
+        return self._ticker_mapping[ticker]
+
+
 class FailingPriceHistoryStore:
     def get_many_history(self, tickers, start, end):
         raise RuntimeError("store unavailable")
 
     def upsert_history(self, ticker, series, start, end):
         raise AssertionError("fallback history should not be written when store is unavailable")
+
+
+def test_fetch_current_prices_prefers_intraday_bars():
+    columns = pd.MultiIndex.from_tuples([("AAA", "Close"), ("BBB", "Close")])
+    data = pd.DataFrame(
+        [[10.0, 20.0], [11.5, 21.5]],
+        columns=columns,
+        index=pd.to_datetime(["2026-05-12 13:20", "2026-05-12 13:21"]),
+    )
+    yf_module = FakeCurrentPriceYF(data)
+
+    prices, errors, summary = fetch_current_prices_yf(["BBB", "AAA"], yf_module)
+
+    assert prices == {"AAA": 11.5, "BBB": 21.5}
+    assert errors == []
+    assert yf_module.download_calls[0]["period"] == "1d"
+    assert yf_module.download_calls[0]["interval"] == "1m"
+    assert yf_module.download_calls[0]["prepost"] is True
+    assert yf_module.ticker_calls == []
+    assert summary == {"requested": 2, "fetched": 2, "intraday": 2, "fast_info": 0, "daily_fallback": 0}
+
+
+def test_fetch_current_prices_uses_fast_info_when_intraday_missing():
+    ticker = FakeCurrentTicker(fast_info={"last_price": 123.45})
+    yf_module = FakeCurrentPriceYF(pd.DataFrame(), {"AAA": ticker})
+
+    prices, errors, summary = fetch_current_prices_yf(["AAA"], yf_module)
+
+    assert prices == {"AAA": 123.45}
+    assert errors == []
+    assert ticker.history_calls == []
+    assert summary == {"requested": 1, "fetched": 1, "intraday": 0, "fast_info": 1, "daily_fallback": 0}
+
+
+def test_fetch_current_prices_uses_daily_close_only_as_final_fallback():
+    ticker = FakeCurrentTicker(
+        fast_info={},
+        history=pd.DataFrame({"Close": [98.0, 99.0]}, index=pd.to_datetime(["2026-05-11", "2026-05-12"])),
+    )
+    yf_module = FakeCurrentPriceYF(pd.DataFrame(), {"AAA": ticker})
+
+    prices, errors, summary = fetch_current_prices_yf(["AAA"], yf_module)
+
+    assert prices == {"AAA": 99.0}
+    assert errors == []
+    assert ticker.history_calls == [{"period": "5d", "interval": "1d"}]
+    assert summary == {"requested": 1, "fetched": 1, "intraday": 0, "fast_info": 0, "daily_fallback": 1}
 
 
 def test_yfinance_price_history_provider_caches_repeated_ticker_range_fetches():

@@ -307,10 +307,53 @@ def _get_bundled_price_history(ticker: str, start: pd.Timestamp, end: pd.Timesta
     return lookup.series if lookup.fully_covered else pd.Series(dtype=float, name=str(ticker or "").upper().strip())
 
 
+def _coerce_live_price(value) -> Optional[float]:
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(price) or price <= 0:
+        return None
+    return price
+
+
+def _latest_close_price_from_frame(data, ticker: str, all_tickers: List[str]) -> Optional[float]:
+    if data is None or getattr(data, "empty", True):
+        return None
+    try:
+        if isinstance(data.columns, pd.MultiIndex):
+            for col in ("Close", "Adj Close"):
+                try:
+                    series = data[(ticker, col)].dropna()
+                except KeyError:
+                    continue
+                if not series.empty:
+                    return _coerce_live_price(series.iloc[-1])
+            return None
+        if len(all_tickers) == 1:
+            for col in ("Close", "Adj Close"):
+                if col in data:
+                    series = data[col].dropna()
+                    if not series.empty:
+                        return _coerce_live_price(series.iloc[-1])
+    except Exception:
+        return None
+    return None
+
+
+def _fast_info_value(fast_info, key: str):
+    try:
+        if hasattr(fast_info, "get"):
+            return fast_info.get(key)
+        return getattr(fast_info, key, None)
+    except Exception:
+        return None
+
+
 def fetch_current_prices_yf(tickers, yf_module) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
     """Fetch latest stock prices; return prices, error messages, and coverage summary."""
     errors: List[str] = []
-    summary = {"requested": 0, "fetched": 0}
+    summary = {"requested": 0, "fetched": 0, "intraday": 0, "fast_info": 0, "daily_fallback": 0}
     if yf_module is None:
         errors.append("yfinance not installed; cannot fetch live stock prices.")
         return {}, errors, summary
@@ -322,40 +365,41 @@ def fetch_current_prices_yf(tickers, yf_module) -> Tuple[Dict[str, float], List[
     try:
         data = yf_module.download(
             tickers=tickers,
-            period="5d",
-            interval="1d",
+            period="1d",
+            interval="1m",
             auto_adjust=False,
             progress=False,
+            prepost=True,
             group_by="ticker",
             threads=True,
         )
-        if isinstance(data.columns, pd.MultiIndex):
-            for t in tickers:
-                for col in ("Adj Close", "Close"):
-                    try:
-                        series = data[(t, col)].dropna()
-                        if not series.empty:
-                            prices[t] = float(series.iloc[-1])
-                            break
-                    except KeyError:
-                        continue
-        else:
-            series = data["Adj Close"].dropna() if "Adj Close" in data else data["Close"].dropna()
-            if not series.empty and len(tickers) == 1:
-                prices[tickers[0]] = float(series.iloc[-1])
+        for t in tickers:
+            price = _latest_close_price_from_frame(data, t, tickers)
+            if price is not None:
+                prices[t] = price
+                summary["intraday"] += 1
     except Exception as exc:
-        errors.append(f"Primary price download failed: {exc}")
+        errors.append(f"Intraday price download failed: {exc}")
     missing = [t for t in tickers if t not in prices]
     for t in missing:
         try:
             tk = yf_module.Ticker(t)
+            fast_info = getattr(tk, "fast_info", None)
+            for key in ("last_price", "regular_market_price", "lastPrice"):
+                price = _coerce_live_price(_fast_info_value(fast_info, key))
+                if price is not None:
+                    prices[t] = price
+                    summary["fast_info"] += 1
+                    break
+            if t in prices:
+                continue
             hist = tk.history(period="5d", interval="1d")
             if not hist.empty:
-                prices[t] = float(hist["Close"].iloc[-1])
+                price = _coerce_live_price(hist["Close"].dropna().iloc[-1] if "Close" in hist else None)
+                if price is not None:
+                    prices[t] = price
+                    summary["daily_fallback"] += 1
                 continue
-            p = getattr(tk.fast_info, "last_price", None)
-            if p:
-                prices[t] = float(p)
         except Exception as exc:
             errors.append(f"{t}: {exc}")
     still_missing = [t for t in tickers if t not in prices]
