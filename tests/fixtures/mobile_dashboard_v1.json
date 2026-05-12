@@ -116,6 +116,7 @@
   "snapshot": {
     "currency": "USD",
     "current_option_unrealized_pnl": 50.0,
+    "current_option_premium_unrealized_pnl": 50.0,
     "current_put_assignment_unrealized_pnl": 0.0,
     "current_stock_unrealized_pnl": 200.0,
     "current_unrealized_pnl": 250.0,

@@ -193,17 +193,22 @@ def build_mobile_snapshot(state, include_unrealized: bool) -> Dict[str, Any]:
     option_unreal = _number(getattr(state, "option_unreal", None))
     stock_unreal = _number(getattr(state, "stock_unreal", None))
     put_assignment_risk = _put_assignment_risk_from_inventory(state)
+    option_premium_unreal = None
+    if option_unreal is not None and put_assignment_risk["unrealized_pnl"] is not None:
+        option_premium_unreal = option_unreal - put_assignment_risk["unrealized_pnl"]
 
     if include_unrealized and unrealized_blocked:
         ytd_total = None
         current_unreal = None
         current_option_unreal = None
+        current_option_premium_unreal = None
         current_stock_unreal = None
         current_put_assignment_unreal = None
     else:
         ytd_total = realized_total + (total_unreal if include_unrealized and total_unreal is not None else 0.0)
         current_unreal = total_unreal
         current_option_unreal = option_unreal
+        current_option_premium_unreal = option_premium_unreal
         current_stock_unreal = stock_unreal
         current_put_assignment_unreal = put_assignment_risk["unrealized_pnl"]
 
@@ -221,6 +226,7 @@ def build_mobile_snapshot(state, include_unrealized: bool) -> Dict[str, Any]:
         "ytd_realized_pnl": json_safe(realized_total),
         "current_unrealized_pnl": json_safe(current_unreal),
         "current_option_unrealized_pnl": json_safe(current_option_unreal),
+        "current_option_premium_unrealized_pnl": json_safe(current_option_premium_unreal),
         "current_stock_unrealized_pnl": json_safe(current_stock_unreal),
         "current_put_assignment_unrealized_pnl": json_safe(current_put_assignment_unreal),
         "itm_put_cash_required": json_safe(put_assignment_risk["cash_required"]),

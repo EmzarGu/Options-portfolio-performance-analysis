@@ -120,6 +120,7 @@ Response:
     "ytd_realized_pnl": 56380.0,
     "current_unrealized_pnl": 24860.0,
     "current_option_unrealized_pnl": 9200.0,
+    "current_option_premium_unrealized_pnl": 11000.0,
     "current_stock_unrealized_pnl": 15660.0,
     "current_put_assignment_unrealized_pnl": -1800.0,
     "itm_put_cash_required": 18000.0,
@@ -208,6 +209,7 @@ Fields:
 - `snapshot.ytd_total_pnl`: null if `include_unrealized=true` and unrealized snapshot is blocked.
 - `snapshot.current_unrealized_pnl`, `current_option_unrealized_pnl`, `current_stock_unrealized_pnl`, `current_put_assignment_unrealized_pnl`: null if blocked by missing required prices.
 - `snapshot.current_option_unrealized_pnl`: includes open short option premium and the assignment gap for open ITM puts. The assignment gap is `(current_price - strike) * contracts * 100`, so it is negative when assignment would create an immediate stock loss.
+- `snapshot.current_option_premium_unrealized_pnl`: open short option premium before subtracting the ITM put assignment gap. This is a display/reconciliation subcomponent of `current_option_unrealized_pnl`, not an additional amount to add to total unrealized.
 - `snapshot.current_stock_unrealized_pnl`: actual held-stock unrealized P&L only. Open ITM put assignment exposure is excluded because the shares are not owned yet.
 - `snapshot.itm_put_cash_required`: cash required to take assignment of currently ITM open puts at strike. `itm_put_market_value` is the current market value of those shares, and the difference is represented in `current_put_assignment_unrealized_pnl`.
 - `snapshot.available_cash`: reserved for an IBKR available-cash import. It is `null` until the import stores account cash balances.

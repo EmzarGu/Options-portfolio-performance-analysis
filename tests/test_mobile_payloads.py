@@ -612,6 +612,7 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "ytd_realized_pnl": 100.0,
         "current_unrealized_pnl": 250.0,
         "current_option_unrealized_pnl": 50.0,
+        "current_option_premium_unrealized_pnl": 50.0,
         "current_stock_unrealized_pnl": 200.0,
         "current_put_assignment_unrealized_pnl": 0.0,
         "itm_put_cash_required": 2500.0,
@@ -686,6 +687,44 @@ def test_mobile_dashboard_matches_contract_fixture():
     assert dashboard == expected
 
 
+def test_mobile_dashboard_exposes_option_premium_before_itm_put_gap():
+    state = _mobile_state()
+    state.option_unreal = 700.0
+    state.stock_unreal = 200.0
+    state.total_unreal = 900.0
+    state.inv_df = pd.DataFrame(
+        [
+            {
+                "ticker": "RISK",
+                "buy_date": pd.Timestamp("2026-05-01"),
+                "shares": 100,
+                "cost_per_share": 100.0,
+                "current_price": 97.0,
+                "covered_shares": 0,
+                "covered_strike": pd.NA,
+                "unrealized_pnl": -300.0,
+                "source": "put_gap",
+            }
+        ]
+    )
+
+    dashboard = build_mobile_dashboard(
+        state,
+        {
+            "as_of": pd.Timestamp("2026-05-03"),
+            "include_unrealized": True,
+            "selected_sheets": ["Options 2025"],
+        },
+    )
+
+    snapshot = dashboard["snapshot"]
+    assert snapshot["current_unrealized_pnl"] == 900.0
+    assert snapshot["current_option_unrealized_pnl"] == 700.0
+    assert snapshot["current_option_premium_unrealized_pnl"] == 1000.0
+    assert snapshot["current_put_assignment_unrealized_pnl"] == -300.0
+    assert snapshot["current_stock_unrealized_pnl"] == 200.0
+
+
 def test_mobile_dashboard_blocks_unrealized_snapshot_when_required_prices_missing():
     state = _mobile_state()
     state.unrealized_blocked = True
@@ -701,6 +740,7 @@ def test_mobile_dashboard_blocks_unrealized_snapshot_when_required_prices_missin
     assert dashboard["snapshot"]["ytd_total_pnl"] is None
     assert dashboard["snapshot"]["current_unrealized_pnl"] is None
     assert dashboard["snapshot"]["current_option_unrealized_pnl"] is None
+    assert dashboard["snapshot"]["current_option_premium_unrealized_pnl"] is None
     assert dashboard["snapshot"]["current_stock_unrealized_pnl"] is None
     assert dashboard["snapshot"]["current_put_assignment_unrealized_pnl"] is None
     assert dashboard["snapshot"]["ytd_annualized_twr"] is None

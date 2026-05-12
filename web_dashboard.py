@@ -1522,7 +1522,7 @@ function renderDashboard(){
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized plus current unrealized snapshot" : "Realized P&L only", cls(snap.ytd_total_pnl))}
       ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
-      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` / ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))}` : ""}`, cls(snap.current_unrealized_pnl))}
+      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options net ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
     ${sectionHead("Current Month", "Projected values keep realized P&L separate from open premium.")}

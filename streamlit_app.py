@@ -1016,13 +1016,14 @@ def _render_snapshot(
                 if unrealized_blocked
                 else (
                     f"${state.total_unreal:,.0f} "
-                    f"(opt ${state.option_unreal:,.0f} / stk ${state.stock_unreal:,.0f}"
+                    f"(opt net ${state.option_unreal:,.0f}"
                     + (
-                        f" / ITM put gap ${state.put_assignment_unreal:,.0f}"
+                        f": premium ${state.option_unreal - state.put_assignment_unreal:,.0f}"
+                        f" + ITM put gap ${state.put_assignment_unreal:,.0f}"
                         if getattr(state, "put_assignment_unreal", 0.0)
                         else ""
                     )
-                    + ")"
+                    + f" / stk ${state.stock_unreal:,.0f})"
                 )
             )
             metric_card(
