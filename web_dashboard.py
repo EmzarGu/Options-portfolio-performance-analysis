@@ -837,7 +837,6 @@ def refresh(request: Request) -> Response:
         "performance",
         "monthly",
         "tickers",
-        "positions",
         "settings",
         "diagnostics",
         "methodology",
@@ -1016,7 +1015,7 @@ body{background:#080c0f;color:var(--text)}
 .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:#111a1d;border-radius:999px;padding:5px 9px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap}.badge.good{color:#c6f6ce;border-color:#2f6941}.badge.warn{color:#ffe3a3;border-color:#73551d}.badge.bad{color:#ffc0c5;border-color:#70303b}.badge.blue{color:#cfe0ff;border-color:#355189}
 .basis-control{display:flex;justify-content:flex-end;margin-top:8px}.basis-control .segmented{border:1px solid var(--line2);border-radius:8px;padding:4px;background:#0d1417}.basis-control a,.range-panel a{display:inline-flex;align-items:center;text-decoration:none}
 .control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}.range-panel{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:10px 12px;background:#0d1417;border:1px solid var(--line2);border-radius:8px}.range-panel .segmented button{padding:7px 10px}
-.grid{display:grid;gap:12px}.metrics{grid-template-columns:repeat(4,minmax(180px,1fr))}.two{grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr)}.two-even{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.grid{display:grid;gap:12px}.grid>*{min-width:0}.metrics{grid-template-columns:repeat(4,minmax(180px,1fr))}.two{grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr)}.two-even{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .card,.panel{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.card{padding:14px}.panel{padding:16px}
 .metric-label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:25px;font-weight:900;margin-top:5px;line-height:1.08}.metric-note{color:var(--muted);font-size:12px;margin-top:5px}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.warn-text{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}
 h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
@@ -1025,13 +1024,13 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 .table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.compact-table table{min-width:100%;table-layout:auto}.col-compact{width:1%;max-width:96px}.empty{padding:18px;color:var(--muted)}
 .risk-row-itm td{background:rgba(255,111,120,.12)}.risk-row-near td{background:rgba(246,194,91,.11)}.risk-row-clear td{background:rgba(69,210,197,.07)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--red)}.dot-warn{background:var(--amber)}.dot-good{background:var(--green)}.dot-blue{background:var(--blue)}
 .risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
-.chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}
+.chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px;min-width:0;overflow:hidden}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart-wrap{height:310px;position:relative;min-width:0}.chart-canvas{width:100%!important;height:100%!important}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}.chart-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:#c0cbc7!important;font-size:13px;font-weight:700}.chart-legend span{display:inline-flex;align-items:center;gap:6px;color:#c0cbc7!important}.chart-legend i{display:inline-block;width:12px;height:12px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
 .loading-panel{min-height:220px;display:grid;place-items:center;text-align:center}.loading-panel h2{margin:0 0 8px}.loading-panel p{margin:0;color:var(--muted)}.retry-load{margin-top:14px}
 .view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating,body.is-loading .view-updating{opacity:1;transform:translateY(0)}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
-@media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart{height:270px}}
-@media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.metric-value{font-size:22px}.chart{height:250px}}
+@media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart,.chart-wrap{height:280px}}
+@media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.metric-value{font-size:22px}.chart,.chart-wrap{height:260px}}
 </style>
 </head>
 <body>
@@ -1062,32 +1061,40 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
   <section id="dashboard" class="section active"></section>
   <section id="monthly" class="section"></section>
   <section id="tickers" class="section"></section>
-  <section id="positions" class="section"></section>
   <section id="performance" class="section"></section>
   <section id="settings" class="section"></section>
   <section id="diagnostics" class="section"></section>
   <section id="methodology" class="section"></section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 <script id="dashboard-data" type="application/json">__DASHBOARD_DATA__</script>
 <script>
 let data = JSON.parse(document.getElementById("dashboard-data").textContent);
+const queryParams = new URLSearchParams(window.location.search);
+function queryNumber(name, fallback){
+  const raw = queryParams.get(name);
+  const value = raw === null ? null : Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
 let dashboardLoaded = data.loading !== true;
 const appState = {
   active: "dashboard",
   range: "YTD",
   includeUnrealized: data.web?.include_unrealized !== false,
   targetReturn: Number(data.web?.target_return ?? data.monthly?.target_return ?? 0.015),
+  targetFloor: queryNumber("target_floor", 0.01),
   openRisk: "all",
   openType: "all",
   openSearch: "",
   tickerSearch: "",
   tickerYear: "all",
+  expectancyYear: "all",
   sort: {},
   renderTimer: null
 };
 const sections = [
   ["dashboard","Dashboard"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
-  ["positions","Positions"], ["settings","Settings"], ["diagnostics","Diagnostics"],
+  ["settings","Settings"], ["diagnostics","Diagnostics"],
   ["methodology","Methodology"]
 ];
 const pageTitles = {
@@ -1095,13 +1102,15 @@ const pageTitles = {
   performance: "Performance",
   monthly: "Monthly",
   tickers: "Tickers",
-  positions: "Positions",
   settings: "Settings",
   diagnostics: "Diagnostics",
   methodology: "Methodology"
 };
 const rangeOptions = ["3M","6M","YTD","1Y","Since inception"];
 const colors = ["#45d2c5","#7aa7ff","#f6c25b","#b99cff","#ff8e96","#7ee092"];
+let chartSeq = 0;
+let pendingCharts = [];
+let chartInstances = [];
 const $ = (id) => document.getElementById(id);
 const safe = (v) => String(v ?? "n/a").replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[ch]));
 const numeric = (v) => v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
@@ -1150,8 +1159,8 @@ function card(label, value, note="", klass=""){
 }
 function statusPill(value, row={}){
   const text = labelize(value || "n/a");
-  const projected = numeric(row.projected_return_roac);
-  const target = numeric(row.target_return || data.monthly?.target_return);
+  const projected = displayMonthReturn(row);
+  const target = targetReturn();
   let tone = "warn";
   if (String(value || "").toLowerCase().includes("beat") || (projected !== null && target !== null && projected >= target)) tone = "good";
   if (String(value || "").toLowerCase().includes("below") || (projected !== null && target !== null && projected < target)) tone = "bad";
@@ -1172,6 +1181,8 @@ function updateUrlState(){
   url.searchParams.set("section", appState.active);
   url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
   url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
+  url.searchParams.set("target_floor", Number(appState.targetFloor || 0).toFixed(6));
+  url.searchParams.delete("target_good");
   url.searchParams.delete("refreshed");
   window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
@@ -1223,7 +1234,7 @@ function renderLoadingError(message){
 }
 function renderBasisControl(){
   const target = $("basisControl");
-  if (!["dashboard","performance"].includes(appState.active)) {
+  if (!["dashboard"].includes(appState.active)) {
     target.innerHTML = "";
     return;
   }
@@ -1241,6 +1252,9 @@ function yearlyRows(){
   return appState.includeUnrealized
     ? (rows.with_unrealized || data.yearly.years || [])
     : (rows.realized_only || data.yearly.years || []);
+}
+function realizedYearlyRows(){
+  return data.views?.yearly?.realized_only || data.yearly.years || [];
 }
 function riskTone(row){
   const band = String(row.moneyness_band || "").toLowerCase();
@@ -1321,120 +1335,330 @@ function rangeFiltered(rows, dateKey){
     return !start || (d && d >= start && d <= asOf);
   });
 }
+function dateLabel(value, mode="auto"){
+  const d = parseDate(value);
+  if (!d) return safe(value);
+  const month = d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
+  const year = d.getUTCFullYear();
+  if (mode === "year") return String(year);
+  if (mode === "month-year") return `${month} ${year}`;
+  return `${month} ${year}`;
+}
+function chartDateLabel(value){
+  const d = parseDate(value);
+  if (!d) return safe(value);
+  return [
+    d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"}),
+    String(d.getUTCFullYear())
+  ];
+}
+function chartMonthLabel(value){
+  const d = parseDate(value);
+  if (!d) return safe(value);
+  return d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
+}
+function chartRegister(title, subtitle, config, footer=""){
+  const id = `chart-${++chartSeq}`;
+  pendingCharts.push({id, config});
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong>${subtitle ? `<span class="muted">${safe(subtitle)}</span>` : ""}</div><div class="chart-wrap"><canvas id="${id}" class="chart-canvas"></canvas></div>${footer}</div>`;
+}
+function chartCommonOptions(valueFormatter){
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {mode: "index", intersect: false},
+    animation: false,
+    plugins: {
+      legend: {
+        display: true,
+        position: "bottom",
+        align: "start",
+        labels: {color: "#c0cbc7", boxWidth: 12, boxHeight: 12, padding: 14, font: {size: 13, weight: 650}}
+      },
+      tooltip: {
+        backgroundColor: "#11191c",
+        borderColor: "#365257",
+        borderWidth: 1,
+        titleColor: "#f2f7f2",
+        bodyColor: "#d8e3df",
+        padding: 10,
+        callbacks: {
+          title(items){ return items?.[0]?.label || ""; },
+          label(item){
+            const label = item.dataset.label ? `${item.dataset.label}: ` : "";
+            return `${label}${valueFormatter(item.parsed.y)}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        offset: false,
+        grid: {display: false},
+        ticks: {
+          color: "#c0cbc7",
+          font: {size: 12, weight: 650},
+          maxRotation: 0,
+          minRotation: 0,
+          autoSkip: true,
+          maxTicksLimit: window.innerWidth < 760 ? 4 : 7,
+          callback(value){
+            const label = this.getLabelForValue(value);
+            return label.includes(" ") ? label.split(" ") : label;
+          }
+        }
+      },
+      y: {
+        grid: {color: "#26383c"},
+        border: {color: "#42585d"},
+        ticks: {
+          color: "#c0cbc7",
+          font: {size: 12, weight: 650},
+          callback: (value) => valueFormatter(value)
+        }
+      }
+    }
+  };
+}
+function initCharts(){
+  chartInstances.forEach(chart => chart.destroy());
+  chartInstances = [];
+  if (!pendingCharts.length) return;
+  if (!window.Chart) {
+    pendingCharts.forEach(({id}) => {
+      const canvas = $(id);
+      if (canvas) canvas.outerHTML = `<div class="empty">Interactive chart library did not load. Reload the app.</div>`;
+    });
+    pendingCharts = [];
+    return;
+  }
+  window.Chart.defaults.color = "#c0cbc7";
+  window.Chart.defaults.font.family = "-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif";
+  pendingCharts.forEach(({id, config}) => {
+    const canvas = $(id);
+    if (!canvas) return;
+    chartInstances.push(new window.Chart(canvas, config));
+  });
+  pendingCharts = [];
+}
+function finiteRangeLimit(){
+  if (appState.range === "3M") return 3;
+  if (appState.range === "6M") return 6;
+  if (appState.range === "1Y") return 12;
+  return null;
+}
+function trimFiniteGrowthRows(rows, xKey, title){
+  if (!String(title).toLowerCase().includes("cumulative growth")) return rows;
+  if (appState.range === "YTD") {
+    const asOf = parseDate(data.dashboard.request?.as_of || data.generated_at) || new Date();
+    const year = asOf.getUTCFullYear();
+    return rows.filter(r => {
+      const d = parseDate(get(r, xKey));
+      return d && d.getUTCFullYear() === year;
+    });
+  }
+  const limit = finiteRangeLimit();
+  if (!limit) return rows;
+  const dates = [...new Set(rows.map(r => fmtDate(get(r,xKey))))].sort();
+  if (dates.length <= limit) return rows;
+  const keep = new Set(dates.slice(-limit));
+  return rows.filter(r => keep.has(fmtDate(get(r,xKey))));
+}
+function targetReturn(){ return numeric(appState.targetReturn) ?? numeric(data.monthly?.target_return) ?? 0.015; }
+function targetFloor(){ return Math.min(targetReturn(), numeric(appState.targetFloor) ?? 0.01); }
+function targetCapital(row){
+  const rowTarget = numeric(row.target_return ?? data.monthly?.target_return);
+  const targetPnl = numeric(row.target_pnl);
+  if (numeric(row.avg_capital) !== null) return numeric(row.avg_capital);
+  if (numeric(row.average_capital) !== null) return numeric(row.average_capital);
+  if (rowTarget && targetPnl !== null) return targetPnl / rowTarget;
+  return null;
+}
+function displayMonthPnl(row){
+  const explicit = numeric(row.risk_adjusted_projected_month_pnl);
+  if (explicit !== null) return explicit;
+  const openNet = numeric(row.open_expiring_option_unrealized_pnl);
+  if (openNet !== null) {
+    const realized = numeric(row.realized_month_pnl ?? row.total_realized_pnl) || 0;
+    return realized + openNet;
+  }
+  return numeric(row.projected_month_pnl) ?? numeric(row.total_realized_pnl);
+}
+function displayMonthReturn(row){
+  const capital = targetCapital(row);
+  const pnl = displayMonthPnl(row);
+  if (capital && pnl !== null) return pnl / capital;
+  return numeric(row.risk_adjusted_projected_return_roac) ?? numeric(row.projected_return_roac) ?? numeric(row.return_roac);
+}
+function displayTargetPnl(row){
+  const capital = targetCapital(row);
+  return capital === null ? numeric(row.target_pnl) : capital * targetReturn();
+}
+function displayRemainingToTarget(row){
+  const targetPnl = displayTargetPnl(row);
+  const pnl = displayMonthPnl(row);
+  if (targetPnl === null || pnl === null) return numeric(row.risk_adjusted_projected_remaining_pnl ?? row.projected_remaining_pnl);
+  return Math.max(targetPnl - pnl, 0);
+}
+function displayTargetStatus(row){
+  const ret = displayMonthReturn(row);
+  if (ret === null) return row.monthly_target_status || "n/a";
+  return ret >= targetReturn() ? "Beat Target" : "Below Target";
+}
 function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
-  const clean = (rows || []).filter(r => numeric(get(r,yKey)) !== null && get(r,xKey));
+  let clean = (rows || []).filter(r => numeric(get(r,yKey)) !== null && get(r,xKey));
+  clean = trimFiniteGrowthRows(clean, xKey, title);
   if (clean.length < 2) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
-  const w=640,h=300,pad={l:62,r:18,t:20,b:44};
   const dates=[...new Set(clean.map(r => fmtDate(get(r,xKey))))].sort();
-  const yVals=clean.map(r=>numeric(get(r,yKey))).filter(v=>v!==null);
-  let yMin=Math.min(...yVals), yMax=Math.max(...yVals);
-  const yPad=(yMax-yMin)*0.12 || 0.05; yMin-=yPad; yMax+=yPad;
-  const sx=(v)=> pad.l + (dates.indexOf(fmtDate(v)) / Math.max(dates.length-1,1)) * (w-pad.l-pad.r);
-  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
   const groups={}; clean.forEach(r => { const name = get(r,seriesKey) || "Series"; (groups[name] ||= []).push(r); });
-  const grid=[0,.25,.5,.75,1].map(t => { const y=pad.t+t*(h-pad.t-pad.b); const value=yMax-t*(yMax-yMin); return `<line class="grid-line" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}"></line><text x="10" y="${y+5}">${safe(yFormat(value))}</text>`; }).join("");
-  const paths=Object.entries(groups).map(([name,vals],i) => {
-    vals.sort((a,b)=>String(get(a,xKey)).localeCompare(String(get(b,xKey))));
-    return `<path class="line" stroke="${colors[i%colors.length]}" d="${vals.map((r,j)=>(j?"L":"M")+sx(get(r,xKey))+","+sy(numeric(get(r,yKey)))).join(" ")}"><title>${safe(name)}</title></path>`;
-  }).join("");
-  const labels=Object.keys(groups).map((name,i)=>`<span class="legend-item"><span class="legend-swatch" style="background:${colors[i%colors.length]}"></span>${safe(name)}</span>`).join("");
-  const first=dates[0], last=dates[dates.length-1];
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${paths}<text x="${pad.l}" y="${h-10}">${safe(first)}</text><text x="${w-pad.r}" y="${h-10}" text-anchor="end">${safe(last)}</text></svg><div class="legend">${labels}</div></div>`;
+  const labels = dates.map(d => dateLabel(d));
+  const datasets = Object.entries(groups).map(([name, vals], i) => {
+    const byDate = new Map(vals.map(r => [fmtDate(get(r,xKey)), numeric(get(r,yKey))]));
+    return {
+      label: name,
+      data: dates.map(d => byDate.has(d) ? byDate.get(d) : null),
+      borderColor: colors[i % colors.length],
+      backgroundColor: colors[i % colors.length],
+      borderWidth: 3,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      tension: 0.22,
+      spanGaps: true
+    };
+  });
+  const options = chartCommonOptions(yFormat);
+  options.scales.x.ticks.autoSkip = labels.length > 7;
+  options.scales.x.ticks.maxTicksLimit = appState.range === "Since inception" ? (window.innerWidth < 760 ? 4 : 6) : 7;
+  return chartRegister(title, appState.range, {type: "line", data: {labels, datasets}, options});
 }
 function barChart(title, rows, xKey, yKey){
   const clean=(rows || []).filter(r=>numeric(get(r,yKey))!==null);
   if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
-  const w=640,h=300,pad={l:62,r:18,t:24,b:54};
-  const vals=clean.map(r=>numeric(get(r,yKey)) || 0);
-  let yMin=Math.min(0,...vals), yMax=Math.max(0,...vals);
-  const span = yMax - yMin || 1;
-  const yPad = span * 0.12;
-  yMin = yMin < 0 ? yMin - yPad : 0;
-  yMax = yMax > 0 ? yMax + yPad : 0;
-  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
-  const zero=sy(0);
-  const slot=(w-pad.l-pad.r)/clean.length;
-  const bw=Math.max(8,slot*.68);
-  const bars=clean.map((r,i)=>{
-    const v=numeric(get(r,yKey)) || 0; const x=pad.l+i*slot+(slot-bw)/2;
-    const y= v >= 0 ? sy(v) : zero;
-    const bh=Math.abs(sy(v)-zero);
-    const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
-    const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(get(r,xKey)).split(" ")[0])}</text>`:"";
-    const valueLabel=clean.length<=12 && Math.abs(v)>0 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtCompactMoney(v))}</text>` : "";
-    return `<rect class="${v>=0?"bar-pos":"bar-neg"}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(get(r,xKey)))}: ${safe(fmtMoney(v))}</title></rect>${valueLabel}${xLabel}`;
-  }).join("");
-  const gridVals = yMin < 0 && yMax > 0 ? [yMax, 0, yMin] : [yMax, (yMax+yMin)/2, yMin];
-  const grid = gridVals.map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg></div>`;
+  const labels = clean.map(r => dateLabel(get(r,xKey)));
+  const values = clean.map(r => numeric(get(r,yKey)) || 0);
+  const options = chartCommonOptions(fmtCompactMoney);
+  options.plugins.legend.display = false;
+  options.scales.x.offset = true;
+  options.scales.x.ticks.autoSkip = labels.length > 7;
+  options.scales.x.ticks.maxTicksLimit = 7;
+  return chartRegister(title, appState.range, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "P&L",
+        data: values,
+        backgroundColor: values.map(v => v >= 0 ? "#66d37a" : "#ff7078"),
+        borderWidth: 0,
+        borderRadius: 2,
+        categoryPercentage: 0.72,
+        barPercentage: 0.9,
+        maxBarThickness: 96
+      }]
+    },
+    options
+  });
 }
 function monthlyPnlBarChart(title, rows){
-  const clean=(rows || []).filter(r=>numeric(r.projected_month_pnl ?? r.total_realized_pnl)!==null);
+  const clean=(rows || []).filter(r=>displayMonthPnl(r)!==null);
   if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
-  const w=640,h=300,pad={l:70,r:20,t:24,b:56};
-  const values=clean.map(r=>numeric(r.projected_month_pnl ?? r.total_realized_pnl) || 0);
-  let yMin=Math.min(0,...values), yMax=Math.max(0,...values);
-  const span = yMax - yMin || 1;
-  yMin = Math.min(0, yMin - span*.12);
-  yMax = yMax + span*.18;
-  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
-  const zero=sy(0);
-  const slot=(w-pad.l-pad.r)/clean.length;
-  const bw=Math.max(10,slot*.62);
-  const bars=clean.map((r,i)=>{
-    const v=numeric(r.projected_month_pnl ?? r.total_realized_pnl) || 0;
-    const x=pad.l+i*slot+(slot-bw)/2;
-    const y= v >= 0 ? sy(v) : zero;
-    const bh=Math.abs(sy(v)-zero);
-    const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
-    const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(r.month || r.Date).split(" ")[0])}</text>`:"";
-    const valueLabel=clean.length<=12 && Math.abs(v)>0 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtCompactMoney(v))}</text>` : "";
-    return `<rect class="${v>=0?"bar-pos":"bar-neg"}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(r.month || r.Date))}: ${safe(fmtMoney(v))}</title></rect>${valueLabel}${xLabel}`;
-  }).join("");
-  const gridVals = yMin < 0 && yMax > 0 ? [yMax, 0, yMin] : [yMax, (yMax+yMin)/2, yMin];
-  const grid = [...new Set(gridVals.map(v=>Math.round(v)))].map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtCompactMoney(v))}</text>`).join("");
-  const legend = `<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#66d37a"></span>Positive P&L</span><span class="legend-item"><span class="legend-swatch" style="background:#ff7078"></span>Negative P&L</span></div>`;
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg>${legend}</div>`;
+  const labels = clean.map(r => dateLabel(r.month || r.Date));
+  const values = clean.map(r => displayMonthPnl(r) || 0);
+  const options = chartCommonOptions(fmtCompactMoney);
+  options.plugins.legend.display = false;
+  options.scales.x.offset = true;
+  options.scales.x.ticks.autoSkip = labels.length > 7;
+  options.scales.x.ticks.maxTicksLimit = 7;
+  return chartRegister(title, appState.range, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "P&L",
+        data: values,
+        backgroundColor: values.map(v => v >= 0 ? "#66d37a" : "#ff7078"),
+        borderWidth: 0,
+        borderRadius: 2,
+        categoryPercentage: 0.72,
+        barPercentage: 0.9,
+        maxBarThickness: 96
+      }]
+    },
+    options
+  });
 }
 function monthlyReturnTargetChart(title, rows){
-  const clean=(rows || []).filter(r=>numeric(r.projected_return_roac ?? r.return_roac ?? r.return)!==null);
+  const clean=(rows || []).filter(r=>displayMonthReturn(r)!==null);
   if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
-  const w=640,h=300,pad={l:70,r:20,t:24,b:56};
-  const values=clean.map(r=>numeric(r.projected_return_roac ?? r.return_roac ?? r.return) || 0);
-  const targets=clean.map(r=>numeric(r.target_return ?? data.monthly?.target_return)).filter(v=>v!==null);
-  const target = targets.length ? targets.reduce((a,b)=>a+b,0)/targets.length : numeric(data.monthly?.target_return);
-  let yMin=Math.min(0,...values, ...(target!==null?[target]:[])), yMax=Math.max(0,...values, ...(target!==null?[target]:[]));
-  const span = yMax - yMin || 0.01;
-  yMin = Math.min(0, yMin - span*.16);
-  yMax = yMax + span*.18;
-  const sy=(v)=> h-pad.b - ((v-yMin)/(yMax-yMin || 1)) * (h-pad.t-pad.b);
-  const zero=sy(0);
-  const slot=(w-pad.l-pad.r)/clean.length;
-  const bw=Math.max(10,slot*.62);
-  const targetY = target === null ? null : sy(target);
-  const targetLayer = target === null ? "" : [
-    `<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${Math.max(targetY-pad.t,0)}" fill="rgba(126,224,146,.18)"></rect>`,
-    `<rect x="${pad.l}" y="${targetY}" width="${w-pad.l-pad.r}" height="${Math.max(zero-targetY,0)}" fill="rgba(246,194,91,.16)"></rect>`,
-    `<rect x="${pad.l}" y="${zero}" width="${w-pad.l-pad.r}" height="${Math.max(h-pad.b-zero,0)}" fill="rgba(255,111,120,.14)"></rect>`,
-    `<line x1="${pad.l}" y1="${targetY}" x2="${w-pad.r}" y2="${targetY}" stroke="#f6c25b" stroke-width="3" stroke-dasharray="7 5"></line>`
-  ].join("");
-  const bars=clean.map((r,i)=>{
-    const v=numeric(r.projected_return_roac ?? r.return_roac ?? r.return) || 0;
-    const rowTarget=numeric(r.target_return ?? data.monthly?.target_return);
-    const fill = rowTarget !== null && v >= rowTarget ? "#7ee092" : v >= 0 ? "#f6c25b" : "#ff7078";
-    const x=pad.l+i*slot+(slot-bw)/2;
-    const y= v >= 0 ? sy(v) : zero;
-    const bh=Math.abs(sy(v)-zero);
-    const showTick = clean.length <= 14 || i % Math.ceil(clean.length / 8) === 0;
-    const xLabel=showTick?`<text x="${x+bw/2}" y="${h-18}" text-anchor="middle">${safe(monthName(r.month || r.Date).split(" ")[0])}</text>`:"";
-    const valueLabel=clean.length<=12 ? `<text class="bar-label" x="${x+bw/2}" y="${v>=0 ? y-6 : y+bh+16}" text-anchor="middle">${safe(fmtPct(v))}</text>` : "";
-    return `<rect fill="${fill}" x="${x}" y="${y}" width="${bw}" height="${Math.max(bh,1)}"><title>${safe(monthName(r.month || r.Date))}: ${safe(fmtPct(v))}${rowTarget!==null ? ` / target ${safe(fmtPct(rowTarget))}` : ""}</title></rect>${valueLabel}${xLabel}`;
-  }).join("");
-  const gridVals = target !== null ? [yMax, target, 0] : [yMax, (yMax+yMin)/2, yMin];
-  const grid = [...new Set(gridVals.map(v=>Math.round(v*10000)/10000))].map(v => `<line class="grid-line" x1="${pad.l}" y1="${sy(v)}" x2="${w-pad.r}" y2="${sy(v)}"></line><text x="10" y="${sy(v)+5}">${safe(fmtPct(v))}</text>`).join("");
-  const targetLabel = target === null ? "" : `<span class="legend-item"><span class="legend-swatch" style="background:#f6c25b"></span>Target ${safe(fmtPct(target))}</span>`;
-  const legend = `<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#7ee092"></span>At/above target</span><span class="legend-item"><span class="legend-swatch" style="background:#f6c25b"></span>Positive, below target</span><span class="legend-item"><span class="legend-swatch" style="background:#ff7078"></span>Negative</span>${targetLabel}</div>`;
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong><span class="muted">${safe(appState.range)}</span></div><svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${targetLayer}${grid}<line class="axis" x1="${pad.l}" y1="${zero}" x2="${w-pad.r}" y2="${zero}"></line><line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}"></line>${bars}</svg>${legend}</div>`;
+  const labels = clean.map(r => dateLabel(r.month || r.Date));
+  const values = clean.map(r => displayMonthReturn(r) || 0);
+  const target = targetReturn();
+  const floor = targetFloor();
+  const bandColor = (value) => value < 0 ? "#ff7078" : value < floor ? "#f6c25b" : value <= target ? "#7ee092" : "#6da8ff";
+  const targetBandPlugin = {
+    id: "targetBands",
+    beforeDatasetsDraw(chart, args, opts) {
+      const {ctx, chartArea, scales} = chart;
+      if (!chartArea || !scales.y) return;
+      const y = scales.y;
+      const yTarget = y.getPixelForValue(opts.target);
+      const yFloor = y.getPixelForValue(opts.floor);
+      const yZero = y.getPixelForValue(0);
+      const clamp = (value) => Math.max(chartArea.top, Math.min(chartArea.bottom, value));
+      const band = (top, bottom, fill) => {
+        const y1 = clamp(top);
+        const y2 = clamp(bottom);
+        const height = y2 - y1;
+        if (height <= 0) return;
+        ctx.fillStyle = fill;
+        ctx.fillRect(chartArea.left, y1, chartArea.right - chartArea.left, height);
+      };
+      ctx.save();
+      band(chartArea.top, yTarget, "rgba(109,168,255,.12)");
+      band(yTarget, yFloor, "rgba(126,224,146,.11)");
+      band(yFloor, yZero, "rgba(246,194,91,.13)");
+      band(yZero, chartArea.bottom, "rgba(255,111,120,.10)");
+      ctx.strokeStyle = "#d6e1a1";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      ctx.moveTo(chartArea.left, yTarget);
+      ctx.lineTo(chartArea.right, yTarget);
+      ctx.stroke();
+      ctx.strokeStyle = "#f6c25b";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(chartArea.left, yFloor);
+      ctx.lineTo(chartArea.right, yFloor);
+      ctx.stroke();
+      ctx.restore();
+    }
+  };
+  const options = chartCommonOptions(fmtPct);
+  options.scales.x.offset = true;
+  options.scales.x.ticks.autoSkip = labels.length > 7;
+  options.scales.x.ticks.maxTicksLimit = 7;
+  options.plugins.targetBands = {floor, target};
+  options.plugins.legend.display = false;
+  const footer = `<div class="chart-legend"><span><i style="background:#ff7078"></i>Negative</span><span><i style="background:#f6c25b"></i>0-${safe(fmtPct(floor))}</span><span><i style="background:#7ee092"></i>Target band ${safe(fmtPct(floor))}-${safe(fmtPct(target))}</span><span><i style="background:#6da8ff"></i>Above target</span></div>`;
+  return chartRegister(title, appState.range, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "Monthly return",
+        data: values,
+        backgroundColor: values.map(v => bandColor(v)),
+        borderWidth: 0,
+        borderRadius: 2,
+        categoryPercentage: 0.72,
+        barPercentage: 0.9,
+        maxBarThickness: 96
+      }]
+    },
+    options,
+    plugins: [targetBandPlugin]
+  }, footer);
 }
 function growthFromReturns(rows){
   let growth=1;
@@ -1461,6 +1685,19 @@ function openShortRows(){
     return riskOk && typeOk && (!q || text.includes(q)) && m !== null;
   });
 }
+function openShortProjectedPnl(row){
+  if (!row || row.missing_price) return null;
+  const strike = numeric(row.strike);
+  const current = numeric(row.current_price);
+  const qty = Math.abs(numeric(row.quantity) || 0);
+  const premium = numeric(row.premium_collected) || 0;
+  if (strike === null || current === null || !qty) return premium;
+  const type = String(row.option_type || "").toLowerCase();
+  const intrinsic = type.includes("call")
+    ? Math.max(current - strike, 0) * 100 * qty
+    : Math.max(strike - current, 0) * 100 * qty;
+  return premium - intrinsic;
+}
 function openShortColumns(){
   return [
     {key:"ticker",label:"Ticker",format:(v,r)=>`${dot(r)}<strong>${safe(v)}</strong>`},
@@ -1472,7 +1709,8 @@ function openShortColumns(){
     {key:"moneyness",label:"Moneyness",format:fmtPct,num:true,className:moneynessCls},
     {key:"quantity",label:"Qty",num:true},
     {key:"premium_collected",label:"Premium",format:v=>fmtMoney(v,2),num:true,className:cls},
-    {key:"covered_status",label:"Coverage"}
+    {key:"projected_pnl",label:"Projected P&L",value:openShortProjectedPnl,format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"covered_status",label:"Backing",format:labelize}
   ];
 }
 function openShortToolbar(){
@@ -1480,8 +1718,7 @@ function openShortToolbar(){
     ${segmentedControl("risk",["all","itm","near","clear"],appState.openRisk)}
     ${segmentedControl("type",["all","puts","calls"],appState.openType)}
     <input data-open-search value="${safe(appState.openSearch)}" placeholder="Filter ticker, strike, expiry">
-  </div>
-  <div class="footnote"><span class="risk-dot dot-bad"></span>ITM <span class="risk-dot dot-warn"></span>At/near strike <span class="risk-dot dot-good"></span>OK <span class="risk-dot dot-blue"></span>Deep OTM</div>`;
+  </div>`;
 }
 function riskPill(row){
   const tone = riskTone(row);
@@ -1502,6 +1739,18 @@ function monthlyRows(){
   const cycles = new Map((data.tables.monthly_cycles || []).map(row => [fmtDate(row.month), row]));
   return (data.monthly.months || []).map(row => ({...(cycles.get(fmtDate(row.month)) || {}), ...row}));
 }
+function inventoryColumns(){
+  return [
+    {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
+    {key:"buy_date",label:"Buy date",format:fmtDate},
+    {key:"shares",label:"Shares",num:true},
+    {key:"cost_per_share",label:"Cost/share",format:v=>fmtMoney(v,2),num:true},
+    {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
+    {key:"covered_shares",label:"Covered shares",num:true},
+    {key:"covered_strike",label:"Covered strike",format:v=>fmtMoney(v,2),num:true},
+    {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls}
+  ];
+}
 function renderHeader(){
   const d=data.dashboard || {}, freshness=d.data_freshness || {}, price=freshness.price_coverage || {}, issue=d.issue_summary || {};
   const priced=price.priced_count ?? price.stocks_fetched ?? price.fetched ?? 0;
@@ -1519,10 +1768,10 @@ function renderHeader(){
 function renderDashboard(){
   const snap=currentSnapshot(), mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
   const riskMonthPnl = numeric(mt.risk_adjusted_projected_month_pnl) !== null ? mt.risk_adjusted_projected_month_pnl : mt.projected_month_pnl;
-  const riskMonthReturn = numeric(mt.risk_adjusted_projected_return_roac) !== null ? mt.risk_adjusted_projected_return_roac : mt.projected_return_roac;
-  const riskRemaining = numeric(mt.risk_adjusted_projected_remaining_pnl) !== null ? mt.risk_adjusted_projected_remaining_pnl : mt.projected_remaining_pnl;
-  const riskStatus = mt.risk_adjusted_monthly_target_status || mt.monthly_target_status || mt.status || "status n/a";
-  const targetReturn = numeric(mt.target_return || data.monthly.target_return) || 0;
+  const riskMonthReturn = displayMonthReturn(mt);
+  const riskRemaining = displayRemainingToTarget(mt);
+  const riskStatus = displayTargetStatus(mt);
+  const target = targetReturn();
   $("dashboard").innerHTML = `
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized YTD + current unrealized" : "Realized P&L only", cls(snap.ytd_total_pnl))}
@@ -1530,32 +1779,31 @@ function renderDashboard(){
       ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options net ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
-    ${sectionHead("Current Month", "Risk-adjusted view uses realized month P&L plus current-month open option risk.")}
+    ${sectionHead("Current Month")}
     <div class="grid metrics">
       ${card("Risk-adjusted month P&L", fmtMoney(riskMonthPnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + open option net ${safe(fmtMoney(mt.open_expiring_option_unrealized_pnl ?? mt.current_unrealized_pnl))}`, cls(riskMonthPnl))}
-      ${card("Risk-adjusted return", `${safe(fmtPct(riskMonthReturn))} RoAC`, `Target ${safe(fmtPct(targetReturn))} - ${labelize(riskStatus)}`, cls((numeric(riskMonthReturn)||0) - targetReturn))}
+      ${card("Risk-adjusted return", `${safe(fmtPct(riskMonthReturn))} RoAC`, `Target ${safe(fmtPct(target))} - ${labelize(riskStatus)}`, cls((numeric(riskMonthReturn)||0) - target))}
       ${card("Remaining to target", fmtMoney(riskRemaining), "Based on risk-adjusted monthly target", cls(-1*(numeric(riskRemaining)||0)))}
-      ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} contract(s) / ${safe(snap.itm_put_shares || 0)} shares`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
+      ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} ITM puts`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
     </div>
-    ${sectionHead("Open Shorts Monitor", `${shorts.length} open shorts after filters.`, "")}
+    ${sectionHead("Assigned Holdings and Exposure")}
+    ${dataTable("dashboard-inventory", data.positions.inventory || [], inventoryColumns(), {title:"Assigned holdings", compact:true})}
+    ${sectionHead("Open Option Shorts", `${shorts.length} rows after filters.`)}
     ${openShortToolbar()}
-    ${riskCards(shorts)}
+    ${dataTable("dashboard-open-shorts", shorts, openShortColumns(), {title:"Open option shorts", rowClass:rowRiskClass, wide:true})}
   `;
 }
 function renderMonthly(){
   const rows = monthlyRows();
   const filtered = rangeFiltered(rows, "month");
-  const returns = growthFromReturns(data.charts.monthly_returns || []);
   const future = data.monthly.future_months || [];
   $("monthly").innerHTML = `
-    ${sectionHead("Monthly Performance", "Calendar-month realized results plus explicit current/future projection fields.")}
+    ${sectionHead("Monthly Performance")}
     ${rangePicker()}
     <div class="grid two-even">
       ${monthlyReturnTargetChart("Monthly Return vs Target", filtered)}
       ${monthlyPnlBarChart("Monthly P&L", filtered)}
     </div>
-    <div style="height:12px"></div>
-    ${lineChart("Cumulative Growth by Month", returns, "month", "Growth", "Series", v=>fmtDec(v,2)+"x")}
     <div style="height:12px"></div>
     ${dataTable("monthly-table", rows, [
       {key:"month",label:"Month",format:monthName},
@@ -1567,20 +1815,24 @@ function renderMonthly(){
       {key:"peak_capital",label:"Peak capital",format:fmtMoney,num:true},
       {key:"return_roac",label:"RoAC",format:fmtPct,num:true,className:cls},
       {key:"return_ropc",label:"RoPC",format:fmtPct,num:true,className:cls},
-      {key:"open_expiring_incremental_premium",label:"Open incremental",format:fmtMoney,num:true,className:cls},
-      {key:"open_expiring_roll_adjusted_premium",label:"Open roll-adjusted",format:fmtMoney,num:true,className:cls},
-      {key:"projected_month_pnl",label:"Projected P&L",format:fmtMoney,num:true,className:cls},
-      {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true,className:cls},
-      {key:"monthly_target_status",label:"Target status",format:statusPill}
-    ], {title:"Monthly table", subtitle:"Historical/current rows with explicit projection semantics.", wide:true})}
-    ${sectionHead("Future Open Expiry Months", "Future months are shown separately so iOS/web do not infer roll semantics client-side.")}
+      {key:"open_expiring_incremental_premium",label:"Open premium",format:fmtMoney,num:true,className:cls},
+      {key:"open_expiring_intrinsic_value_gap",label:"ITM put gap",format:fmtMoney,num:true,className:cls},
+      {key:"open_expiring_option_unrealized_pnl",label:"Open option net",format:fmtMoney,num:true,className:cls},
+      {key:"risk_adjusted_projected_month_pnl",label:"Target-view P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
+      {key:"risk_adjusted_projected_return_roac",label:"Target-view RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:cls},
+      {key:"risk_adjusted_projected_remaining_pnl",label:"Remaining",value:displayRemainingToTarget,format:fmtMoney,num:true,className:(v)=>numeric(v)>0?"neg":"pos"},
+      {key:"monthly_target_status",label:"Target status",value:displayTargetStatus,format:statusPill}
+    ], {title:"Monthly table", wide:true})}
+    ${sectionHead("Future Open Expiry Months")}
     ${dataTable("future-months", future, [
       {key:"month",label:"Month",format:monthName},
       {key:"open_option_count",label:"Open options",num:true},
       {key:"open_expiring_incremental_premium",label:"Incremental premium",format:fmtMoney,num:true,className:cls},
       {key:"open_expiring_roll_adjusted_premium",label:"Roll-adjusted premium",format:fmtMoney,num:true,className:cls},
-      {key:"projected_month_pnl",label:"Projected P&L",format:fmtMoney,num:true,className:cls},
-      {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true},
+      {key:"open_expiring_intrinsic_value_gap",label:"ITM put gap",format:fmtMoney,num:true,className:cls},
+      {key:"open_expiring_option_unrealized_pnl",label:"Open option net",format:fmtMoney,num:true,className:cls},
+      {key:"projected_month_pnl",label:"Target-view P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
+      {key:"projected_return_roac",label:"Target-view RoAC",value:displayMonthReturn,format:fmtPct,num:true},
       {key:"projection_basis",label:"Basis"}
     ], {title:"Future expiry months", small:true})}
   `;
@@ -1616,38 +1868,63 @@ function renderTickers(){
     ], {title:"Per-year realized P&L", compact:true})}
   `;
 }
-function renderPositions(){
-  const shorts = openShortRows();
-  $("positions").innerHTML = `
-    ${sectionHead("Assigned Holdings and Exposure", "Inventory comes first; open shorts are monitored separately below.")}
-    ${dataTable("inventory", data.positions.inventory || [], [
-      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
-      {key:"buy_date",label:"Buy date",format:fmtDate},
-      {key:"shares",label:"Shares",num:true},
-      {key:"cost_per_share",label:"Cost/share",format:v=>fmtMoney(v,2),num:true},
-      {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
-      {key:"covered_shares",label:"Covered shares",num:true},
-      {key:"covered_strike",label:"Covered strike",format:v=>fmtMoney(v,2),num:true},
-      {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls},
-      {key:"source",label:"Source"}
-    ], {title:"Assigned holdings", subtitle:"Covered strike caps assigned holdings when covered calls are open.", wide:true})}
-    ${sectionHead("Open Option Shorts", `${shorts.length} rows after filters.`)}
-    ${openShortToolbar()}
-    ${dataTable("positions-open-shorts", shorts, openShortColumns(), {title:"Open option shorts", subtitle:"Detailed position view by moneyness risk.", rowClass:rowRiskClass, wide:true})}
-  `;
+function expectancyByYearRows(){
+  return (data.tables.expectancy_by_year || []).filter(r => appState.expectancyYear === "all" || String(r.Year) === appState.expectancyYear);
+}
+function maxDrawdownFromReturns(rows){
+  let growth = 1, peak = 1, maxDd = 0;
+  (rows || []).filter(r => numeric(r.return) !== null).sort((a,b)=>String(a.month).localeCompare(String(b.month))).forEach(r => {
+    growth *= (1 + (numeric(r.return) || 0));
+    peak = Math.max(peak, growth);
+    maxDd = Math.min(maxDd, growth / peak - 1);
+  });
+  return maxDd;
+}
+function benchmarkMetricRows(){
+  const rows = (data.tables.benchmark_metrics || []).map(r => ({...r}));
+  const strategy = rows.find(r => String(r.Series) === "My Strategy");
+  if (strategy) strategy["Max Drawdown"] = maxDrawdownFromReturns(data.charts.monthly_returns || []);
+  return rows;
+}
+function expectancyTrendChart(){
+  const rows = data.tables.expectancy_by_year || [];
+  const clean = rows.filter(r => numeric(r["Win rate"]) !== null && r.Year && r.Category);
+  if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>Win Rate by Year</strong></div><div class="empty">Chart unavailable.</div></div>`;
+  const years=[...new Set(clean.map(r=>String(r.Year)))].sort();
+  const cats=[...new Set(clean.map(r=>String(r.Category)))].sort();
+  const datasets = cats.map((cat, i) => {
+    const byYear = new Map(clean.filter(r => String(r.Category) === cat).map(r => [String(r.Year), numeric(r["Win rate"])]));
+    return {
+      label: cat,
+      data: years.map(year => byYear.has(year) ? byYear.get(year) : null),
+      borderColor: colors[i % colors.length],
+      backgroundColor: colors[i % colors.length],
+      borderWidth: 3,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      tension: 0.2,
+      spanGaps: true
+    };
+  });
+  const options = chartCommonOptions(fmtPct);
+  options.scales.x.ticks.autoSkip = false;
+  options.scales.y.min = 0;
+  options.scales.y.max = 1;
+  return chartRegister("Win Rate by Year", "percentage of profitable trades", {type: "line", data: {labels: years, datasets}, options});
 }
 function renderPerformance(){
   const benchmark = (data.charts.benchmark_growth_by_range || {})[appState.range] || data.charts.benchmark_growth || [];
   const pnlRows = rangeFiltered(data.tables.options_cycle_pnl || [], "Date");
+  const expectancyYears = ["all", ...[...new Set((data.tables.expectancy_by_year || []).map(r => String(r.Year)))].sort()];
+  const expectancyRows = expectancyByYearRows();
   $("performance").innerHTML = `
     ${sectionHead("Yearly Performance", "Includes active-month TWR so inactive periods do not dilute trading-period performance.")}
-    ${dataTable("yearly-mobile", yearlyRows(), [
+    ${dataTable("yearly-mobile", realizedYearlyRows(), [
       {key:"year",label:"Year",num:true},
       {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
       {key:"realized_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
       {key:"dividends",label:"Dividends",format:fmtMoney,num:true},
       {key:"total_realized_pnl",label:"Realized",format:fmtMoney,num:true,className:cls},
-      {key:"total_pnl_including_unrealized",label:"With unrealized",format:fmtMoney,num:true,className:cls},
       {key:"avg_capital",label:"Avg capital",format:fmtMoney,num:true},
       {key:"peak_capital",label:"Peak capital",format:fmtMoney,num:true},
       {key:"roac_year",label:"RoAC",format:fmtPct,num:true,className:cls},
@@ -1656,11 +1933,11 @@ function renderPerformance(){
       {key:"annualized_twr_active",label:"Ann. TWR active",format:fmtPct,num:true,className:cls}
     ], {title:"Yearly performance", wide:true})}
     <div style="height:12px"></div>
-    ${sectionHead("Performance Charts", "Period control applies only to these charts.")}
+    ${sectionHead("Performance Charts")}
     ${rangePicker()}
     <div class="grid two-even">${lineChart("Cumulative Growth vs Benchmarks", benchmark, "Date", "Growth", "Series", v=>fmtDec(v,2)+"x")}${barChart("P&L by Options Cycle", pnlRows, "Date", "pnl")}</div>
     ${sectionHead("Benchmark Metrics")}
-    ${dataTable("benchmark-metrics", data.tables.benchmark_metrics || [], [
+    ${dataTable("benchmark-metrics", benchmarkMetricRows(), [
       {key:"Series",label:"Series"},
       {key:"CAGR",label:"CAGR",format:fmtPct,num:true},
       {key:"Volatility",label:"Volatility",format:fmtPct,num:true},
@@ -1673,18 +1950,21 @@ function renderPerformance(){
       {key:"Return 1Y",label:"1Y",format:fmtPct,num:true},
       {key:"Return SI",label:"Since inception",format:fmtPct,num:true}
     ], {title:"Key performance metrics versus benchmarks", wide:true})}
-    ${sectionHead("Expectancy Analysis", "Overall expectancy plus yearly breakdown to show how the edge changes over time.")}
-    ${dataTable("expectancy", data.tables.expectancy || [], [
-      {key:"Category",label:"Category"},
-      {key:"Count",label:"Count",num:true},
-      {key:"Win rate",label:"Win rate",format:fmtPct,num:true},
-      {key:"Avg win",label:"Avg win",format:fmtMoney,num:true,className:cls},
-      {key:"Avg loss",label:"Avg loss",format:fmtMoney,num:true,className:cls},
-      {key:"Expectancy",label:"Expectancy",format:fmtMoney,num:true,className:cls},
-      {key:"Total P&L",label:"Total P&L",format:fmtMoney,num:true,className:cls}
-    ], {title:"Overall expectancy", small:true})}
+    ${sectionHead("Expectancy Analysis", "", `<select id="expectancyYear">${expectancyYears.map(y=>`<option value="${safe(y)}" ${y===appState.expectancyYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
+    <div class="grid two-even">
+      ${dataTable("expectancy", data.tables.expectancy || [], [
+        {key:"Category",label:"Category"},
+        {key:"Count",label:"Count",num:true},
+        {key:"Win rate",label:"Win rate",format:fmtPct,num:true},
+        {key:"Avg win",label:"Avg win",format:fmtMoney,num:true,className:cls},
+        {key:"Avg loss",label:"Avg loss",format:fmtMoney,num:true,className:cls},
+        {key:"Expectancy",label:"Expectancy",format:fmtMoney,num:true,className:cls},
+        {key:"Total P&L",label:"Total P&L",format:fmtMoney,num:true,className:cls}
+      ], {title:"Overall expectancy", small:true})}
+      ${expectancyTrendChart()}
+    </div>
     <div style="height:12px"></div>
-    ${dataTable("expectancy-by-year", data.tables.expectancy_by_year || [], [
+    ${dataTable("expectancy-by-year", expectancyRows, [
       {key:"Year",label:"Year",num:true},
       {key:"Category",label:"Category"},
       {key:"Count",label:"Count",num:true},
@@ -1761,26 +2041,29 @@ function renderDiagnostics(){
 }
 function renderSettings(){
   const targetPct = fmtPctNumber(appState.targetReturn);
+  const floorPct = fmtPctNumber(appState.targetFloor);
   $("settings").innerHTML = `
-    ${sectionHead("Settings", "Adjust web dashboard assumptions without changing accounting logic.")}
+    ${sectionHead("Settings")}
     <div class="grid two-even">
       <div class="panel">
-        <h3>Monthly Target</h3>
-        <p class="muted">Used by the dashboard current-month card, monthly target status, and the Monthly Return vs Target chart. Values are applied as a percentage return target.</p>
-        <form method="get" action="/" class="toolbar" style="align-items:end">
-          <input type="hidden" name="section" value="settings">
-          <input type="hidden" name="include_unrealized" value="${appState.includeUnrealized ? "1" : "0"}">
+        <h3>Monthly Target Band</h3>
+        <p class="muted">Negative months are red, positive months below the lower limit are yellow, months inside the target band are green, and months above the upper limit are blue. The upper limit is also used as the dashboard target.</p>
+        <form id="targetSettingsForm" class="toolbar" style="align-items:end">
           <label>
-            <span class="control-label">Target return %</span>
+            <span class="control-label">Lower band %</span>
+            <input name="target_floor_pct" type="number" min="0" max="100" step="0.05" value="${safe(floorPct)}" style="min-width:150px">
+          </label>
+          <label>
+            <span class="control-label">Upper band / target %</span>
             <input name="target_return_pct" type="number" min="0" max="100" step="0.05" value="${safe(targetPct)}" style="min-width:160px">
           </label>
-          <button class="primary" type="submit">Apply target</button>
+          <button class="primary" type="submit">Apply</button>
         </form>
-        <div class="footnote">Current target: ${safe(fmtPct(appState.targetReturn))}. The setting is kept in the URL so refreshed views and shared links use the same target.</div>
+        <div class="footnote">Current target band: ${safe(fmtPct(targetFloor()))}-${safe(fmtPct(targetReturn()))}. Negative is red; 0-${safe(fmtPct(targetFloor()))} is yellow; above ${safe(fmtPct(targetReturn()))} is blue.</div>
       </div>
       <div class="panel">
         <h3>Display Basis</h3>
-        <p class="muted">The realized/unrealized switch remains on Dashboard and Performance because those are the only views whose top-level metrics change meaning.</p>
+        <p class="muted">The realized/unrealized switch is used only on Dashboard where the top-level snapshot changes meaning.</p>
         <div class="segmented" data-basis-control><button type="button" data-value="1" class="${appState.includeUnrealized ? "active" : ""}">With unrealized</button><button type="button" data-value="0" class="${!appState.includeUnrealized ? "active" : ""}">Realized only</button></div>
       </div>
     </div>
@@ -1790,7 +2073,7 @@ function renderMethodology(){
   $("methodology").innerHTML = `
     ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
     <div class="grid two-even">
-      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>The dashboard current-month target uses realized month P&L plus the current unrealized snapshot. Premium-only projection fields remain in the monthly tables for reconciliation, and roll-adjusted open premium is not added again.</p></div>
+      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>The dashboard current-month target uses realized month P&L plus current-month open option net exposure. Premium-only and roll-adjusted premium fields remain available in the monthly table for reconciliation.</p></div>
       <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh checks whether the IBKR source changed. If not, it updates current prices only and keeps the existing accounting pipeline.</p></div>
     </div>
   `;
@@ -1866,12 +2149,24 @@ function bindControls(){
     renderPreservingInput(e, "#tickerSearch", (value) => { appState.tickerSearch = value; });
   });
   const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
+  const expectancyYear = $("expectancyYear"); if (expectancyYear) expectancyYear.addEventListener("change", (e) => { appState.expectancyYear = e.target.value; render(); });
+  const targetSettingsForm = $("targetSettingsForm");
+  if (targetSettingsForm) targetSettingsForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const form = new FormData(targetSettingsForm);
+    const nextTarget = Number(form.get("target_return_pct")) / 100;
+    const nextFloor = Number(form.get("target_floor_pct")) / 100;
+    if (Number.isFinite(nextTarget)) appState.targetReturn = Math.max(nextTarget, 0);
+    if (Number.isFinite(nextFloor)) appState.targetFloor = Math.max(nextFloor, 0);
+    if (appState.targetReturn < appState.targetFloor) appState.targetReturn = appState.targetFloor;
+    updateUrlState();
+    render();
+  });
 }
 const sectionRenderers = {
   dashboard: renderDashboard,
   monthly: renderMonthly,
   tickers: renderTickers,
-  positions: renderPositions,
   performance: renderPerformance,
   settings: renderSettings,
   diagnostics: renderDiagnostics,
@@ -1893,6 +2188,7 @@ function scheduleRender(){
 }
 function render(){
   const renderStarted = performance.now();
+  pendingCharts = [];
   try {
     renderHeader();
     [...$("nav").children].forEach(b => b.classList.toggle("active", b.dataset.section === appState.active));
@@ -1901,12 +2197,14 @@ function render(){
       if (target) target.innerHTML = loadingPanel();
       document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
       bindControls();
+      initCharts();
       return;
     }
     const renderer = sectionRenderers[appState.active];
     if (renderer) renderSection(appState.active, renderer);
     document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
     bindControls();
+    initCharts();
   } catch (err) {
     const target = $(appState.active);
     if (target) {
@@ -1938,7 +2236,9 @@ function initNav(){
   }));
 }
 const initialSection = new URLSearchParams(window.location.search).get("section");
-if (initialSection && sections.some(([id]) => id === initialSection)) {
+if (initialSection === "positions") {
+  appState.active = "dashboard";
+} else if (initialSection && sections.some(([id]) => id === initialSection)) {
   appState.active = initialSection;
 }
 initNav();
