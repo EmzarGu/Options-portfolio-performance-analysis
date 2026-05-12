@@ -154,6 +154,14 @@ Response:
     "projected_return_roac": 0.016,
     "projected_return_ropc": 0.0131,
     "projected_remaining_pnl": 0.0,
+    "current_unrealized_pnl": 24860.0,
+    "risk_adjusted_projected_month_pnl": 28070.0,
+    "risk_adjusted_projected_return_roac": 0.0534,
+    "risk_adjusted_projected_return_ropc": 0.0437,
+    "risk_adjusted_projected_remaining_pnl": 0.0,
+    "risk_adjusted_monthly_target_status": "beat",
+    "risk_adjusted_projection_basis": "realized_plus_current_unrealized",
+    "includes_current_unrealized": true,
     "monthly_target_status": "beat",
     "days_remaining": 18
   },
@@ -218,7 +226,9 @@ Fields:
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
 - `monthly_target.open_expiring_option_premium`: premium collected for still-open short options whose expiration date falls in the target month.
 - `monthly_target.projected_month_pnl`: `realized_month_pnl + open_expiring_option_premium`.
+- `monthly_target.risk_adjusted_projected_month_pnl`: current-month risk view, `realized_month_pnl + current_unrealized_pnl`. This is the preferred headline value for dashboard target monitoring because it reflects current option/stock unrealized exposure, including ITM put gaps and covered-call caps.
 - `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
+- `monthly_target.risk_adjusted_monthly_target_status`: target status based on `risk_adjusted_projected_return_roac`.
 - `monthly_target.*`: null for return/P&L fields if the required monthly capital denominator or source value is unavailable.
 - `open_option_short_preview`: sorted by moneyness risk, limited to 3-5 rows.
 
@@ -701,7 +711,9 @@ Nullability:
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
 - `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
 - `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`.
-- `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the target-monitoring fields iOS should prefer.
+- `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the premium-only target-monitoring fields retained for backward compatibility.
+- `risk_adjusted_projected_month_pnl` is emitted for the current month when the unrealized snapshot is available. It equals `realized_month_pnl + current_unrealized_pnl`, so it accounts for current open-option and stock unrealized exposure instead of treating open premium as clean profit.
+- `risk_adjusted_projected_return_roac`, `risk_adjusted_projected_remaining_pnl`, and `risk_adjusted_monthly_target_status` are the preferred current-month dashboard fields when present. Historical and future rows return null/unavailable for these fields because they do not have a current unrealized snapshot.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `future_months` contains future expiration months for currently open short options. Future rows use the same premium semantics, but return/target fields are `null` until a meaningful future capital denominator exists.
 - `future_months.open_option_count` counts current open short option rows/lots expiring in that month.

@@ -1044,8 +1044,7 @@ def _render_snapshot(
             st.caption(
                 "ITM put assignment cash required: "
                 f"${state.itm_put_cash_required:,.0f} for "
-                f"{state.itm_put_contracts:,} contract(s) / {state.itm_put_shares:,} shares. "
-                "Available IBKR cash is not imported yet."
+                f"{state.itm_put_contracts:,} contract(s) / {state.itm_put_shares:,} shares."
             )
         if unrealized_blocked and missing_required_price_tickers:
             st.warning(

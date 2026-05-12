@@ -1518,20 +1518,24 @@ function renderHeader(){
 }
 function renderDashboard(){
   const snap=currentSnapshot(), mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
+  const riskMonthPnl = numeric(mt.risk_adjusted_projected_month_pnl) !== null ? mt.risk_adjusted_projected_month_pnl : mt.projected_month_pnl;
+  const riskMonthReturn = numeric(mt.risk_adjusted_projected_return_roac) !== null ? mt.risk_adjusted_projected_return_roac : mt.projected_return_roac;
+  const riskRemaining = numeric(mt.risk_adjusted_projected_remaining_pnl) !== null ? mt.risk_adjusted_projected_remaining_pnl : mt.projected_remaining_pnl;
+  const riskStatus = mt.risk_adjusted_monthly_target_status || mt.monthly_target_status || mt.status || "status n/a";
+  const targetReturn = numeric(mt.target_return || data.monthly.target_return) || 0;
   $("dashboard").innerHTML = `
     <div class="grid metrics">
-      ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized plus current unrealized snapshot" : "Realized P&L only", cls(snap.ytd_total_pnl))}
+      ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized YTD + current unrealized" : "Realized P&L only", cls(snap.ytd_total_pnl))}
       ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
       ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options net ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
-    ${sectionHead("Current Month", "Projected values keep realized P&L separate from open premium.")}
+    ${sectionHead("Current Month", "Risk-adjusted view uses realized month P&L plus the current unrealized snapshot.")}
     <div class="grid metrics">
-      ${card("Projected month P&L", fmtMoney(mt.projected_month_pnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + incremental open premium ${safe(fmtMoney(mt.open_expiring_incremental_premium))}`, cls(mt.projected_month_pnl))}
-      ${card("Projected return", `${safe(fmtPct(mt.projected_return_roac))} RoAC`, `Target ${safe(fmtPct(mt.target_return || data.monthly.target_return))} - ${labelize(mt.monthly_target_status || mt.status || "status n/a")}`, cls((numeric(mt.projected_return_roac)||0) - (numeric(mt.target_return || data.monthly.target_return)||0)))}
-      ${card("Remaining to target", fmtMoney(mt.projected_remaining_pnl), "Based on projected monthly target", cls(-1*(numeric(mt.projected_remaining_pnl)||0)))}
-      ${card("Roll-adjusted open premium", fmtMoney(mt.open_expiring_roll_adjusted_premium), "Display/reconciliation only", cls(mt.open_expiring_roll_adjusted_premium))}
-      ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} contract(s) / ${safe(snap.itm_put_shares || 0)} shares; IBKR cash not imported`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
+      ${card("Risk-adjusted month P&L", fmtMoney(riskMonthPnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + current unrealized ${safe(fmtMoney(mt.current_unrealized_pnl ?? snap.current_unrealized_pnl))}`, cls(riskMonthPnl))}
+      ${card("Risk-adjusted return", `${safe(fmtPct(riskMonthReturn))} RoAC`, `Target ${safe(fmtPct(targetReturn))} - ${labelize(riskStatus)}`, cls((numeric(riskMonthReturn)||0) - targetReturn))}
+      ${card("Remaining to target", fmtMoney(riskRemaining), "Based on risk-adjusted monthly target", cls(-1*(numeric(riskRemaining)||0)))}
+      ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} contract(s) / ${safe(snap.itm_put_shares || 0)} shares`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
     </div>
     ${sectionHead("Open Shorts Monitor", `${shorts.length} open shorts after filters.`, "")}
     ${openShortToolbar()}
@@ -1786,7 +1790,7 @@ function renderMethodology(){
   $("methodology").innerHTML = `
     ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
     <div class="grid two-even">
-      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>Realized P&L stays separate from projected values. Open expiring incremental premium is additive. Roll-adjusted open premium is displayed for reconciliation and is not added again.</p></div>
+      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>The dashboard current-month target uses realized month P&L plus the current unrealized snapshot. Premium-only projection fields remain in the monthly tables for reconciliation, and roll-adjusted open premium is not added again.</p></div>
       <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh checks whether the IBKR source changed. If not, it updates current prices only and keeps the existing accounting pipeline.</p></div>
     </div>
   `;

@@ -370,6 +370,39 @@ def _monthly_projection_values(
         projected_remaining_pnl = max(target_pnl - projected_month_pnl, 0.0)
     includes_open_premium = bool((open_expiring_incremental_premium or 0.0) > 0.0)
 
+    current_unrealized_pnl = None
+    risk_adjusted_projected_month_pnl = None
+    risk_adjusted_projected_return_roac = None
+    risk_adjusted_projected_return_ropc = None
+    risk_adjusted_projected_remaining_pnl = None
+    risk_adjusted_monthly_target_status = "unavailable"
+    risk_adjusted_projection_basis = "unavailable"
+    includes_current_unrealized = False
+    as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
+    is_current_month = (
+        month_end is not None
+        and not pd.isna(as_of_ts)
+        and month_end.to_period("M") == as_of_ts.to_period("M")
+    )
+    if is_current_month and not bool(getattr(state, "unrealized_blocked", False)):
+        current_unrealized_pnl = _number(getattr(state, "total_unreal", None))
+        if realized_month_pnl is not None and current_unrealized_pnl is not None:
+            risk_adjusted_projected_month_pnl = realized_month_pnl + current_unrealized_pnl
+            includes_current_unrealized = True
+            risk_adjusted_projection_basis = "realized_plus_current_unrealized"
+            if avg_capital not in (None, 0):
+                risk_adjusted_projected_return_roac = risk_adjusted_projected_month_pnl / avg_capital
+            if peak_capital not in (None, 0):
+                risk_adjusted_projected_return_ropc = risk_adjusted_projected_month_pnl / peak_capital
+            if target_pnl is not None:
+                risk_adjusted_projected_remaining_pnl = max(target_pnl - risk_adjusted_projected_month_pnl, 0.0)
+            risk_adjusted_monthly_target_status = _monthly_target_status(
+                risk_adjusted_projected_return_roac,
+                target_return,
+                month_end,
+                getattr(state, "as_of", None),
+            )
+
     return {
         "realized_month_pnl": realized_month_pnl,
         "open_expiring_option_premium": open_expiring_option_premium,
@@ -382,6 +415,14 @@ def _monthly_projection_values(
         "projected_return_ropc": projected_return_ropc,
         "target_pnl": target_pnl,
         "projected_remaining_pnl": projected_remaining_pnl,
+        "current_unrealized_pnl": current_unrealized_pnl,
+        "risk_adjusted_projected_month_pnl": risk_adjusted_projected_month_pnl,
+        "risk_adjusted_projected_return_roac": risk_adjusted_projected_return_roac,
+        "risk_adjusted_projected_return_ropc": risk_adjusted_projected_return_ropc,
+        "risk_adjusted_projected_remaining_pnl": risk_adjusted_projected_remaining_pnl,
+        "risk_adjusted_monthly_target_status": risk_adjusted_monthly_target_status,
+        "risk_adjusted_projection_basis": risk_adjusted_projection_basis,
+        "includes_current_unrealized": includes_current_unrealized,
     }
 
 
@@ -421,6 +462,14 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
         "projected_return_roac": json_safe(projection["projected_return_roac"]),
         "projected_return_ropc": json_safe(projection["projected_return_ropc"]),
         "projected_remaining_pnl": json_safe(projection["projected_remaining_pnl"]),
+        "current_unrealized_pnl": json_safe(projection["current_unrealized_pnl"]),
+        "risk_adjusted_projected_month_pnl": json_safe(projection["risk_adjusted_projected_month_pnl"]),
+        "risk_adjusted_projected_return_roac": json_safe(projection["risk_adjusted_projected_return_roac"]),
+        "risk_adjusted_projected_return_ropc": json_safe(projection["risk_adjusted_projected_return_ropc"]),
+        "risk_adjusted_projected_remaining_pnl": json_safe(projection["risk_adjusted_projected_remaining_pnl"]),
+        "risk_adjusted_monthly_target_status": projection["risk_adjusted_monthly_target_status"],
+        "risk_adjusted_projection_basis": projection["risk_adjusted_projection_basis"],
+        "includes_current_unrealized": bool(projection["includes_current_unrealized"]),
         "monthly_target_status": _monthly_target_status(
             projection["projected_return_roac"],
             target_return,
@@ -517,6 +566,16 @@ def _mobile_month_row(
         out["projected_return_ropc"] = json_safe(projection["projected_return_ropc"])
         out["target_pnl"] = json_safe(projection["target_pnl"])
         out["projected_remaining_pnl"] = json_safe(projection["projected_remaining_pnl"])
+        out["current_unrealized_pnl"] = json_safe(projection["current_unrealized_pnl"])
+        out["risk_adjusted_projected_month_pnl"] = json_safe(projection["risk_adjusted_projected_month_pnl"])
+        out["risk_adjusted_projected_return_roac"] = json_safe(projection["risk_adjusted_projected_return_roac"])
+        out["risk_adjusted_projected_return_ropc"] = json_safe(projection["risk_adjusted_projected_return_ropc"])
+        out["risk_adjusted_projected_remaining_pnl"] = json_safe(
+            projection["risk_adjusted_projected_remaining_pnl"]
+        )
+        out["risk_adjusted_monthly_target_status"] = projection["risk_adjusted_monthly_target_status"]
+        out["risk_adjusted_projection_basis"] = projection["risk_adjusted_projection_basis"]
+        out["includes_current_unrealized"] = bool(projection["includes_current_unrealized"])
         out["monthly_target_status"] = _monthly_target_status(
             projection["projected_return_roac"],
             target_return,
@@ -628,6 +687,14 @@ def build_current_month_performance(
             "target_pnl": None,
             "remaining_pnl": None,
             "projected_remaining_pnl": None,
+            "current_unrealized_pnl": None,
+            "risk_adjusted_projected_month_pnl": None,
+            "risk_adjusted_projected_return_roac": None,
+            "risk_adjusted_projected_return_ropc": None,
+            "risk_adjusted_projected_remaining_pnl": None,
+            "risk_adjusted_monthly_target_status": "unavailable",
+            "risk_adjusted_projection_basis": "unavailable",
+            "includes_current_unrealized": False,
             "avg_capital": None,
             "peak_capital": None,
             "status": "unavailable",
@@ -655,6 +722,14 @@ def build_current_month_performance(
         "target_pnl": month_row["target_pnl"],
         "remaining_pnl": month_row["remaining_pnl"],
         "projected_remaining_pnl": month_row["projected_remaining_pnl"],
+        "current_unrealized_pnl": month_row["current_unrealized_pnl"],
+        "risk_adjusted_projected_month_pnl": month_row["risk_adjusted_projected_month_pnl"],
+        "risk_adjusted_projected_return_roac": month_row["risk_adjusted_projected_return_roac"],
+        "risk_adjusted_projected_return_ropc": month_row["risk_adjusted_projected_return_ropc"],
+        "risk_adjusted_projected_remaining_pnl": month_row["risk_adjusted_projected_remaining_pnl"],
+        "risk_adjusted_monthly_target_status": month_row["risk_adjusted_monthly_target_status"],
+        "risk_adjusted_projection_basis": month_row["risk_adjusted_projection_basis"],
+        "includes_current_unrealized": month_row["includes_current_unrealized"],
         "avg_capital": month_row["avg_capital"],
         "peak_capital": month_row["peak_capital"],
         "status": month_row["status"],
