@@ -71,7 +71,7 @@ Cloud Build context small via `.gcloudignore` and `.dockerignore`. For web UI
 iteration, prefer local browser testing and deploy to Cloud Run only at stable
 checkpoints.
 
-The production build trigger should use the repository `cloudbuild.yaml`. That
-build config creates one shared image and deploys it to both `options-roi-mobile-api`
-and `options-roi-web`, so a `main` deployment cannot accidentally leave the web
-dashboard on an older backend commit.
+The production build trigger uses an inline config that mirrors the repository
+`cloudbuild.yaml`. It creates one shared image and deploys it to both
+`options-roi-mobile-api` and `options-roi-web`, so a `main` deployment cannot
+accidentally leave the web dashboard on an older backend commit.

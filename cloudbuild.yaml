@@ -25,7 +25,7 @@ steps:
       - push
       - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
 
-  - id: Deploy mobile API
+  - id: DeployMobileAPI
     name: gcr.io/cloud-builders/gcloud
     args:
       - run
@@ -38,7 +38,7 @@ steps:
       - --region=${_DEPLOY_REGION}
       - --quiet
 
-  - id: Deploy web dashboard
+  - id: DeployWebDashboard
     name: gcr.io/cloud-builders/gcloud
     args:
       - run

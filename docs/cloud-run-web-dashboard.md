@@ -111,17 +111,17 @@ web_dashboard_smoke ok source=ibkr_flex rows=<n> actionable_issues=0
 
 ## Deployment
 
-`cloudbuild.yaml` builds the shared backend image once and deploys the same image
-to both production services:
+`cloudbuild.yaml` documents the production build shape: build the shared backend
+image once and deploy the same image to both production services:
 
 - `options-roi-mobile-api`, using the Dockerfile default command
   `uvicorn mobile_api:app`;
 - `options-roi-web`, preserving its Cloud Run command override
   `uvicorn web_dashboard:app`.
 
-The Cloud Build trigger should point to `cloudbuild.yaml` on `main`. This keeps
-mobile and web on the same backend commit and avoids the earlier manual web
-update step.
+The Cloud Build trigger uses an inline config that mirrors this file and runs on
+`main`. This keeps mobile and web on the same backend commit and avoids the
+earlier manual web update step.
 
 ## Rollback
 
