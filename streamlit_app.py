@@ -1014,7 +1014,16 @@ def _render_snapshot(
             unrealized_snapshot_value = (
                 "incomplete"
                 if unrealized_blocked
-                else f"${state.total_unreal:,.0f} (opt ${state.option_unreal:,.0f} / stk ${state.stock_unreal:,.0f})"
+                else (
+                    f"${state.total_unreal:,.0f} "
+                    f"(opt ${state.option_unreal:,.0f} / stk ${state.stock_unreal:,.0f}"
+                    + (
+                        f" / ITM put gap ${state.put_assignment_unreal:,.0f}"
+                        if getattr(state, "put_assignment_unreal", 0.0)
+                        else ""
+                    )
+                    + ")"
+                )
             )
             metric_card(
                 CURRENT_UNREALIZED_SNAPSHOT_LABEL,
@@ -1029,6 +1038,13 @@ def _render_snapshot(
             metric_card(
                 UNREALIZED_ADJUSTED_TWR_LABEL if include_unrealized else "YTD Annualized TWR",
                 unrealized_adjusted_twr_value,
+            )
+        if not unrealized_blocked and getattr(state, "itm_put_cash_required", 0.0):
+            st.caption(
+                "ITM put assignment cash required: "
+                f"${state.itm_put_cash_required:,.0f} for "
+                f"{state.itm_put_contracts:,} contract(s) / {state.itm_put_shares:,} shares. "
+                "Available IBKR cash is not imported yet."
             )
         if unrealized_blocked and missing_required_price_tickers:
             st.warning(

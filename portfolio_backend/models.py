@@ -117,6 +117,11 @@ class PipelineState:
     total_unreal: float
     option_unreal: float
     stock_unreal: float
+    put_assignment_unreal: float
+    itm_put_cash_required: float
+    itm_put_market_value: float
+    itm_put_contracts: int
+    itm_put_shares: int
     advanced_unreal: pd.Series
     yearly: pd.DataFrame
     yearly_with_unreal: pd.DataFrame

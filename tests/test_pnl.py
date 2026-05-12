@@ -423,8 +423,10 @@ def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
     assert len(state["inv_df"]) == 2
     assert state["cumulative_realized"] == pytest.approx(550.0)
     assert state["total_unreal"] == pytest.approx(1300.0)
-    assert state["stock_unreal"] == pytest.approx(1000.0)
-    assert state["option_unreal"] == pytest.approx(300.0)
+    assert state["stock_unreal"] == pytest.approx(2000.0)
+    assert state["option_unreal"] == pytest.approx(-700.0)
+    assert state["put_assignment_unreal"] == pytest.approx(-1000.0)
+    assert state["itm_put_cash_required"] == pytest.approx(10000.0)
     assert state["grand_total"] == pytest.approx(1850.0)
 
     ytd_row = state["yearly_with_unreal"].loc[state["yearly_with_unreal"]["year"] == 2026].iloc[0]
@@ -531,6 +533,32 @@ def test_unrealized_short_put_adds_stock_component_when_below_strike():
     assert round(total_unreal, 2) == -100.0
     assert round(float(per_ticker_unreal["DEF"]), 2) == -100.0
     assert inv_df.empty is False
+
+
+def test_dashboard_unrealized_snapshot_classifies_itm_put_gap_as_option_exposure():
+    open_put = OptionLot(
+        ticker="DEF",
+        otype="Put",
+        strike=15.0,
+        qty=1,
+        open_date=pd.Timestamp("2024-01-01"),
+        expiration=pd.Timestamp("2024-03-01"),
+        open_price=2.0,
+        comment="",
+        assigned=False,
+    )
+
+    snapshot = build_dashboard_unrealized_snapshot([open_put], [], {"DEF": 12.0})
+
+    # Premium 200 plus assignment gap (12-15)*100 = -300, net -100.
+    assert snapshot["total_unreal"] == pytest.approx(-100.0)
+    assert snapshot["option_unreal"] == pytest.approx(-100.0)
+    assert snapshot["stock_unreal"] == pytest.approx(0.0)
+    assert snapshot["put_assignment_unreal"] == pytest.approx(-300.0)
+    assert snapshot["itm_put_cash_required"] == pytest.approx(1500.0)
+    assert snapshot["itm_put_market_value"] == pytest.approx(1200.0)
+    assert snapshot["itm_put_contracts"] == 1
+    assert snapshot["itm_put_shares"] == 100
 
 
 def test_covered_call_caps_unrealized_stock_pnl():
@@ -1222,8 +1250,10 @@ def test_dashboard_unrealized_mixed_portfolio_characterization():
     )
 
     assert snapshot["total_unreal"] == pytest.approx(750.0)
-    assert snapshot["stock_unreal"] == pytest.approx(500.0)
-    assert snapshot["option_unreal"] == pytest.approx(250.0)
+    assert snapshot["stock_unreal"] == pytest.approx(1000.0)
+    assert snapshot["option_unreal"] == pytest.approx(-250.0)
+    assert snapshot["put_assignment_unreal"] == pytest.approx(-500.0)
+    assert snapshot["itm_put_cash_required"] == pytest.approx(5000.0)
     assert float(snapshot["per_ticker_unreal"]["AAA"]) == pytest.approx(1000.0)
     assert float(snapshot["per_ticker_unreal"]["BBB"]) == pytest.approx(150.0)
     assert float(snapshot["per_ticker_unreal"]["CCC"]) == pytest.approx(-400.0)
@@ -1794,10 +1824,15 @@ def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
         "open_options",
         "live_prices",
         "inv_df",
-        "total_unreal",
-        "option_unreal",
-        "stock_unreal",
-        "advanced_unreal",
+            "total_unreal",
+            "option_unreal",
+            "stock_unreal",
+            "put_assignment_unreal",
+            "itm_put_cash_required",
+            "itm_put_market_value",
+            "itm_put_contracts",
+            "itm_put_shares",
+            "advanced_unreal",
         "yearly",
         "yearly_with_unreal",
         "per_ticker",
@@ -1971,6 +2006,11 @@ def _make_live_overlay_base_state() -> PipelineState:
         total_unreal=-5000.0,
         option_unreal=0.0,
         stock_unreal=-5000.0,
+        put_assignment_unreal=0.0,
+        itm_put_cash_required=0.0,
+        itm_put_market_value=0.0,
+        itm_put_contracts=0,
+        itm_put_shares=0,
         advanced_unreal=pd.Series({"AAA": -5000.0}),
         yearly=yearly.copy(),
         yearly_with_unreal=yearly.copy(),

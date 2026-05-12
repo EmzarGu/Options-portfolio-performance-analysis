@@ -270,6 +270,11 @@ def _mobile_state():
         total_unreal=250.0,
         option_unreal=50.0,
         stock_unreal=200.0,
+        put_assignment_unreal=0.0,
+        itm_put_cash_required=0.0,
+        itm_put_market_value=0.0,
+        itm_put_contracts=0,
+        itm_put_shares=0,
         unrealized_blocked=False,
         capital_history_affected_years=[],
         capital_history_incomplete=True,
@@ -608,6 +613,12 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "current_unrealized_pnl": 250.0,
         "current_option_unrealized_pnl": 50.0,
         "current_stock_unrealized_pnl": 200.0,
+        "current_put_assignment_unrealized_pnl": 0.0,
+        "itm_put_cash_required": 2500.0,
+        "itm_put_market_value": 0.0,
+        "itm_put_contracts": 1,
+        "itm_put_shares": 100,
+        "available_cash": None,
         "ytd_annualized_twr": 0.18,
         "unrealized_adjusted": True,
         "unrealized_blocked": False,
@@ -691,6 +702,7 @@ def test_mobile_dashboard_blocks_unrealized_snapshot_when_required_prices_missin
     assert dashboard["snapshot"]["current_unrealized_pnl"] is None
     assert dashboard["snapshot"]["current_option_unrealized_pnl"] is None
     assert dashboard["snapshot"]["current_stock_unrealized_pnl"] is None
+    assert dashboard["snapshot"]["current_put_assignment_unrealized_pnl"] is None
     assert dashboard["snapshot"]["ytd_annualized_twr"] is None
     assert dashboard["snapshot"]["unrealized_blocked"] is True
 

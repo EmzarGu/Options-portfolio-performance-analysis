@@ -121,6 +121,12 @@ Response:
     "current_unrealized_pnl": 24860.0,
     "current_option_unrealized_pnl": 9200.0,
     "current_stock_unrealized_pnl": 15660.0,
+    "current_put_assignment_unrealized_pnl": -1800.0,
+    "itm_put_cash_required": 18000.0,
+    "itm_put_market_value": 16200.0,
+    "itm_put_contracts": 2,
+    "itm_put_shares": 200,
+    "available_cash": null,
     "ytd_annualized_twr": 0.184,
     "unrealized_adjusted": true,
     "unrealized_blocked": false
@@ -200,7 +206,11 @@ Response:
 Fields:
 
 - `snapshot.ytd_total_pnl`: null if `include_unrealized=true` and unrealized snapshot is blocked.
-- `snapshot.current_unrealized_pnl`, `current_option_unrealized_pnl`, `current_stock_unrealized_pnl`: null if blocked by missing required prices.
+- `snapshot.current_unrealized_pnl`, `current_option_unrealized_pnl`, `current_stock_unrealized_pnl`, `current_put_assignment_unrealized_pnl`: null if blocked by missing required prices.
+- `snapshot.current_option_unrealized_pnl`: includes open short option premium and the assignment gap for open ITM puts. The assignment gap is `(current_price - strike) * contracts * 100`, so it is negative when assignment would create an immediate stock loss.
+- `snapshot.current_stock_unrealized_pnl`: actual held-stock unrealized P&L only. Open ITM put assignment exposure is excluded because the shares are not owned yet.
+- `snapshot.itm_put_cash_required`: cash required to take assignment of currently ITM open puts at strike. `itm_put_market_value` is the current market value of those shares, and the difference is represented in `current_put_assignment_unrealized_pnl`.
+- `snapshot.available_cash`: reserved for an IBKR available-cash import. It is `null` until the import stores account cash balances.
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
@@ -438,7 +448,7 @@ Nullability:
 - Inventory and option `id` fields are mandatory and must follow the stable row ID rules above.
 - Inventory `current_price` and `unrealized_pnl` are `null` when price is missing.
 - `covered_strike` is `null` when no covered call maps to the stock lot.
-- `source` should be a backend enum. Current values from `inv_df` include `stock_lot` and `put_gap`; only these are currently shown in Streamlit.
+- `source` should be a backend enum. Current values from `inv_df` include `stock_lot` and `put_gap`. `put_gap` is a synthetic ITM put assignment-risk row and must not be treated as owned stock.
 
 Backend source today:
 

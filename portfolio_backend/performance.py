@@ -459,7 +459,14 @@ def build_dashboard_unrealized_snapshot(
     ending_inventory: List[OpenLot],
     live_prices: Dict[str, float],
 ) -> Dict[str, object]:
-    """Return the current dashboard unrealized snapshot without changing its legacy behavior."""
+    """Return the current dashboard unrealized snapshot.
+
+    Open short put assignment exposure is part of option unrealized P&L. If an
+    open put is in the money, the assignment gap is recognized as:
+    ``(current_price - strike) * contracts * 100``. The synthetic inventory row
+    remains in ``inv_df`` for position/risk display, but it is excluded from the
+    stock-unrealized split because those shares are not yet owned.
+    """
     required_price_tickers = {lot.ticker for lot in ending_inventory}
     required_price_tickers.update(lot.ticker for lot in open_option_lots if lot.otype == "Put")
     missing_required_price_tickers = sorted(
@@ -472,7 +479,42 @@ def build_dashboard_unrealized_snapshot(
         ending_inventory,
         live_prices,
     )
-    stock_unreal = float(inv_df["unrealized_pnl"].sum()) if not inv_df.empty else 0.0
+    if not inv_df.empty and "source" in inv_df.columns:
+        put_gap_mask = inv_df["source"].eq("put_gap")
+        stock_rows = inv_df.loc[~put_gap_mask]
+        put_gap_rows = inv_df.loc[put_gap_mask]
+    else:
+        stock_rows = inv_df
+        put_gap_rows = pd.DataFrame()
+
+    stock_unreal = float(stock_rows["unrealized_pnl"].sum()) if not stock_rows.empty else 0.0
+    put_assignment_unreal = float(put_gap_rows["unrealized_pnl"].sum()) if not put_gap_rows.empty else 0.0
+    itm_put_cash_required = (
+        float(
+            (
+                pd.to_numeric(put_gap_rows["cost_per_share"], errors="coerce")
+                * pd.to_numeric(put_gap_rows["shares"], errors="coerce")
+            ).sum()
+        )
+        if not put_gap_rows.empty and {"cost_per_share", "shares"}.issubset(put_gap_rows.columns)
+        else 0.0
+    )
+    itm_put_market_value = (
+        float(
+            (
+                pd.to_numeric(put_gap_rows["current_price"], errors="coerce")
+                * pd.to_numeric(put_gap_rows["shares"], errors="coerce")
+            ).sum()
+        )
+        if not put_gap_rows.empty and {"current_price", "shares"}.issubset(put_gap_rows.columns)
+        else 0.0
+    )
+    itm_put_shares = (
+        int(pd.to_numeric(put_gap_rows["shares"], errors="coerce").fillna(0).sum())
+        if not put_gap_rows.empty and "shares" in put_gap_rows.columns
+        else 0
+    )
+    itm_put_contracts = int(round(itm_put_shares / CONTRACT_MULTIPLIER)) if itm_put_shares else 0
     option_unreal = total_unreal - stock_unreal
     return {
         "inv_df": inv_df,
@@ -480,6 +522,11 @@ def build_dashboard_unrealized_snapshot(
         "total_unreal": total_unreal,
         "stock_unreal": stock_unreal,
         "option_unreal": option_unreal,
+        "put_assignment_unreal": put_assignment_unreal,
+        "itm_put_cash_required": itm_put_cash_required,
+        "itm_put_market_value": itm_put_market_value,
+        "itm_put_contracts": itm_put_contracts,
+        "itm_put_shares": itm_put_shares,
         "unrealized_blocked": bool(missing_required_price_tickers),
         "missing_required_price_tickers": missing_required_price_tickers,
     }

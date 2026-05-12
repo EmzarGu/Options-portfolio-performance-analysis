@@ -196,6 +196,11 @@ def build_base_pipeline(
     total_unreal = 0.0
     stock_unreal = 0.0
     option_unreal = 0.0
+    put_assignment_unreal = 0.0
+    itm_put_cash_required = 0.0
+    itm_put_market_value = 0.0
+    itm_put_contracts = 0
+    itm_put_shares = 0
     missing_required_price_tickers: List[str] = []
     unrealized_blocked = False
     monthly_returns_unrealized_adjusted = build_dashboard_unrealized_adjusted_return_series(
@@ -338,6 +343,11 @@ def build_base_pipeline(
         total_unreal=total_unreal,
         option_unreal=option_unreal,
         stock_unreal=stock_unreal,
+        put_assignment_unreal=put_assignment_unreal,
+        itm_put_cash_required=itm_put_cash_required,
+        itm_put_market_value=itm_put_market_value,
+        itm_put_contracts=itm_put_contracts,
+        itm_put_shares=itm_put_shares,
         advanced_unreal=per_ticker_unreal,
         yearly=yearly,
         yearly_with_unreal=yearly_with_unreal,
@@ -485,6 +495,11 @@ def apply_live_price_overlay(
     total_unreal = unrealized_snapshot["total_unreal"]
     stock_unreal = unrealized_snapshot["stock_unreal"]
     option_unreal = unrealized_snapshot["option_unreal"]
+    put_assignment_unreal = unrealized_snapshot["put_assignment_unreal"]
+    itm_put_cash_required = unrealized_snapshot["itm_put_cash_required"]
+    itm_put_market_value = unrealized_snapshot["itm_put_market_value"]
+    itm_put_contracts = unrealized_snapshot["itm_put_contracts"]
+    itm_put_shares = unrealized_snapshot["itm_put_shares"]
     missing_required_price_tickers = unrealized_snapshot["missing_required_price_tickers"]
     per_ticker_totals = build_per_ticker_totals(base_state.per_ticker, per_ticker_unreal)
     grand_total = base_state.cumulative_realized + total_unreal
@@ -509,6 +524,11 @@ def apply_live_price_overlay(
         total_unreal=total_unreal,
         option_unreal=option_unreal,
         stock_unreal=stock_unreal,
+        put_assignment_unreal=put_assignment_unreal,
+        itm_put_cash_required=itm_put_cash_required,
+        itm_put_market_value=itm_put_market_value,
+        itm_put_contracts=itm_put_contracts,
+        itm_put_shares=itm_put_shares,
         advanced_unreal=per_ticker_unreal,
         issues=issues,
         price_errors=price_errors,

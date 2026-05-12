@@ -1522,7 +1522,7 @@ function renderDashboard(){
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized plus current unrealized snapshot" : "Realized P&L only", cls(snap.ytd_total_pnl))}
       ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
-      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
+      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` / ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))}` : ""}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
     ${sectionHead("Current Month", "Projected values keep realized P&L separate from open premium.")}
@@ -1531,6 +1531,7 @@ function renderDashboard(){
       ${card("Projected return", `${safe(fmtPct(mt.projected_return_roac))} RoAC`, `Target ${safe(fmtPct(mt.target_return || data.monthly.target_return))} - ${labelize(mt.monthly_target_status || mt.status || "status n/a")}`, cls((numeric(mt.projected_return_roac)||0) - (numeric(mt.target_return || data.monthly.target_return)||0)))}
       ${card("Remaining to target", fmtMoney(mt.projected_remaining_pnl), "Based on projected monthly target", cls(-1*(numeric(mt.projected_remaining_pnl)||0)))}
       ${card("Roll-adjusted open premium", fmtMoney(mt.open_expiring_roll_adjusted_premium), "Display/reconciliation only", cls(mt.open_expiring_roll_adjusted_premium))}
+      ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} contract(s) / ${safe(snap.itm_put_shares || 0)} shares; IBKR cash not imported`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
     </div>
     ${sectionHead("Open Shorts Monitor", `${shorts.length} open shorts after filters.`, "")}
     ${openShortToolbar()}

@@ -16,6 +16,13 @@ The page shell is served immediately. The heavier portfolio payload is loaded by
 the browser from `/api/dashboard`, so a cold Cloud Run instance or slow Firestore
 read no longer leaves the browser waiting for the first paint.
 
+The dashboard uses the shared mobile snapshot semantics for unrealized P&L:
+open ITM put assignment gaps are included in option unrealized exposure, held
+stock unrealized includes only shares currently owned, and the Dashboard current
+month block shows cash required to take assignment of all currently ITM puts.
+IBKR available cash is not displayed until the import explicitly stores account
+cash balances.
+
 ## Required Runtime Config
 
 Environment variables:

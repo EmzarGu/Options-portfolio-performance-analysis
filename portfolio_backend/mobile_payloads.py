@@ -144,6 +144,44 @@ def _current_year_row(df: pd.DataFrame, as_of_year: int) -> Dict[str, Any]:
     return rows.iloc[0].to_dict()
 
 
+def _put_assignment_risk_from_inventory(state) -> Dict[str, Any]:
+    inventory = getattr(state, "inv_df", pd.DataFrame())
+    if inventory is None or inventory.empty or "source" not in inventory.columns:
+        return {
+            "unrealized_pnl": _number(getattr(state, "put_assignment_unreal", None)) or 0.0,
+            "cash_required": _number(getattr(state, "itm_put_cash_required", None)) or 0.0,
+            "market_value": _number(getattr(state, "itm_put_market_value", None)) or 0.0,
+            "contracts": int(_number(getattr(state, "itm_put_contracts", None)) or 0),
+            "shares": int(_number(getattr(state, "itm_put_shares", None)) or 0),
+            "available_cash": _number(getattr(state, "available_cash", None)),
+        }
+
+    put_rows = inventory.loc[inventory["source"].eq("put_gap")].copy()
+    if put_rows.empty:
+        return {
+            "unrealized_pnl": _number(getattr(state, "put_assignment_unreal", None)) or 0.0,
+            "cash_required": _number(getattr(state, "itm_put_cash_required", None)) or 0.0,
+            "market_value": _number(getattr(state, "itm_put_market_value", None)) or 0.0,
+            "contracts": int(_number(getattr(state, "itm_put_contracts", None)) or 0),
+            "shares": int(_number(getattr(state, "itm_put_shares", None)) or 0),
+            "available_cash": _number(getattr(state, "available_cash", None)),
+        }
+
+    shares = pd.to_numeric(put_rows.get("shares"), errors="coerce").fillna(0.0)
+    strike = pd.to_numeric(put_rows.get("cost_per_share"), errors="coerce").fillna(0.0)
+    current = pd.to_numeric(put_rows.get("current_price"), errors="coerce").fillna(0.0)
+    unreal = pd.to_numeric(put_rows.get("unrealized_pnl"), errors="coerce").fillna(0.0)
+    total_shares = int(shares.sum())
+    return {
+        "unrealized_pnl": float(unreal.sum()),
+        "cash_required": float((shares * strike).sum()),
+        "market_value": float((shares * current).sum()),
+        "contracts": int(round(total_shares / CONTRACT_MULTIPLIER)) if total_shares else 0,
+        "shares": total_shares,
+        "available_cash": _number(getattr(state, "available_cash", None)),
+    }
+
+
 def build_mobile_snapshot(state, include_unrealized: bool) -> Dict[str, Any]:
     as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
     as_of_year = int(as_of_ts.year) if not pd.isna(as_of_ts) else None
@@ -154,17 +192,20 @@ def build_mobile_snapshot(state, include_unrealized: bool) -> Dict[str, Any]:
     total_unreal = _number(getattr(state, "total_unreal", None))
     option_unreal = _number(getattr(state, "option_unreal", None))
     stock_unreal = _number(getattr(state, "stock_unreal", None))
+    put_assignment_risk = _put_assignment_risk_from_inventory(state)
 
     if include_unrealized and unrealized_blocked:
         ytd_total = None
         current_unreal = None
         current_option_unreal = None
         current_stock_unreal = None
+        current_put_assignment_unreal = None
     else:
         ytd_total = realized_total + (total_unreal if include_unrealized and total_unreal is not None else 0.0)
         current_unreal = total_unreal
         current_option_unreal = option_unreal
         current_stock_unreal = stock_unreal
+        current_put_assignment_unreal = put_assignment_risk["unrealized_pnl"]
 
     twr_field = "annualized_return_twr_unrealized_adjusted" if include_unrealized else "annualized_return_twr"
     ytd_twr = _number(ytd_row.get(twr_field))
@@ -181,6 +222,12 @@ def build_mobile_snapshot(state, include_unrealized: bool) -> Dict[str, Any]:
         "current_unrealized_pnl": json_safe(current_unreal),
         "current_option_unrealized_pnl": json_safe(current_option_unreal),
         "current_stock_unrealized_pnl": json_safe(current_stock_unreal),
+        "current_put_assignment_unrealized_pnl": json_safe(current_put_assignment_unreal),
+        "itm_put_cash_required": json_safe(put_assignment_risk["cash_required"]),
+        "itm_put_market_value": json_safe(put_assignment_risk["market_value"]),
+        "itm_put_contracts": json_safe(put_assignment_risk["contracts"]),
+        "itm_put_shares": json_safe(put_assignment_risk["shares"]),
+        "available_cash": json_safe(put_assignment_risk["available_cash"]),
         "ytd_annualized_twr": json_safe(ytd_twr),
         "unrealized_adjusted": bool(include_unrealized),
         "unrealized_blocked": unrealized_blocked,
