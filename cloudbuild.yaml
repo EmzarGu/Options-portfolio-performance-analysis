@@ -1,0 +1,59 @@
+substitutions:
+  _AR_HOSTNAME: europe-west6-docker.pkg.dev
+  _AR_PROJECT_ID: options-performance-dashboard
+  _AR_REPOSITORY: cloud-run-source-deploy
+  _DEPLOY_REGION: europe-west6
+  _IMAGE_NAME: options-roi-mobile-api
+  _MOBILE_SERVICE_NAME: options-roi-mobile-api
+  _WEB_SERVICE_NAME: options-roi-web
+
+steps:
+  - id: Build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --no-cache
+      - -t
+      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+      - .
+      - -f
+      - Dockerfile
+
+  - id: Push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+
+  - id: Deploy mobile API
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - services
+      - update
+      - ${_MOBILE_SERVICE_NAME}
+      - --platform=managed
+      - --image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=${COMMIT_SHA},gcb-build-id=${BUILD_ID}
+      - --region=${_DEPLOY_REGION}
+      - --quiet
+
+  - id: Deploy web dashboard
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - services
+      - update
+      - ${_WEB_SERVICE_NAME}
+      - --platform=managed
+      - --image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=${COMMIT_SHA},gcb-build-id=${BUILD_ID}
+      - --region=${_DEPLOY_REGION}
+      - --quiet
+
+images:
+  - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE

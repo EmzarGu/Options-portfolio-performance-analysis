@@ -4,7 +4,9 @@ You are a coding agent working inside this repository. Follow these rules at all
 
 ## Behavior
 - Think step-by-step and outline your plan before making changes.
-- Keep edits minimal unless asked otherwise.
+- Keep edits minimal unless asked otherwise; when the user explicitly asks for
+  cleanup/refactoring, make the structural changes needed to leave the system in
+  a coherent state.
 - Use multi-file edits when needed and keep the project consistent.
 
 ## Code Editing
@@ -19,8 +21,16 @@ You are a coding agent working inside this repository. Follow these rules at all
 - Never ignore test failures.
 
 ## Safety & Review
-- Ask for confirmation before large refactors or dependency additions.
-- Never delete files unless explicitly instructed.
+- Ask for confirmation before large refactors or dependency additions unless the
+  user has already requested autonomous cleanup/refactoring.
+- Never delete files unless explicitly instructed or they are verified stale
+  generated/duplicate artifacts outside the canonical repos.
+
+## Canonical Repositories
+- Backend, Streamlit backup app, mobile API, and web dashboard:
+  `/Users/emzar/Options-portfolio-performance-analysis`
+- iOS app:
+  `/Users/emzar/Documents/Codex Projects/Codex Investment Workflows/Option Analysis App/ios/OptionsMonitor-iOS`
 
 ## Documentation
 - Add docstrings/comments to new functions.

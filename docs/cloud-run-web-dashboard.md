@@ -16,6 +16,16 @@ The page shell is served immediately. The heavier portfolio payload is loaded by
 the browser from `/api/dashboard`, so a cold Cloud Run instance or slow Firestore
 read no longer leaves the browser waiting for the first paint.
 
+The server is split into three layers:
+
+- `web_dashboard.py`: FastAPI routes, authentication, session cookies, and the
+  short in-process dashboard payload cache.
+- `portfolio_backend/web_dashboard_payloads.py`: IBKR-backed web JSON payload
+  assembly, including tables, chart data, mobile DTO reuse, and reconciliation
+  notes.
+- `portfolio_backend/web_dashboard_templates.py`: browser HTML, CSS, and
+  JavaScript assets.
+
 The dashboard uses the shared mobile snapshot semantics for unrealized P&L:
 open ITM put assignment gaps are included in option unrealized exposure, held
 stock unrealized includes only shares currently owned, and the Dashboard current
@@ -98,6 +108,20 @@ Expected result:
 ```text
 web_dashboard_smoke ok source=ibkr_flex rows=<n> actionable_issues=0
 ```
+
+## Deployment
+
+`cloudbuild.yaml` builds the shared backend image once and deploys the same image
+to both production services:
+
+- `options-roi-mobile-api`, using the Dockerfile default command
+  `uvicorn mobile_api:app`;
+- `options-roi-web`, preserving its Cloud Run command override
+  `uvicorn web_dashboard:app`.
+
+The Cloud Build trigger should point to `cloudbuild.yaml` on `main`. This keeps
+mobile and web on the same backend commit and avoids the earlier manual web
+update step.
 
 ## Rollback
 

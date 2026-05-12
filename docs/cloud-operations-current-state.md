@@ -1,6 +1,6 @@
 # Cloud Operations Current State
 
-Last reviewed: 2026-05-11.
+Last reviewed: 2026-05-12.
 
 ## Production Services
 
@@ -70,3 +70,8 @@ to build, push, and roll a revision. The repository is configured to keep the
 Cloud Build context small via `.gcloudignore` and `.dockerignore`. For web UI
 iteration, prefer local browser testing and deploy to Cloud Run only at stable
 checkpoints.
+
+The production build trigger should use the repository `cloudbuild.yaml`. That
+build config creates one shared image and deploys it to both `options-roi-mobile-api`
+and `options-roi-web`, so a `main` deployment cannot accidentally leave the web
+dashboard on an older backend commit.
