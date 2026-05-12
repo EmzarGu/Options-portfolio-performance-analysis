@@ -1321,10 +1321,25 @@ function sortTable(tableId,key){
 }
 function parseDate(v){ const d = new Date(fmtDate(v) + "T00:00:00Z"); return Number.isNaN(d.getTime()) ? null : d; }
 function addMonths(date, months){ const d = new Date(date); d.setUTCMonth(d.getUTCMonth() + months); return d; }
+function monthIndex(date){ return date.getUTCFullYear() * 12 + date.getUTCMonth(); }
 function rangeFiltered(rows, dateKey){
   const range = appState.range;
   if (range === "Since inception") return rows || [];
   const asOf = parseDate(data.dashboard.request?.as_of || data.generated_at) || new Date();
+  if (dateKey === "month") {
+    const asOfMonth = monthIndex(asOf);
+    let startMonth = null;
+    if (range === "3M") startMonth = asOfMonth - 2;
+    if (range === "6M") startMonth = asOfMonth - 5;
+    if (range === "1Y") startMonth = asOfMonth - 11;
+    if (range === "YTD") startMonth = asOf.getUTCFullYear() * 12;
+    return (rows || []).filter(row => {
+      const d = parseDate(get(row,dateKey));
+      if (!d) return false;
+      const m = monthIndex(d);
+      return (startMonth === null || m >= startMonth) && m <= asOfMonth;
+    });
+  }
   let start = null;
   if (range === "3M") start = addMonths(asOf, -3);
   if (range === "6M") start = addMonths(asOf, -6);
