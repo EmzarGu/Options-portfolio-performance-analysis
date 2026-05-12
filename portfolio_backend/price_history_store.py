@@ -257,7 +257,13 @@ def _doc_from_series(
 ) -> Dict:
     existing = existing or {}
     existing_series = _series_from_doc(existing, ticker)
-    merged = pd.concat([existing_series, _clean_series(series, ticker)]).sort_index()
+    clean_series = _clean_series(series, ticker)
+    series_parts = [part for part in (existing_series, clean_series) if not part.empty]
+    merged = (
+        pd.concat(series_parts).sort_index()
+        if series_parts
+        else pd.Series(dtype=float, name=ticker)
+    )
     merged = merged[~merged.index.duplicated(keep="last")]
 
     current_start = pd.to_datetime(existing.get("coverage_start"), errors="coerce")

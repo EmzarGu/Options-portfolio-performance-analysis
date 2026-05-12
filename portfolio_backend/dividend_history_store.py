@@ -185,7 +185,13 @@ def _doc_from_series(
     ticker_key = _ticker_key(ticker)
     existing = existing or {}
     existing_series = _series_from_doc(existing, ticker_key)
-    merged = pd.concat([existing_series, _clean_series(series, ticker_key)]).sort_index()
+    clean_series = _clean_series(series, ticker_key)
+    series_parts = [part for part in (existing_series, clean_series) if not part.empty]
+    merged = (
+        pd.concat(series_parts).sort_index()
+        if series_parts
+        else pd.Series(dtype=float, name=ticker_key)
+    )
     merged = merged[~merged.index.duplicated(keep="last")]
 
     start_ts = pd.to_datetime(start).normalize()
