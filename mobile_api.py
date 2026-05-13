@@ -67,6 +67,7 @@ PRICE_ONLY_RELOAD_ENDPOINTS = [
     "/v1/mobile/positions",
     "/v1/mobile/open-option-shorts",
     "/v1/mobile/tickers",
+    "/v1/mobile/performance/monthly",
     "/v1/mobile/performance/yearly",
     "/v1/mobile/issues",
 ]
