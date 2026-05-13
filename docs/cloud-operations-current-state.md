@@ -74,11 +74,13 @@ do not still reference older image tags.
 
 Cloud Run deployments have a fixed latency floor because Cloud Build still has
 to build, push, and roll a revision. The repository is configured to keep the
-Cloud Build context small via `.gcloudignore` and `.dockerignore`. For web UI
+Cloud Build context small via `.gcloudignore` and `.dockerignore`. The build
+also reuses the previous `latest` image as a Docker layer cache so unchanged
+Python dependencies are not reinstalled on every code-only deploy. For web UI
 iteration, prefer local browser testing and deploy to Cloud Run only at stable
 checkpoints.
 
-The production build trigger uses an inline config that mirrors the repository
-`cloudbuild.yaml`. It creates one shared image and deploys it to both
-`options-roi-mobile-api` and `options-roi-web`, so a `main` deployment cannot
-accidentally leave the web dashboard on an older backend commit.
+The production build trigger reads the repository `cloudbuild.yaml`. It creates
+one shared image and deploys it to both `options-roi-mobile-api` and
+`options-roi-web`, so a `main` deployment cannot accidentally leave the web
+dashboard on an older backend commit.

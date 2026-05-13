@@ -130,9 +130,13 @@ image once and deploy the same image to both production services:
 - `options-roi-web`, preserving its Cloud Run command override
   `uvicorn web_dashboard:app`.
 
-The Cloud Build trigger uses an inline config that mirrors this file and runs on
-`main`. This keeps mobile and web on the same backend commit and avoids the
-earlier manual web update step.
+The build tags the image with both the commit SHA and `latest`. Each run tries
+to pull the previous `latest` image and uses it as a Docker layer cache, so code
+only changes do not need to reinstall unchanged Python dependencies.
+
+The Cloud Build trigger reads this repository `cloudbuild.yaml` on `main`. This
+keeps mobile and web on the same backend commit and avoids the earlier manual
+web update step.
 
 ## Rollback
 

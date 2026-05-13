@@ -8,13 +8,24 @@ substitutions:
   _WEB_SERVICE_NAME: options-roi-web
 
 steps:
+  - id: PullCache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker pull ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest || true
+
   - id: Build
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --no-cache
+      - --cache-from
+      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest
       - -t
       - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+      - -t
+      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest
       - .
       - -f
       - Dockerfile
@@ -24,6 +35,12 @@ steps:
     args:
       - push
       - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
+
+  - id: PushLatest
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest
 
   - id: DeployMobileAPI
     name: gcr.io/cloud-builders/gcloud
