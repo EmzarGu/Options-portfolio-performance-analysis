@@ -5,11 +5,12 @@ import hashlib
 import html
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
 from datetime import date
-from time import time
+from time import perf_counter, time
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlencode
 
@@ -33,6 +34,7 @@ from portfolio_backend.web_dashboard_templates import (
 
 
 app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
+logger = logging.getLogger("uvicorn.error")
 
 COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
@@ -308,8 +310,19 @@ def _google_redirect_uri(request: Request) -> str:
 
 
 
-def _get_context(*, as_of: Optional[date], include_unrealized: bool, force_rebuild: bool = False):
-    return get_web_context(as_of=as_of, include_unrealized=include_unrealized, force_rebuild=force_rebuild)
+def _get_context(
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    force_rebuild: bool = False,
+    timing_recorder=None,
+):
+    return get_web_context(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        force_rebuild=force_rebuild,
+        timing_recorder=timing_recorder,
+    )
 
 
 def _build_dashboard_data(
@@ -510,6 +523,12 @@ def logout() -> Response:
 def refresh(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
+    started_at = perf_counter()
+    timings: Dict[str, float] = {}
+
+    def record_timing(phase: str, elapsed_ms: float) -> None:
+        timings[phase] = round(float(elapsed_ms), 2)
+
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
     target_return = _target_return_from_query(request)
     section = request.query_params.get("section") or "dashboard"
@@ -524,8 +543,18 @@ def refresh(request: Request) -> Response:
     }:
         section = "dashboard"
     _clear_dashboard_data_cache()
-    context, cache_bust = _get_context(as_of=None, include_unrealized=include_unrealized, force_rebuild=True)
+    context, cache_bust = _get_context(
+        as_of=None,
+        include_unrealized=include_unrealized,
+        force_rebuild=True,
+        timing_recorder=record_timing,
+    )
     build_mobile_refresh_payload(context, cache_bust=cache_bust)
+    timings["route_total_ms"] = round((perf_counter() - started_at) * 1000, 2)
+    logger.info(
+        "web_refresh_timing %s",
+        " ".join([f"{key}={timings[key]}" for key in sorted(timings)]),
+    )
     _clear_dashboard_data_cache()
     return RedirectResponse(
         url=(

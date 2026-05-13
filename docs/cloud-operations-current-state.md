@@ -46,6 +46,13 @@ The raw IBKR bucket keeps current raw XML objects and has object versioning
 enabled. Noncurrent object versions are lifecycle-cleaned after 30 days.
 Build/source staging buckets are lifecycle-cleaned after 7 days.
 
+Firestore is not just a raw-data store. Production refresh also uses
+`pipeline_snapshots` to persist the computed base accounting pipeline by IBKR
+import marker, `as_of` date, and normalized source partition. Mobile and web
+Cloud Run instances restore this shared snapshot before fetching current
+prices. A full rebuild is expected only when the IBKR import marker changes,
+the snapshot is missing/corrupt, or the snapshot schema is intentionally bumped.
+
 ## Artifact Registry
 
 Container images are stored in:

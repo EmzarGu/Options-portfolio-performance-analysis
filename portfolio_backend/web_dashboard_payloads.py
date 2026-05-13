@@ -142,7 +142,13 @@ def _expectancy_by_year_records(state: Any) -> List[Dict[str, Any]]:
     return rows
 
 
-def get_web_context(*, as_of: Optional[date], include_unrealized: bool, force_rebuild: bool = False):
+def get_web_context(
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    force_rebuild: bool = False,
+    timing_recorder=None,
+):
     # The browser dashboard is the IBKR-first production surface. Apply these
     # defaults lazily so importing this module cannot alter Streamlit/mobile
     # tests that intentionally rely on sheet mode defaults.
@@ -154,6 +160,7 @@ def get_web_context(*, as_of: Optional[date], include_unrealized: bool, force_re
             include_unrealized=include_unrealized,
             selected_sheets=None,
             cache_bust=None,
+            timing_recorder=timing_recorder,
         )
         return context, cache_bust
     cache_bust = None
@@ -163,6 +170,7 @@ def get_web_context(*, as_of: Optional[date], include_unrealized: bool, force_re
         selected_sheets=None,
         cache_bust=cache_bust,
         force_rebuild=force_rebuild,
+        timing_recorder=timing_recorder,
     )
     return context, cache_bust
 
@@ -358,4 +366,3 @@ def dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> D
         },
         "reconciliation_notes": [],
     }
-

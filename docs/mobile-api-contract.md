@@ -1040,8 +1040,12 @@ Fields:
 - `selected_sheets`: optional repeated query parameter.
 - `cache_bust`: optional integer query parameter. If omitted, the server generates one.
 
-The first backend slice refreshes the server-built pipeline and live price overlay
-together. Separate `prices`, `data`, and `all` scopes are intentionally deferred.
+In IBKR mode, refresh first checks whether the latest successful import marker
+changed. If not, the server restores the persisted base pipeline from Firestore
+`pipeline_snapshots` and refreshes current prices only. If the import marker
+changed or the snapshot is missing/corrupt, the server rebuilds the full
+accounting pipeline, stores a new snapshot, and returns the full endpoint reload
+list.
 
 Response:
 
@@ -1070,7 +1074,8 @@ Response:
   },
   "refresh": {
     "status": "partial",
-    "pipeline_refreshed": true,
+    "scope": "prices_only",
+    "pipeline_refreshed": false,
     "prices_refreshed": true,
     "cache_bust": 1777924201,
     "missing_price_count": 0,
@@ -1095,6 +1100,11 @@ Nullability:
   `data_freshness`, `missing_price_count`, and `missing_sheet_count`.
 - `refresh.reload_endpoints` tells the client which read endpoints to reload after
   refresh succeeds.
+- `refresh.pipeline_refreshed=false` means the server reused a persisted base
+  pipeline and only refreshed current prices.
+- `refresh.pipeline_snapshot_id`, when present, identifies the Firestore-backed
+  base pipeline used for the refresh. Clients should display it only in
+  diagnostics.
 - After refresh succeeds, the server makes the refreshed request context the active
   default for matching read calls. Clients do not need to append `cache_bust`
   unless they are deliberately debugging a specific rebuild token.

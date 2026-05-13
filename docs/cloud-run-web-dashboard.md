@@ -33,6 +33,12 @@ month block shows cash required to take assignment of all currently ITM puts.
 IBKR available cash is not displayed until the import explicitly stores account
 cash balances.
 
+Manual refresh is source-aware. The server first checks the latest successful
+IBKR import marker. If the marker is unchanged, it restores the persisted base
+pipeline from Firestore `pipeline_snapshots` and refreshes only current prices.
+If the marker changed or no valid snapshot exists, it rebuilds the full
+accounting pipeline and writes a new shared snapshot for later web/iOS refreshes.
+
 ## Required Runtime Config
 
 Environment variables:
@@ -42,6 +48,7 @@ OPTIONS_DATA_SOURCE=ibkr
 IBKR_REPORT_SOURCE=firestore
 FIRESTORE_PROJECT_ID=options-performance-dashboard
 IBKR_FLEX_QUERY_ID=1504277
+PIPELINE_SNAPSHOT_STORE=auto
 WEB_DASHBOARD_AUTH=1
 WEB_DASHBOARD_DATA_CACHE_SECONDS=300
 ```
@@ -57,6 +64,10 @@ The browser dashboard uses a dedicated dashboard password. The mobile API key is
 `WEB_DASHBOARD_DATA_CACHE_SECONDS` controls the short in-process cache for the
 expensive dashboard JSON payload. The default is 300 seconds. Set it to `0` to
 disable caching while keeping the async page shell behavior.
+
+`PIPELINE_SNAPSHOT_STORE=auto` uses Firestore on Cloud Run. Set it to `off` only
+for emergency troubleshooting; doing so forces refresh back to per-instance
+memory cache and full rebuild fallback behavior.
 
 ## Browser Authentication
 

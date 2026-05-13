@@ -44,6 +44,11 @@ from portfolio_backend.pipeline import (
     apply_unrealized_adjusted_display,
     current_price_tickers_for_state,
 )
+from portfolio_backend.pipeline_snapshot_store import (
+    get_default_pipeline_snapshot_store,
+    pipeline_snapshot_id,
+    snapshot_metadata_for_context,
+)
 
 
 app = FastAPI(title="Options ROI Mobile API", version="0.1.0")
@@ -520,6 +525,106 @@ def _source_marker_matches(context: Any, marker: Optional[Dict[str, Any]]) -> bo
     )
 
 
+def _source_marker_from_metadata(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    source_snapshot_id = metadata.get("source_snapshot_id")
+    if not source_snapshot_id:
+        return None
+    return {
+        "source_snapshot_id": source_snapshot_id,
+        "import_run_id": metadata.get("ibkr_import_run_id"),
+        "finished_at": metadata.get("ibkr_import_finished_at") or metadata.get("source_modified_at"),
+        "from_date": metadata.get("ibkr_import_from_date"),
+        "to_date": metadata.get("ibkr_import_to_date"),
+        "query_id": metadata.get("source_version"),
+    }
+
+
+def _pipeline_snapshot_id_for_request(
+    source_marker: Optional[Dict[str, Any]],
+    request: MobilePayloadRequest,
+) -> Optional[str]:
+    source_snapshot_id = (source_marker or {}).get("source_snapshot_id")
+    if not source_snapshot_id:
+        return None
+    return pipeline_snapshot_id(
+        source_snapshot_id=str(source_snapshot_id),
+        as_of=request.as_of,
+        selected_sheets=request.selected_sheets,
+    )
+
+
+def _save_pipeline_snapshot(
+    context: Any,
+    *,
+    request: MobilePayloadRequest,
+    available: List[str],
+    source_marker: Optional[Dict[str, Any]],
+    timing_recorder=None,
+) -> None:
+    base_state = getattr(context, "base_state", None)
+    snapshot_id = _pipeline_snapshot_id_for_request(source_marker, request)
+    if base_state is None or snapshot_id is None:
+        return
+    started_at = perf_counter()
+    try:
+        get_default_pipeline_snapshot_store().save(
+            snapshot_id,
+            base_state,
+            snapshot_metadata_for_context(
+                source_marker=source_marker,
+                request=request,
+                available_sheets=available,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("pipeline_snapshot_write_failed snapshot_id=%s error=%s", snapshot_id, exc)
+    finally:
+        if timing_recorder is not None:
+            timing_recorder("pipeline_snapshot_write_ms", _elapsed_ms(started_at))
+
+
+def _load_pipeline_snapshot_context(
+    *,
+    request: MobilePayloadRequest,
+    available: List[str],
+    source_marker: Optional[Dict[str, Any]],
+    timing_recorder=None,
+) -> Optional[MobilePayloadContext]:
+    snapshot_id = _pipeline_snapshot_id_for_request(source_marker, request)
+    if snapshot_id is None:
+        return None
+    started_at = perf_counter()
+    try:
+        snapshot = get_default_pipeline_snapshot_store().load(snapshot_id)
+    except Exception as exc:
+        logger.warning("pipeline_snapshot_load_failed snapshot_id=%s error=%s", snapshot_id, exc)
+        snapshot = None
+    finally:
+        if timing_recorder is not None:
+            timing_recorder("pipeline_snapshot_lookup_ms", _elapsed_ms(started_at))
+
+    if snapshot is None:
+        if timing_recorder is not None:
+            timing_recorder("pipeline_snapshot_hit", 0)
+        return None
+    if timing_recorder is not None:
+        timing_recorder("pipeline_snapshot_hit", 1)
+    metadata = _source_metadata_for_marker(source_marker)
+    metadata["pipeline_snapshot_id"] = snapshot.snapshot_id
+    metadata["pipeline_snapshot_created_at"] = snapshot.metadata.get("created_at")
+    return MobilePayloadContext(
+        state=snapshot.state,
+        request={
+            "as_of": request.as_of,
+            "include_unrealized": request.include_unrealized,
+            "selected_sheets": request.selected_sheets,
+        },
+        available_sheets=[str(sheet) for sheet in available] if available is not None else None,
+        source_metadata=metadata,
+        base_state=snapshot.state,
+    )
+
+
 def _refresh_prices_from_cached_base(
     context: MobilePayloadContext,
     *,
@@ -614,9 +719,11 @@ def _context(
 
     started_at = perf_counter()
     source_metadata: Dict[str, Any] = dict(source_metadata_override or {})
+    source_marker: Optional[Dict[str, Any]] = _source_marker_from_metadata(source_metadata)
     if _data_source() == DATA_SOURCE_IBKR:
         if "source_snapshot_id" not in source_metadata:
-            source_metadata.update(_source_metadata_for_marker(_refresh_source_marker(timing_recorder=timing_recorder)))
+            source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
+            source_metadata.update(_source_metadata_for_marker(source_marker))
         context_kwargs = {"available_sheets": available}
         if _supports_keyword(build_ibkr_mobile_payload_context, "source_metadata"):
             context_kwargs["source_metadata"] = source_metadata
@@ -642,6 +749,14 @@ def _context(
     if timing_recorder is not None:
         timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
     _remember_context(key, context)
+    if _data_source() == DATA_SOURCE_IBKR:
+        _save_pipeline_snapshot(
+            context,
+            request=request,
+            available=available,
+            source_marker=source_marker or _source_marker_from_metadata(dict(getattr(context, "source_metadata", {}) or {})),
+            timing_recorder=timing_recorder,
+        )
     return context
 
 
@@ -728,6 +843,53 @@ def _smart_refresh_context(
                 },
             )
 
+    snapshot_context = _load_pipeline_snapshot_context(
+        request=active_request,
+        available=active_available,
+        source_marker=source_marker,
+        timing_recorder=timing_recorder,
+    )
+    if snapshot_context is not None:
+        refreshed_context = _refresh_prices_from_cached_base(
+            snapshot_context,
+            request=MobilePayloadRequest(
+                sheet_id=active_request.sheet_id,
+                as_of=active_request.as_of,
+                selected_sheets=active_request.selected_sheets,
+                include_unrealized=active_request.include_unrealized,
+                cache_bust=resolved_cache_bust,
+            ),
+            available=active_available,
+            source_marker=source_marker,
+            timing_recorder=timing_recorder,
+        )
+        if refreshed_context is not None:
+            key = _context_cache_key(
+                MobilePayloadRequest(
+                    sheet_id=active_request.sheet_id,
+                    as_of=active_request.as_of,
+                    selected_sheets=active_request.selected_sheets,
+                    include_unrealized=active_request.include_unrealized,
+                    cache_bust=resolved_cache_bust,
+                )
+            )
+            _remember_context(key, refreshed_context)
+            _set_active_cache_bust(resolved_cache_bust)
+            return (
+                refreshed_context,
+                resolved_cache_bust,
+                {
+                    "scope": "prices_only",
+                    "pipeline_refreshed": False,
+                    "prices_refreshed": bool(refreshed_context.source_metadata.get("prices_updated_at")),
+                    "source_checked": True,
+                    "source_changed": False,
+                    "source_snapshot_id": (source_marker or {}).get("source_snapshot_id"),
+                    "pipeline_snapshot_id": snapshot_context.source_metadata.get("pipeline_snapshot_id"),
+                    "reload_endpoints": PRICE_ONLY_RELOAD_ENDPOINTS,
+                },
+            )
+
     if timing_recorder is not None:
         timing_recorder("context_cache_hit", 0)
     context = _context(
@@ -771,6 +933,8 @@ def _apply_refresh_metadata(payload: Dict[str, Any], refresh_metadata: Dict[str,
         )
         if refresh_metadata.get("source_snapshot_id"):
             refresh["source_snapshot_id"] = refresh_metadata["source_snapshot_id"]
+        if refresh_metadata.get("pipeline_snapshot_id"):
+            refresh["pipeline_snapshot_id"] = refresh_metadata["pipeline_snapshot_id"]
     return payload
 
 
