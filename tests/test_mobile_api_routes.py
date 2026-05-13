@@ -425,7 +425,11 @@ def test_ibkr_refresh_uses_persisted_pipeline_snapshot_on_memory_cache_miss(monk
     assert metadata["scope"] == "prices_only"
     assert metadata["pipeline_refreshed"] is False
     assert metadata["pipeline_snapshot_id"] == snapshot_id
-    assert "/v1/mobile/performance/monthly" in metadata["reload_endpoints"]
+    assert {
+        "/v1/mobile/dashboard",
+        "/v1/mobile/positions",
+        "/v1/mobile/performance/monthly",
+    }.issubset(metadata["reload_endpoints"])
 
 
 def test_ibkr_config_reports_single_source_partition(api_harness, monkeypatch):
