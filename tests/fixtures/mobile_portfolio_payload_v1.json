@@ -1,59 +1,71 @@
 {
-  "issues": {
-    "capital_history_coverage_issues": [],
-    "capital_history_incomplete": false,
-    "dividend_errors": [],
-    "first_incomplete_return_month": null,
-    "historical_price_errors": [],
-    "issues": [
-      "Historical capital price coverage incomplete: old issue"
-    ],
-    "last_complete_return_month": null,
-    "price_errors": [],
-    "return_series_truncated": false
-  },
-  "metadata": {
+  "snapshot": {
     "as_of": "2026-04-29",
-    "dividend_coverage_complete": true,
-    "dividend_summary": {
-      "attempted": 0,
-      "failed": 0
+    "year": 2026,
+    "include_unrealized_current_year": true,
+    "ytd_total_pnl": 2350.0,
+    "ytd_realized_pnl": 150.0,
+    "ytd_annualized_twr": 13.551915228366852,
+    "unrealized": {
+      "complete": true,
+      "total": 2200.0,
+      "options": 200.0,
+      "stock": 2000.0,
+      "missing_required_price_tickers": []
     },
-    "historical_price_summary": {
-      "fetched": 0,
-      "requested": 0
+    "prices": {
+      "updated_at": "12:34:56",
+      "stocks_requested": 1,
+      "stocks_fetched": 1
     },
-    "payload_version": "portfolio_payload_v1",
-    "price_summary": {
-      "stocks_fetched": 1,
-      "stocks_requested": 1
-    },
-    "price_updated_at": "12:34:56",
-    "sheet_counts": [
+    "issue_count": 1,
+    "covered_period_note": null,
+    "dividend_warning_note": null
+  },
+  "positions": {
+    "assigned_holdings": [
       {
-        "rows": 1,
-        "source_sheet": "Options 2026"
+        "ticker": "AAA",
+        "buy_date": "2026-04-01",
+        "shares": 100,
+        "cost_per_share": 100.0,
+        "current_price": 120.0,
+        "covered_shares": 0,
+        "covered_strike": null,
+        "unrealized_pnl": 2000.0,
+        "source": "stock_lot"
+      }
+    ],
+    "open_option_shorts": [
+      {
+        "ticker": "AAA",
+        "type": "Put",
+        "strike": 100.0,
+        "qty": 1,
+        "expiration": "2026-05-17",
+        "trans_date": "2026-04-01",
+        "open_price": 2.0,
+        "roll_adjusted_open_price": 2.0,
+        "current_price": 120.0,
+        "moneyness_pct": -0.2
       }
     ]
   },
+  "yearly": [
+    {
+      "year": 2026,
+      "total_realized_pnl": 150.0,
+      "annualized_return_twr": 0.12,
+      "annualized_return_twr_unrealized_adjusted": 13.551915228366852,
+      "total_pnl_incl_unreal": 2350.0
+    }
+  ],
   "monthly": {
-    "active_returns": [
-      {
-        "month": "2026-04-30",
-        "return": 0.03
-      }
-    ],
-    "covered_returns": [
-      {
-        "month": "2026-04-30",
-        "return": 0.03
-      }
-    ],
     "cycles": [
       {
         "month": "2026-04-30",
-        "roac": 0.03,
-        "total_realized_pnl": 150.0
+        "total_realized_pnl": 150.0,
+        "roac": 0.03
       }
     ],
     "returns": [
@@ -62,81 +74,70 @@
         "return": 0.25
       }
     ],
+    "covered_returns": [
+      {
+        "month": "2026-04-30",
+        "return": 0.03
+      }
+    ],
     "unrealized_adjusted_returns": [
       {
         "month": "2026-04-30",
         "return": 0.25
       }
+    ],
+    "active_returns": [
+      {
+        "month": "2026-04-30",
+        "return": 0.03
+      }
     ]
   },
   "per_ticker": [
     {
-      "combined_realized": 150.0,
+      "ticker": "AAA",
       "options_pnl": 150.0,
       "stock_realized_pnl": 0.0,
-      "ticker": "AAA",
-      "total_pnl": 2350.0,
-      "unrealized_pnl": 2200.0
+      "combined_realized": 150.0,
+      "unrealized_pnl": 2200.0,
+      "total_pnl": 2350.0
     }
   ],
-  "positions": {
-    "assigned_holdings": [
-      {
-        "buy_date": "2026-04-01",
-        "cost_per_share": 100.0,
-        "covered_shares": 0,
-        "covered_strike": null,
-        "current_price": 120.0,
-        "shares": 100,
-        "source": "stock_lot",
-        "ticker": "AAA",
-        "unrealized_pnl": 2000.0
-      }
+  "issues": {
+    "issues": [
+      "Historical capital price coverage incomplete: old issue"
     ],
-    "open_option_shorts": [
+    "price_errors": [],
+    "historical_price_errors": [],
+    "dividend_errors": [],
+    "capital_history_incomplete": false,
+    "capital_history_coverage_issues": [],
+    "return_series_truncated": false,
+    "first_incomplete_return_month": null,
+    "last_complete_return_month": null
+  },
+  "metadata": {
+    "payload_version": "portfolio_payload_v1",
+    "as_of": "2026-04-29",
+    "price_updated_at": "12:34:56",
+    "price_summary": {
+      "stocks_requested": 1,
+      "stocks_fetched": 1
+    },
+    "historical_price_summary": {
+      "requested": 0,
+      "fetched": 0
+    },
+    "dividend_summary": {
+      "attempted": 0,
+      "failed": 0
+    },
+    "dividend_coverage_complete": true,
+    "sheet_counts": [
       {
-        "current_price": 120.0,
-        "expiration": "2026-05-17",
-        "moneyness_pct": -0.2,
-        "open_price": 2.0,
-        "qty": 1,
-        "strike": 100.0,
-        "ticker": "AAA",
-        "trans_date": "2026-04-01",
-        "type": "Put"
+        "source_sheet": "Options 2026",
+        "rows": 1
       }
     ]
-  },
-  "snapshot": {
-    "as_of": "2026-04-29",
-    "covered_period_note": null,
-    "dividend_warning_note": null,
-    "include_unrealized_current_year": true,
-    "issue_count": 1,
-    "prices": {
-      "stocks_fetched": 1,
-      "stocks_requested": 1,
-      "updated_at": "12:34:56"
-    },
-    "unrealized": {
-      "complete": true,
-      "missing_required_price_tickers": [],
-      "options": 200.0,
-      "stock": 2000.0,
-      "total": 2200.0
-    },
-    "year": 2026,
-    "ytd_annualized_twr": 13.551915228366852,
-    "ytd_realized_pnl": 150.0,
-    "ytd_total_pnl": 2350.0
-  },
-  "yearly": [
-    {
-      "annualized_return_twr": 0.12,
-      "annualized_return_twr_unrealized_adjusted": 13.551915228366852,
-      "total_pnl_incl_unreal": 2350.0,
-      "total_realized_pnl": 150.0,
-      "year": 2026
-    }
-  ]
+  }
 }

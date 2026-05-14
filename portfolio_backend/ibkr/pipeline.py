@@ -426,8 +426,8 @@ def _process_roll_adjusted_option_executions(
             add_open_lot(
                 execution,
                 rolled_qty,
-                float(rolled["net_cash"]),
-                roll_adjusted_net_cash=roll_adjusted_cash_by_sell_index.get(index, float(rolled["net_cash"])),
+                0.0,
+                roll_adjusted_net_cash=roll_adjusted_cash_by_sell_index.get(index, 0.0),
             )
             residual_qty = execution.qty - rolled_qty
             residual_cash = execution.net_cash - float(rolled["net_cash"])
@@ -446,9 +446,8 @@ def _process_roll_adjusted_option_executions(
             buy_cash = execution.net_cash * (take / execution.qty)
             roll_contributions = consume_roll_allocations(index, take)
             multiplier = contract_multiplier(execution)
-            # Replacement legs stay open until they close/expire/assign; do not
-            # pull their credit into realized P&L for the contract being closed.
-            pnl = lot.open_price * take * multiplier + buy_cash
+            roll_credit = sum(contribution["net_cash"] for contribution in roll_contributions)
+            pnl = lot.open_price * take * multiplier + buy_cash + roll_credit
             for contribution in roll_contributions:
                 contribution_qty = contribution["qty"]
                 contribution_cash = (

@@ -360,6 +360,8 @@ def test_open_option_short_rows_emit_mobile_contract_shape():
     assert put_rows[0]["days_to_expiration"] == 14
     assert put_rows[0]["notional_at_strike"] == pytest.approx(10000.0)
     assert put_rows[0]["premium_collected"] == pytest.approx(200.0)
+    assert put_rows[0]["roll_adjusted_premium_collected"] == pytest.approx(200.0)
+    assert put_rows[0]["display_premium_collected"] == pytest.approx(200.0)
     assert put_rows[0]["covered_status"] == "cash_secured"
     assert put_rows[0]["missing_price"] is False
 
@@ -427,6 +429,8 @@ def test_mobile_open_option_shorts_composes_contract_payload():
     assert [row["ticker"] for row in payload["items"]] == ["PUTT", "PUTT", "CALL"]
     assert "notional_at_strike" in payload["items"][0]
     assert "premium_collected" in payload["items"][0]
+    assert "roll_adjusted_premium_collected" in payload["items"][0]
+    assert "display_premium_collected" in payload["items"][0]
     assert "missing_price" in payload["items"][0]
 
 

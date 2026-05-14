@@ -10,7 +10,16 @@ if TYPE_CHECKING:
 
 
 def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFrame:
-    columns = ["ticker", "type", "strike", "qty", "expiration", "trans_date", "open_price"]
+    columns = [
+        "ticker",
+        "type",
+        "strike",
+        "qty",
+        "expiration",
+        "trans_date",
+        "open_price",
+        "roll_adjusted_open_price",
+    ]
     df = pd.DataFrame(
         [
             {
@@ -21,6 +30,9 @@ def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFram
                 "expiration": lot.expiration,
                 "trans_date": lot.open_date,
                 "open_price": lot.open_price,
+                "roll_adjusted_open_price": lot.roll_adjusted_open_price
+                if lot.roll_adjusted_open_price is not None
+                else lot.open_price,
             }
             for lot in open_option_lots
         ]
@@ -33,11 +45,16 @@ def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFram
     for keys, group in df.groupby(group_cols, dropna=False, sort=False):
         qty = pd.to_numeric(group["qty"], errors="coerce").fillna(0)
         open_prices = pd.to_numeric(group["open_price"], errors="coerce")
+        roll_adjusted_open_prices = pd.to_numeric(group["roll_adjusted_open_price"], errors="coerce")
         weights = qty.abs()
         if weights.sum() > 0:
             open_price = float((open_prices.fillna(0) * weights).sum() / weights.sum())
+            roll_adjusted_open_price = float((roll_adjusted_open_prices.fillna(0) * weights).sum() / weights.sum())
         else:
             open_price = float(open_prices.mean()) if open_prices.notna().any() else np.nan
+            roll_adjusted_open_price = (
+                float(roll_adjusted_open_prices.mean()) if roll_adjusted_open_prices.notna().any() else np.nan
+            )
         ticker, option_type, strike, expiration = keys
         grouped_rows.append(
             {
@@ -48,6 +65,7 @@ def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFram
                 "expiration": expiration,
                 "trans_date": pd.to_datetime(group["trans_date"], errors="coerce").min(),
                 "open_price": open_price,
+                "roll_adjusted_open_price": roll_adjusted_open_price,
             }
         )
     return pd.DataFrame(grouped_rows, columns=columns)
