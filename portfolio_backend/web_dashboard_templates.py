@@ -412,7 +412,7 @@ function dateLabel(value, mode="auto"){
   const month = d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
   const year = d.getUTCFullYear();
   if (mode === "year") return String(year);
-  if (mode === "day-month") return `${month} ${d.getUTCDate()}`;
+  if (mode === "day-month") return `${d.getUTCDate()}-${month}-${year}`;
   if (mode === "month-year") return `${month} ${year}`;
   return `${month} ${year}`;
 }
