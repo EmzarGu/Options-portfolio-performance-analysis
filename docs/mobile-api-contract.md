@@ -226,7 +226,7 @@ Fields:
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
-- `monthly_target.open_expiring_option_premium`: premium collected for still-open short options whose expiration date falls in the target month.
+- `monthly_target.open_expiring_option_premium`: premium collected for still-open short options whose expiration date falls in the target month. Same-expiration roll replacements remain open premium until that replacement contract is closed, expired, or assigned.
 - `monthly_target.open_expiring_intrinsic_value_gap`: current intrinsic value gap for still-open short options expiring in the target month. It is negative when open puts/calls are in the money from the seller's perspective.
 - `monthly_target.open_expiring_option_unrealized_pnl`: `open_expiring_incremental_premium + open_expiring_intrinsic_value_gap`.
 - `monthly_target.projected_month_pnl`: `realized_month_pnl + open_expiring_option_premium`.
@@ -729,9 +729,9 @@ Nullability:
 - Month row `id` is mandatory and must follow the stable row ID rules above.
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
-- `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting same-expiration rolls already recognized in realized P&L.
+- `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options and is safe to add to realized P&L because realized option P&L only includes closed, expired, or assigned contracts. Same-expiration roll replacement premium remains open until the replacement contract is closed, expired, or assigned.
 - `open_expiring_option_premium` is a backward-compatible legacy alias of `open_expiring_incremental_premium`.
-- `open_expiring_roll_adjusted_premium` is a display/reconciliation value for premium attached to currently open expiring chains, including same-expiration roll history. It is not used in `projected_month_pnl`.
+- `open_expiring_roll_adjusted_premium` is a display/reconciliation value for premium attached to currently open expiring chains, including same-expiration roll history. It is not used in `projected_month_pnl`; use `open_expiring_incremental_premium` for current open premium.
 - `open_expiring_intrinsic_value_gap` is the current intrinsic value gap for still-open short options expiring in that month. It is negative for in-the-money short puts/calls and zero for out-of-the-money options.
 - `open_expiring_option_unrealized_pnl` is `open_expiring_incremental_premium + open_expiring_intrinsic_value_gap`.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
