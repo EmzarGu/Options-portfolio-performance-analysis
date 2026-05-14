@@ -412,6 +412,7 @@ function dateLabel(value, mode="auto"){
   const month = d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
   const year = d.getUTCFullYear();
   if (mode === "year") return String(year);
+  if (mode === "day-month") return `${month} ${d.getUTCDate()}`;
   if (mode === "month-year") return `${month} ${year}`;
   return `${month} ${year}`;
 }
@@ -558,7 +559,7 @@ function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
   if (clean.length < 2) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
   const dates=[...new Set(clean.map(r => fmtDate(get(r,xKey))))].sort();
   const groups={}; clean.forEach(r => { const name = get(r,seriesKey) || "Series"; (groups[name] ||= []).push(r); });
-  const labels = dates.map(d => dateLabel(d));
+  const labels = dates.map(d => dateLabel(d, "day-month"));
   const datasets = Object.entries(groups).map(([name, vals], i) => {
     const byDate = new Map(vals.map(r => [fmtDate(get(r,xKey)), numeric(get(r,yKey))]));
     return {

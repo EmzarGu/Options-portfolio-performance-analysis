@@ -692,9 +692,18 @@ def test_build_options_cycle_chart_data_uses_total_realized_pnl():
     assert chart_df["color"].tolist() == ["Positive", "Negative"]
 
 
-def _normalized_visible_growth(returns: pd.Series) -> pd.Series:
-    cumulative = (1 + returns).cumprod()
-    return cumulative / cumulative.iloc[0]
+def _benchmark_boundary_dates(returns: pd.Series) -> list[pd.Timestamp]:
+    dates = [returns.index[0].to_period("M").to_timestamp()]
+    for idx, month_end in enumerate(returns.index):
+        if idx == len(returns.index) - 1:
+            dates.append(month_end)
+        else:
+            dates.append((month_end.to_period("M") + 1).to_timestamp())
+    return dates
+
+
+def _benchmark_growth_values(returns: pd.Series) -> list[float]:
+    return [1.0, *((1 + returns).cumprod().tolist())]
 
 
 @pytest.mark.parametrize(
@@ -719,15 +728,17 @@ def test_benchmark_growth_chart_reconciles_to_table_returns_for_all_ranges(range
     strategy_window = app._select_chart_return_window(strategy_returns, range_choice)
     bench_window = app._select_chart_return_window(bench_returns, range_choice)
 
-    assert len(strategy_chart) == expected_periods
-    assert len(bench_chart) == expected_periods
+    assert len(strategy_chart) == expected_periods + 1
+    assert len(bench_chart) == expected_periods + 1
     assert strategy_chart["Date"].tolist() == bench_chart["Date"].tolist()
-    assert strategy_chart["Date"].tolist() == strategy_window.index.tolist()
-    assert bench_chart["Date"].tolist() == bench_window.index.tolist()
+    assert strategy_chart["Date"].tolist() == _benchmark_boundary_dates(strategy_window)
+    assert bench_chart["Date"].tolist() == _benchmark_boundary_dates(bench_window)
     assert strategy_chart["Growth"].iloc[0] == pytest.approx(1.0)
     assert bench_chart["Growth"].iloc[0] == pytest.approx(1.0)
-    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(strategy_window).iloc[-1])
-    assert bench_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(bench_window).iloc[-1])
+    assert strategy_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(strategy_window))
+    assert bench_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(bench_window))
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(strategy_returns)[metric_name])
+    assert bench_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(bench_returns)[metric_name])
 
 
 @pytest.mark.parametrize(
@@ -766,13 +777,14 @@ def test_benchmark_growth_chart_clips_strategy_window_to_table_as_of():
     strategy_window = app._select_chart_return_window(strategy_returns, "1Y", as_of)
     benchmark_window = app._select_chart_return_window(bench_returns, "1Y", as_of)
 
-    assert strategy_chart["Date"].iloc[0] == pd.Timestamp("2025-04-30")
+    assert strategy_chart["Date"].iloc[0] == pd.Timestamp("2025-04-01")
+    assert strategy_chart["Date"].iloc[1] == pd.Timestamp("2025-05-01")
     assert strategy_chart["Date"].iloc[-1] == pd.Timestamp("2026-03-31")
     assert strategy_chart["Date"].tolist() == bench_chart["Date"].tolist()
     assert strategy_chart["Growth"].iloc[0] == pytest.approx(1.0)
     assert bench_chart["Growth"].iloc[0] == pytest.approx(1.0)
-    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(strategy_window).iloc[-1])
-    assert bench_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(benchmark_window).iloc[-1])
+    assert strategy_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(strategy_window))
+    assert bench_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(benchmark_window))
 
 
 def test_benchmark_growth_chart_order_matches_table_returns_across_ranges():
@@ -798,6 +810,8 @@ def test_benchmark_growth_chart_order_matches_table_returns_across_ranges():
         assert strategy_table_return > schd_table_return
         assert strategy_start == pytest.approx(1.0)
         assert schd_start == pytest.approx(1.0)
+        assert strategy_endpoint == pytest.approx(1 + strategy_table_return)
+        assert schd_endpoint == pytest.approx(1 + schd_table_return)
         assert strategy_endpoint > schd_endpoint
 
 
@@ -829,10 +843,12 @@ def test_e2e_chart_table_reconciliation_for_strategy_and_benchmark_all_ranges(ra
     benchmark_window = app._select_chart_return_window(benchmark_returns, range_choice)
     assert strategy_chart["Growth"].iloc[0] == pytest.approx(1.0)
     assert benchmark_chart["Growth"].iloc[0] == pytest.approx(1.0)
-    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(strategy_window).iloc[-1])
-    assert benchmark_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(benchmark_window).iloc[-1])
-    assert strategy_chart["Date"].tolist() == strategy_window.index.tolist()
-    assert benchmark_chart["Date"].tolist() == benchmark_window.index.tolist()
+    assert strategy_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(strategy_window))
+    assert benchmark_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(benchmark_window))
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(strategy_returns)[metric_name])
+    assert benchmark_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(benchmark_returns)[metric_name])
+    assert strategy_chart["Date"].tolist() == _benchmark_boundary_dates(strategy_window)
+    assert benchmark_chart["Date"].tolist() == _benchmark_boundary_dates(benchmark_window)
     assert strategy_chart["Date"].tolist() == benchmark_chart["Date"].tolist()
 
 
@@ -847,9 +863,9 @@ def test_e2e_benchmark_gap_omits_line_without_forward_fill():
     assert chart_df.loc[chart_df["Series"] == "Bench"].empty
     assert chart_df.loc[chart_df["Series"] == "My Strategy", "Growth"].iloc[0] == pytest.approx(1.0)
     strategy_window = app._select_chart_return_window(strategy_returns, "6M")
-    assert chart_df.loc[chart_df["Series"] == "My Strategy", "Growth"].iloc[-1] == pytest.approx(
-        _normalized_visible_growth(strategy_window).iloc[-1]
-    )
+    strategy_chart = chart_df.loc[chart_df["Series"] == "My Strategy"].reset_index(drop=True)
+    assert strategy_chart["Date"].tolist() == _benchmark_boundary_dates(strategy_window)
+    assert strategy_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(strategy_window))
     assert benchmark_returns.ffill().iloc[2] == pytest.approx(benchmark_returns.iloc[1])
 
 
@@ -879,12 +895,16 @@ def test_e2e_partial_month_as_of_excludes_future_return_periods_and_reconciles(r
     assert pd.Timestamp("2026-04-30") not in benchmark_chart["Date"].tolist()
     assert all(pd.to_datetime(strategy_chart["Date"]) <= as_of.normalize())
     assert all(pd.to_datetime(benchmark_chart["Date"]) <= as_of.normalize())
-    assert strategy_chart["Date"].tolist() == strategy_window.index.tolist()
-    assert benchmark_chart["Date"].tolist() == benchmark_window.index.tolist()
+    assert strategy_chart["Date"].tolist() == _benchmark_boundary_dates(strategy_window)
+    assert benchmark_chart["Date"].tolist() == _benchmark_boundary_dates(benchmark_window)
     assert strategy_chart["Growth"].iloc[0] == pytest.approx(1.0)
     assert benchmark_chart["Growth"].iloc[0] == pytest.approx(1.0)
-    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(strategy_window).iloc[-1])
-    assert benchmark_chart["Growth"].iloc[-1] == pytest.approx(_normalized_visible_growth(benchmark_window).iloc[-1])
+    assert strategy_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(strategy_window))
+    assert benchmark_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(benchmark_window))
+    clipped_strategy = strategy_returns[strategy_returns.index <= as_of.normalize()]
+    clipped_benchmark = benchmark_returns[benchmark_returns.index <= as_of.normalize()]
+    assert strategy_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(clipped_strategy)[metric_name])
+    assert benchmark_chart["Growth"].iloc[-1] == pytest.approx(1 + period_returns(clipped_benchmark)[metric_name])
 
 
 @pytest.mark.parametrize(
@@ -2785,7 +2805,8 @@ def test_benchmark_risk_metric_window_matches_chart_one_year_window():
     benchmark_chart = chart_df.loc[chart_df["Series"] == "Bench"].reset_index(drop=True)
 
     assert benchmark_chart["Growth"].iloc[0] == pytest.approx(1.0)
-    assert risk_window.index.tolist() == benchmark_chart["Date"].tolist()
+    assert benchmark_chart["Date"].tolist() == _benchmark_boundary_dates(risk_window)
+    assert benchmark_chart["Growth"].tolist() == pytest.approx(_benchmark_growth_values(risk_window))
 
 
 def test_sortino_is_unavailable_when_all_returns_exceed_monthly_risk_free_rate():
