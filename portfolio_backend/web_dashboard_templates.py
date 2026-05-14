@@ -512,29 +512,6 @@ function initCharts(){
   });
   pendingCharts = [];
 }
-function finiteRangeLimit(){
-  if (appState.range === "3M") return 3;
-  if (appState.range === "6M") return 6;
-  if (appState.range === "1Y") return 12;
-  return null;
-}
-function trimFiniteGrowthRows(rows, xKey, title){
-  if (!String(title).toLowerCase().includes("cumulative growth")) return rows;
-  if (appState.range === "YTD") {
-    const asOf = parseDate(data.dashboard.request?.as_of || data.generated_at) || new Date();
-    const year = asOf.getUTCFullYear();
-    return rows.filter(r => {
-      const d = parseDate(get(r, xKey));
-      return d && d.getUTCFullYear() === year;
-    });
-  }
-  const limit = finiteRangeLimit();
-  if (!limit) return rows;
-  const dates = [...new Set(rows.map(r => fmtDate(get(r,xKey))))].sort();
-  if (dates.length <= limit) return rows;
-  const keep = new Set(dates.slice(-limit));
-  return rows.filter(r => keep.has(fmtDate(get(r,xKey))));
-}
 function targetReturn(){ return numeric(appState.targetReturn) ?? numeric(data.monthly?.target_return) ?? 0.015; }
 function targetFloor(){ return Math.min(targetReturn(), numeric(appState.targetFloor) ?? 0.01); }
 function targetCapital(row){
@@ -578,7 +555,6 @@ function displayTargetStatus(row){
 }
 function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
   let clean = (rows || []).filter(r => numeric(get(r,yKey)) !== null && get(r,xKey));
-  clean = trimFiniteGrowthRows(clean, xKey, title);
   if (clean.length < 2) return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong></div><div class="empty">Chart unavailable for the selected range.</div></div>`;
   const dates=[...new Set(clean.map(r => fmtDate(get(r,xKey))))].sort();
   const groups={}; clean.forEach(r => { const name = get(r,seriesKey) || "Series"; (groups[name] ||= []).push(r); });

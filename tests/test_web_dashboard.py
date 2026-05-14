@@ -5,6 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 import web_dashboard
+from portfolio_backend.web_dashboard_templates import DASHBOARD_HTML
 
 
 def _embedded_dashboard_data(html: str):
@@ -138,6 +139,14 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["expires"] == "0"
+
+
+def test_web_dashboard_keeps_backend_rebased_benchmark_growth_series():
+    assert "trimFiniteGrowthRows" not in DASHBOARD_HTML
+
+
+def test_web_dashboard_does_not_add_extra_benchmark_baseline_label():
+    assert "Start (${fullLabels[0]})" not in DASHBOARD_HTML
 
 
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):

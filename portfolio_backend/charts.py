@@ -65,12 +65,12 @@ def build_benchmark_growth_chart_data(
 ) -> pd.DataFrame:
     def growth_curve_frame(returns: pd.Series, series_name: str) -> pd.DataFrame:
         cumulative = (1 + returns).cumprod()
-        baseline_date = returns.index.min() - pd.offsets.MonthEnd(1)
+        normalized = cumulative / cumulative.iloc[0]
         return pd.DataFrame(
             {
-                "Date": [baseline_date, *cumulative.index.tolist()],
+                "Date": normalized.index.tolist(),
                 "Series": series_name,
-                "Growth": [1.0, *cumulative.values.tolist()],
+                "Growth": normalized.values.tolist(),
             }
         )
 
