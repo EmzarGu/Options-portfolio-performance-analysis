@@ -40,7 +40,7 @@ COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 TARGET_RETURN_COOKIE_NAME = "options_roi_web_target_return"
 DEFAULT_SESSION_DAYS = 90
-DEFAULT_DASHBOARD_DATA_CACHE_SECONDS = 300
+DEFAULT_DASHBOARD_DATA_CACHE_SECONDS = 0
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -543,9 +543,13 @@ def refresh(request: Request) -> Response:
     }:
         section = "dashboard"
     _clear_dashboard_data_cache()
+    # The web payload always builds the full unrealized-capable state and derives
+    # both dashboard views from it. Persist the same state shape on refresh so the
+    # follow-up /api/dashboard read can use the shared Firestore snapshot even
+    # when the user pressed refresh while viewing the realized-only toggle.
     context, cache_bust = _get_context(
         as_of=None,
-        include_unrealized=include_unrealized,
+        include_unrealized=True,
         force_rebuild=True,
         timing_recorder=record_timing,
     )

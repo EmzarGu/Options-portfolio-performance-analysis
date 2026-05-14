@@ -13,6 +13,7 @@ import pandas as pd
 
 
 COLLECTION_PIPELINE_SNAPSHOTS = "pipeline_snapshots"
+COLLECTION_APP_METADATA = "app_metadata"
 CHUNK_SUBCOLLECTION = "chunks"
 SNAPSHOT_SCHEMA_VERSION = 1
 CHUNK_SIZE = 700_000
@@ -32,6 +33,12 @@ class PipelineSnapshotStore:
     def save(self, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
         raise NotImplementedError
 
+    def load_latest(self, pointer_id: str) -> Optional[PipelineSnapshot]:
+        raise NotImplementedError
+
+    def save_latest(self, pointer_id: str, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
 
 class DisabledPipelineSnapshotStore(PipelineSnapshotStore):
     def load(self, snapshot_id: str) -> Optional[PipelineSnapshot]:
@@ -41,16 +48,34 @@ class DisabledPipelineSnapshotStore(PipelineSnapshotStore):
     def save(self, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
         _ = snapshot_id, state, metadata
 
+    def load_latest(self, pointer_id: str) -> Optional[PipelineSnapshot]:
+        _ = pointer_id
+        return None
+
+    def save_latest(self, pointer_id: str, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
+        _ = pointer_id, snapshot_id, state, metadata
+
 
 class MemoryPipelineSnapshotStore(PipelineSnapshotStore):
     def __init__(self):
         self.snapshots: Dict[str, PipelineSnapshot] = {}
+        self.latest: Dict[str, str] = {}
 
     def load(self, snapshot_id: str) -> Optional[PipelineSnapshot]:
         return self.snapshots.get(snapshot_id)
 
     def save(self, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
         self.snapshots[snapshot_id] = PipelineSnapshot(snapshot_id, dict(metadata), state)
+
+    def load_latest(self, pointer_id: str) -> Optional[PipelineSnapshot]:
+        snapshot_id = self.latest.get(pointer_id)
+        if snapshot_id is None:
+            return None
+        return self.load(snapshot_id)
+
+    def save_latest(self, pointer_id: str, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
+        self.save(snapshot_id, state, metadata)
+        self.latest[pointer_id] = snapshot_id
 
 
 class FirestorePipelineSnapshotStore(PipelineSnapshotStore):
@@ -109,6 +134,34 @@ class FirestorePipelineSnapshotStore(PipelineSnapshotStore):
         doc_ref.set(doc, merge=True)
         for index, chunk in enumerate(chunks):
             doc_ref.collection(CHUNK_SUBCOLLECTION).document(f"{index:04d}").set({"data": chunk})
+
+    def load_latest(self, pointer_id: str) -> Optional[PipelineSnapshot]:
+        pointer = self.client.collection(COLLECTION_APP_METADATA).document(pointer_id).get()
+        if not pointer.exists:
+            return None
+        snapshot_id = (pointer.to_dict() or {}).get("snapshot_id")
+        if not snapshot_id:
+            return None
+        return self.load(str(snapshot_id))
+
+    def save_latest(self, pointer_id: str, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
+        self.save(snapshot_id, state, metadata)
+        self.client.collection(COLLECTION_APP_METADATA).document(pointer_id).set(
+            _json_safe(
+                {
+                    "pointer_id": pointer_id,
+                    "snapshot_id": snapshot_id,
+                    "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "source_snapshot_id": metadata.get("source_snapshot_id"),
+                    "as_of": metadata.get("as_of"),
+                    "selected_sheets": metadata.get("selected_sheets"),
+                    "include_unrealized": metadata.get("include_unrealized"),
+                    "cache_bust": metadata.get("cache_bust"),
+                    "prices_updated_at": metadata.get("prices_updated_at"),
+                }
+            ),
+            merge=True,
+        )
 
 
 _DEFAULT_STORE: Optional[PipelineSnapshotStore] = None
@@ -169,6 +222,58 @@ def pipeline_snapshot_id(
     )
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
     return f"{source_kind}:{as_of_text}:{digest}"
+
+
+def refreshed_snapshot_id(
+    *,
+    source_snapshot_id: str,
+    as_of: Any,
+    selected_sheets: Iterable[str],
+    include_unrealized: bool,
+    cache_bust: int,
+    source_kind: str = "ibkr_flex",
+) -> str:
+    as_of_text = _date_text(as_of)
+    selected = ",".join(str(sheet) for sheet in selected_sheets)
+    raw = "|".join(
+        [
+            f"v{SNAPSHOT_SCHEMA_VERSION}",
+            "refreshed",
+            source_kind,
+            str(source_snapshot_id),
+            as_of_text,
+            selected,
+            "1" if include_unrealized else "0",
+            str(int(cache_bust)),
+        ]
+    )
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return f"{source_kind}:refreshed:{as_of_text}:{digest}"
+
+
+def refreshed_snapshot_pointer_id(
+    *,
+    source_snapshot_id: str,
+    as_of: Any,
+    selected_sheets: Iterable[str],
+    include_unrealized: bool,
+    source_kind: str = "ibkr_flex",
+) -> str:
+    as_of_text = _date_text(as_of)
+    selected = ",".join(str(sheet) for sheet in selected_sheets)
+    raw = "|".join(
+        [
+            f"v{SNAPSHOT_SCHEMA_VERSION}",
+            "latest-refreshed",
+            source_kind,
+            str(source_snapshot_id),
+            as_of_text,
+            selected,
+            "1" if include_unrealized else "0",
+        ]
+    )
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return f"{source_kind}:latest-refreshed:{as_of_text}:{digest}"
 
 
 def snapshot_metadata_for_context(

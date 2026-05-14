@@ -1042,10 +1042,13 @@ Fields:
 
 In IBKR mode, refresh first checks whether the latest successful import marker
 changed. If not, the server restores the persisted base pipeline from Firestore
-`pipeline_snapshots` and refreshes current prices only. If the import marker
-changed or the snapshot is missing/corrupt, the server rebuilds the full
-accounting pipeline, stores a new snapshot, and returns the full endpoint reload
-list.
+`pipeline_snapshots` and refreshes current prices only. The refreshed state is
+then written back to Firestore as the latest refreshed context for the matching
+request, so follow-up read endpoints are not dependent on process-local memory
+or the Cloud Run instance that handled the refresh. If the import marker changed
+or the snapshot is missing/corrupt, the server rebuilds the full accounting
+pipeline, stores a new base snapshot, stores the latest refreshed context, and
+returns the full endpoint reload list.
 
 Response:
 
@@ -1105,9 +1108,10 @@ Nullability:
 - `refresh.pipeline_snapshot_id`, when present, identifies the Firestore-backed
   base pipeline used for the refresh. Clients should display it only in
   diagnostics.
-- After refresh succeeds, the server makes the refreshed request context the active
-  default for matching read calls. Clients do not need to append `cache_bust`
-  unless they are deliberately debugging a specific rebuild token.
+- After refresh succeeds, the server persists the refreshed request context as
+  the latest Firestore-backed state for matching read calls. Clients do not need
+  to append `cache_bust` unless they are deliberately debugging a specific
+  rebuild token.
 
 ## Error Contract
 

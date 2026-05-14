@@ -19,7 +19,7 @@ read no longer leaves the browser waiting for the first paint.
 The server is split into three layers:
 
 - `web_dashboard.py`: FastAPI routes, authentication, session cookies, and the
-  short in-process dashboard payload cache.
+  browser refresh/read orchestration.
 - `portfolio_backend/web_dashboard_payloads.py`: IBKR-backed web JSON payload
   assembly, including tables, chart data, mobile DTO reuse, and reconciliation
   notes.
@@ -33,11 +33,15 @@ month block shows cash required to take assignment of all currently ITM puts.
 IBKR available cash is not displayed until the import explicitly stores account
 cash balances.
 
-Manual refresh is source-aware. The server first checks the latest successful
-IBKR import marker. If the marker is unchanged, it restores the persisted base
-pipeline from Firestore `pipeline_snapshots` and refreshes only current prices.
-If the marker changed or no valid snapshot exists, it rebuilds the full
-accounting pipeline and writes a new shared snapshot for later web/iOS refreshes.
+Manual refresh is source-aware and Firestore-backed. The server first checks the
+latest successful IBKR import marker. If the marker is unchanged, it restores
+the persisted base pipeline from Firestore `pipeline_snapshots`, refreshes only
+current prices, then writes a refreshed context snapshot plus latest-pointer
+metadata back to Firestore. Follow-up web and iOS reads prefer that persisted
+refreshed context instead of relying on the Cloud Run instance that handled the
+refresh. If the marker changed or no valid base snapshot exists, the server
+rebuilds the full accounting pipeline and stores both the base pipeline snapshot
+and the latest refreshed context.
 
 ## Required Runtime Config
 
@@ -50,7 +54,7 @@ FIRESTORE_PROJECT_ID=options-performance-dashboard
 IBKR_FLEX_QUERY_ID=1504277
 PIPELINE_SNAPSHOT_STORE=auto
 WEB_DASHBOARD_AUTH=1
-WEB_DASHBOARD_DATA_CACHE_SECONDS=300
+WEB_DASHBOARD_DATA_CACHE_SECONDS=0
 ```
 
 Secrets:
@@ -61,13 +65,13 @@ WEB_DASHBOARD_PASSWORD=web-dashboard-password:latest
 
 The browser dashboard uses a dedicated dashboard password. The mobile API key is not shown to users and is not accepted as the browser login password.
 
-`WEB_DASHBOARD_DATA_CACHE_SECONDS` controls the short in-process cache for the
-expensive dashboard JSON payload. The default is 300 seconds. Set it to `0` to
-disable caching while keeping the async page shell behavior.
+`WEB_DASHBOARD_DATA_CACHE_SECONDS` controls an optional in-process dashboard
+JSON cache. The production default is `0`: Firestore snapshots are the shared
+state layer, and process-local memory is not required for correctness.
 
 `PIPELINE_SNAPSHOT_STORE=auto` uses Firestore on Cloud Run. Set it to `off` only
-for emergency troubleshooting; doing so forces refresh back to per-instance
-memory cache and full rebuild fallback behavior.
+for emergency troubleshooting; doing so disables shared base/refreshed snapshots
+and can reintroduce slow full rebuild fallback behavior.
 
 ## Browser Authentication
 

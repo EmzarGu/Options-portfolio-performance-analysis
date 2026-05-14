@@ -55,13 +55,13 @@ prefs, Sheets, prices, or pipeline data. Use `GET /v1/mobile/config` as the
 first functional backend/config check.
 
 After refresh succeeds, the iOS client should reload the read endpoints listed
-in `refresh.reload_endpoints`. The server makes the refreshed context active for
-matching read calls, so the client does not need to append `cache_bust` during
-normal app use.
+in `refresh.reload_endpoints`. In IBKR/Firestore mode the server persists the
+refreshed context as the latest shared state for matching read calls, so the
+client does not need to append `cache_bust` during normal app use.
 
-Read endpoints reuse an in-memory request context for matching `as_of`,
-`include_unrealized`, selected sheets, and active refresh token. This keeps a
-multi-screen mobile load from rebuilding the same portfolio repeatedly.
+Read endpoints prefer the persisted refreshed context when available. Local
+in-memory reuse is only an optimization/fallback, not the cross-request source
+of truth.
 
 ## Smoke Test
 

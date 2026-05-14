@@ -6,6 +6,7 @@ import pandas as pd
 
 from portfolio_backend.pipeline_snapshot_store import (
     FirestorePipelineSnapshotStore,
+    MemoryPipelineSnapshotStore,
     pipeline_snapshot_id,
 )
 
@@ -75,3 +76,39 @@ def test_firestore_pipeline_snapshot_store_round_trips_chunked_state():
     assert loaded.metadata["source_snapshot_id"] == "ibkr-flex:1504277:run-1"
     pd.testing.assert_frame_equal(loaded.state.frame, state.frame)
     assert loaded.state.text == state.text
+
+
+def test_firestore_pipeline_snapshot_store_tracks_latest_pointer():
+    client = _FakeFirestoreClient()
+    store = FirestorePipelineSnapshotStore(client=client)
+    state = SimpleNamespace(value=42)
+
+    store.save_latest(
+        "latest:demo",
+        "snapshot:demo:1",
+        state,
+        {"kind": "refreshed", "source_snapshot_id": "source-1", "cache_bust": 123},
+    )
+    loaded = store.load_latest("latest:demo")
+
+    assert loaded is not None
+    assert loaded.snapshot_id == "snapshot:demo:1"
+    assert loaded.state.value == 42
+    assert loaded.metadata["kind"] == "refreshed"
+    pointer_doc = client.docs[("app_metadata", "latest:demo")]
+    assert pointer_doc["snapshot_id"] == "snapshot:demo:1"
+    assert pointer_doc["source_snapshot_id"] == "source-1"
+    assert pointer_doc["cache_bust"] == 123
+
+
+def test_memory_pipeline_snapshot_store_tracks_latest_pointer():
+    store = MemoryPipelineSnapshotStore()
+    state = SimpleNamespace(value=42)
+
+    store.save_latest("latest:demo", "snapshot:demo:1", state, {"kind": "refreshed"})
+    loaded = store.load_latest("latest:demo")
+
+    assert loaded is not None
+    assert loaded.snapshot_id == "snapshot:demo:1"
+    assert loaded.state is state
+    assert loaded.metadata == {"kind": "refreshed"}
