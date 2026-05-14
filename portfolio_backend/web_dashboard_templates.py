@@ -416,19 +416,6 @@ function dateLabel(value, mode="auto"){
   if (mode === "month-year") return `${month} ${year}`;
   return `${month} ${year}`;
 }
-function chartDateLabel(value){
-  const d = parseDate(value);
-  if (!d) return safe(value);
-  return [
-    d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"}),
-    String(d.getUTCFullYear())
-  ];
-}
-function chartMonthLabel(value){
-  const d = parseDate(value);
-  if (!d) return safe(value);
-  return d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
-}
 function chartRegister(title, subtitle, config, footer=""){
   const id = `chart-${++chartSeq}`;
   pendingCharts.push({id, config});
