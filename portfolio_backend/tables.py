@@ -91,13 +91,72 @@ def filter_df_to_range(df: pd.DataFrame, date_col: str, end: pd.Timestamp, range
     return df
 
 
-def build_assigned_holdings_frame(inventory: pd.DataFrame) -> pd.DataFrame:
+def _stock_lot_inventory(inventory: pd.DataFrame) -> pd.DataFrame:
     if inventory is None or inventory.empty:
         return pd.DataFrame() if inventory is None else inventory.copy()
     holdings = inventory.copy()
     if "source" in holdings.columns:
         holdings = holdings[holdings["source"] == "stock_lot"]
     return holdings
+
+
+def build_assigned_holdings_frame(inventory: pd.DataFrame) -> pd.DataFrame:
+    holdings = _stock_lot_inventory(inventory)
+    if holdings is None or holdings.empty or "ticker" not in holdings.columns:
+        return holdings
+
+    grouped_rows = []
+    for ticker, group in holdings.groupby(holdings["ticker"].astype(str).str.upper().str.strip(), sort=True):
+        shares = pd.to_numeric(group.get("shares"), errors="coerce").fillna(0)
+        share_total = float(shares.sum())
+        weights = shares.abs()
+
+        cost = pd.to_numeric(group.get("cost_per_share"), errors="coerce")
+        current = pd.to_numeric(group.get("current_price"), errors="coerce")
+        unrealized = pd.to_numeric(group.get("unrealized_pnl"), errors="coerce")
+        covered_shares = pd.to_numeric(group.get("covered_shares"), errors="coerce").fillna(0)
+        covered_strike = pd.to_numeric(group.get("covered_strike"), errors="coerce")
+        buy_dates = pd.to_datetime(group.get("buy_date"), errors="coerce")
+
+        cost_basis = float((cost.fillna(0) * weights).sum()) if weights.sum() else 0.0
+        avg_cost = cost_basis / float(weights.sum()) if weights.sum() else np.nan
+
+        current_weights = weights.where(current.notna(), 0)
+        avg_current = (
+            float((current.fillna(0) * current_weights).sum() / current_weights.sum())
+            if current_weights.sum()
+            else np.nan
+        )
+
+        covered_strikes = covered_strike.loc[covered_shares.gt(0) & covered_strike.notna()].drop_duplicates()
+        strike_mixed = len(covered_strikes) > 1
+        lot_count = int(len(group))
+        first_buy = buy_dates.min() if buy_dates.notna().any() else pd.NaT
+        latest_buy = buy_dates.max() if buy_dates.notna().any() else pd.NaT
+
+        grouped_rows.append(
+            {
+                "ticker": ticker,
+                "buy_date": first_buy if lot_count == 1 else pd.NaT,
+                "first_buy_date": first_buy,
+                "latest_buy_date": latest_buy,
+                "lot_count": lot_count,
+                "shares": int(round(share_total)),
+                "cost_per_share": avg_cost,
+                "current_price": avg_current,
+                "covered_shares": int(round(float(covered_shares.sum()))),
+                "covered_strike": np.nan if strike_mixed or covered_strikes.empty else float(covered_strikes.iloc[0]),
+                "covered_strike_mixed": bool(strike_mixed),
+                "unrealized_pnl": float(unrealized.sum()) if unrealized.notna().any() else np.nan,
+                "source": "stock_lot" if lot_count == 1 else "stock_group",
+            }
+        )
+
+    return pd.DataFrame(grouped_rows)
+
+
+def build_assigned_holding_lots_frame(inventory: pd.DataFrame) -> pd.DataFrame:
+    return _stock_lot_inventory(inventory)
 
 
 def build_open_option_shorts_frame(open_options: pd.DataFrame, stock_prices: Dict[str, float]) -> pd.DataFrame:

@@ -1054,7 +1054,11 @@ def build_inventory_rows(state) -> List[Dict[str, Any]]:
                 "current_price": json_safe(current_price),
                 "covered_shares": json_safe(_int_number(row.get("covered_shares")) or 0),
                 "covered_strike": json_safe(_number(row.get("covered_strike"))),
+                "covered_strike_mixed": bool(row.get("covered_strike_mixed") or False),
                 "unrealized_pnl": json_safe(unrealized_pnl),
+                "lot_count": json_safe(_int_number(row.get("lot_count")) or 1),
+                "first_buy_date": _date_string(row.get("first_buy_date")),
+                "latest_buy_date": _date_string(row.get("latest_buy_date")),
                 "source": source,
                 "missing_price": missing_price,
             }

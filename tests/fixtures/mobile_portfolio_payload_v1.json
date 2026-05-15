@@ -27,11 +27,15 @@
       {
         "ticker": "AAA",
         "buy_date": "2026-04-01",
+        "first_buy_date": "2026-04-01",
+        "latest_buy_date": "2026-04-01",
+        "lot_count": 1,
         "shares": 100,
         "cost_per_share": 100.0,
         "current_price": 120.0,
         "covered_shares": 0,
         "covered_strike": null,
+        "covered_strike_mixed": false,
         "unrealized_pnl": 2000.0,
         "source": "stock_lot"
       }

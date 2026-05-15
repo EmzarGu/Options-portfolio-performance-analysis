@@ -778,12 +778,17 @@ function monthlyRows(){
 function inventoryColumns(){
   return [
     {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
-    {key:"buy_date",label:"Buy date",format:fmtDate},
+    {key:"lot_count",label:"Lots",value:r=>numeric(r.lot_count)||1,num:true,compact:true},
+    {key:"buy_date",label:"Assigned",value:r=>{
+      const count = numeric(r.lot_count)||1;
+      if (count > 1) return `${count} lots, ${fmtDate(r.first_buy_date)}-${fmtDate(r.latest_buy_date)}`;
+      return fmtDate(r.buy_date);
+    }},
     {key:"shares",label:"Shares",num:true},
-    {key:"cost_per_share",label:"Cost/share",format:v=>fmtMoney(v,2),num:true},
+    {key:"cost_per_share",label:"Avg cost",format:v=>fmtMoney(v,2),num:true},
     {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
     {key:"covered_shares",label:"Covered shares",num:true},
-    {key:"covered_strike",label:"Covered strike",format:v=>fmtMoney(v,2),num:true},
+    {key:"covered_strike",label:"Covered strike",format:(v,r)=>r.covered_strike_mixed ? "Mixed" : fmtMoney(v,2),num:true},
     {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls}
   ];
 }

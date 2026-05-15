@@ -73,7 +73,11 @@ Every row consumed by SwiftUI lists must have a deterministic, collision-resista
 Rules:
 
 - Option-short row ID format: `optlot:{ticker}:{option_type}:{strike}:{expiration}:{opened}:{lot_sequence}`.
-- Inventory row ID format: `inventory:{ticker}:{buy_date}:{source}:{lot_sequence}`.
+- Inventory row ID format: `inventory:{ticker}:{buy_date_or_unknown}:{source}:{lot_sequence}`.
+  `inventory` is grouped by ticker for the main app surfaces; when multiple
+  assignment lots exist for the same ticker, `buy_date` is `null`,
+  `source="stock_group"`, and `lot_count`/`first_buy_date`/`latest_buy_date`
+  describe the underlying lots.
 - Ticker row ID format: `ticker:{ticker}`.
 - Monthly row ID format: `month:{YYYY-MM-DD}`.
 - Yearly row ID format: `year:{YYYY}`.
@@ -415,27 +419,35 @@ Response:
   },
   "inventory": [
     {
-      "id": "inventory:TSLA:2025-11-15:stock_lot:0",
+      "id": "inventory:TSLA:unknown:stock_group:0",
       "ticker": "TSLA",
-      "buy_date": "2025-11-15",
+      "buy_date": null,
+      "first_buy_date": "2025-11-15",
+      "latest_buy_date": "2025-12-20",
+      "lot_count": 2,
       "shares": 200,
       "cost_per_share": 221.8,
       "current_price": 183.42,
       "covered_shares": 0,
       "covered_strike": null,
+      "covered_strike_mixed": false,
       "unrealized_pnl": -7676.0,
-      "source": "stock_lot",
+      "source": "stock_group",
       "missing_price": false
     },
     {
       "id": "inventory:AAPL:2025-09-03:stock_lot:0",
       "ticker": "AAPL",
       "buy_date": "2025-09-03",
+      "first_buy_date": "2025-09-03",
+      "latest_buy_date": "2025-09-03",
+      "lot_count": 1,
       "shares": 100,
       "cost_per_share": 176.4,
       "current_price": 192.31,
       "covered_shares": 100,
       "covered_strike": 205.0,
+      "covered_strike_mixed": false,
       "unrealized_pnl": 1591.0,
       "source": "stock_lot",
       "missing_price": false
@@ -1191,7 +1203,7 @@ Error nullability:
 
 4. Give all mobile rows stable IDs:
    - Option row ID must be `optlot:{ticker}:{option_type}:{strike}:{expiration}:{opened}:{lot_sequence}`.
-   - Inventory row ID must be `inventory:{ticker}:{buy_date}:{source}:{lot_sequence}`.
+   - Inventory row ID must be `inventory:{ticker}:{buy_date_or_unknown}:{source}:{lot_sequence}`.
    - Ticker row ID must be `ticker:{ticker}`.
    - Monthly row ID must be `month:{YYYY-MM-DD}`.
    - Yearly row ID must be `year:{YYYY}`.

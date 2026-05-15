@@ -471,10 +471,66 @@ def test_inventory_rows_emit_mobile_contract_shape():
             "current_price": 60.0,
             "covered_shares": 100,
             "covered_strike": 50.0,
+            "covered_strike_mixed": False,
             "unrealized_pnl": 1500.0,
+            "lot_count": 1,
+            "first_buy_date": "2026-04-02",
+            "latest_buy_date": "2026-04-02",
             "source": "stock_lot",
             "missing_price": False,
         },
+    ]
+
+
+def test_inventory_rows_group_multiple_lots_by_ticker():
+    state = _mobile_state()
+    state.inv_df = pd.DataFrame(
+        [
+            {
+                "ticker": "STZ",
+                "buy_date": pd.Timestamp("2026-05-13"),
+                "shares": 100,
+                "cost_per_share": 150.0,
+                "current_price": 140.55,
+                "covered_shares": 0,
+                "covered_strike": pd.NA,
+                "unrealized_pnl": -945.0,
+                "source": "stock_lot",
+            },
+            {
+                "ticker": "STZ",
+                "buy_date": pd.Timestamp("2026-05-14"),
+                "shares": 100,
+                "cost_per_share": 150.0,
+                "current_price": 140.55,
+                "covered_shares": 0,
+                "covered_strike": pd.NA,
+                "unrealized_pnl": -945.0,
+                "source": "stock_lot",
+            },
+        ]
+    )
+
+    rows = build_inventory_rows(state)
+
+    assert rows == [
+        {
+            "id": "inventory:STZ:unknown:stock_group:0",
+            "ticker": "STZ",
+            "buy_date": None,
+            "shares": 200,
+            "cost_per_share": 150.0,
+            "current_price": 140.55,
+            "covered_shares": 0,
+            "covered_strike": None,
+            "covered_strike_mixed": False,
+            "unrealized_pnl": -1890.0,
+            "lot_count": 2,
+            "first_buy_date": "2026-05-13",
+            "latest_buy_date": "2026-05-14",
+            "source": "stock_group",
+            "missing_price": False,
+        }
     ]
 
 
