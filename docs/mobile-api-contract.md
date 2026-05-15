@@ -75,9 +75,9 @@ Rules:
 - Option-short row ID format: `optlot:{ticker}:{option_type}:{strike}:{expiration}:{opened}:{lot_sequence}`.
 - Inventory row ID format: `inventory:{ticker}:{buy_date_or_unknown}:{source}:{lot_sequence}`.
   `inventory` is grouped by ticker for the main app surfaces; when multiple
-  assignment lots exist for the same ticker, `buy_date` is `null`,
-  `source="stock_group"`, and `lot_count`/`first_buy_date`/`latest_buy_date`
-  describe the underlying lots.
+  assignment lots exist for the same ticker, `buy_date` is the latest
+  assignment date, `source="stock_group"`, and
+  `lot_count`/`first_buy_date`/`latest_buy_date` describe the underlying lots.
 - Ticker row ID format: `ticker:{ticker}`.
 - Monthly row ID format: `month:{YYYY-MM-DD}`.
 - Yearly row ID format: `year:{YYYY}`.
@@ -419,9 +419,9 @@ Response:
   },
   "inventory": [
     {
-      "id": "inventory:TSLA:unknown:stock_group:0",
+      "id": "inventory:TSLA:2025-12-20:stock_group:0",
       "ticker": "TSLA",
-      "buy_date": null,
+      "buy_date": "2025-12-20",
       "first_buy_date": "2025-11-15",
       "latest_buy_date": "2025-12-20",
       "lot_count": 2,

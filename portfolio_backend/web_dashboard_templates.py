@@ -779,11 +779,7 @@ function inventoryColumns(){
   return [
     {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
     {key:"lot_count",label:"Lots",value:r=>numeric(r.lot_count)||1,num:true,compact:true},
-    {key:"buy_date",label:"Assigned",value:r=>{
-      const count = numeric(r.lot_count)||1;
-      if (count > 1) return `${count} lots, ${fmtDate(r.first_buy_date)}-${fmtDate(r.latest_buy_date)}`;
-      return fmtDate(r.buy_date);
-    }},
+    {key:"buy_date",label:"Last assigned",format:fmtDate},
     {key:"shares",label:"Shares",num:true},
     {key:"cost_per_share",label:"Avg cost",format:v=>fmtMoney(v,2),num:true},
     {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},

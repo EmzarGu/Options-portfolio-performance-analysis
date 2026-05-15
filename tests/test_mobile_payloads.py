@@ -515,9 +515,9 @@ def test_inventory_rows_group_multiple_lots_by_ticker():
 
     assert rows == [
         {
-            "id": "inventory:STZ:unknown:stock_group:0",
+            "id": "inventory:STZ:2026-05-14:stock_group:0",
             "ticker": "STZ",
-            "buy_date": None,
+            "buy_date": "2026-05-14",
             "shares": 200,
             "cost_per_share": 150.0,
             "current_price": 140.55,

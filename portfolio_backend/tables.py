@@ -137,7 +137,7 @@ def build_assigned_holdings_frame(inventory: pd.DataFrame) -> pd.DataFrame:
         grouped_rows.append(
             {
                 "ticker": ticker,
-                "buy_date": first_buy if lot_count == 1 else pd.NaT,
+                "buy_date": latest_buy,
                 "first_buy_date": first_buy,
                 "latest_buy_date": latest_buy,
                 "lot_count": lot_count,
