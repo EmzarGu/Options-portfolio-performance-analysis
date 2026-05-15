@@ -493,7 +493,9 @@ def _process_roll_adjusted_option_executions(
     open_lots: list[OptionLot] = []
     for buckets in open_map.values():
         for lot in buckets:
-            if as_of >= pd.to_datetime(lot.expiration).normalize():
+            # Keep unreported positions visible through expiration day. Explicit
+            # close/assignment rows remove lots earlier when IBKR has reported them.
+            if as_of > pd.to_datetime(lot.expiration).normalize():
                 pnl = lot.open_price * lot.qty * CONTRACT_MULTIPLIER
                 reason = "assignment" if lot.assigned else "expiration"
                 realized.append(

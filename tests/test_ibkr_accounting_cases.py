@@ -1952,6 +1952,40 @@ def test_ibkr_pipeline_reports_non_rolled_option_on_close_or_expiration_year():
     assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(299.0)
 
 
+def test_ibkr_pipeline_keeps_expiring_option_open_through_expiration_day():
+    open_put = _trade(
+        tradeDate="20260501",
+        dateTime="20260501;154500",
+        expiry="20260514",
+        strike="100",
+        quantity="-1",
+        proceeds="250",
+        ibCommission="-1",
+        netCash="249",
+    )
+
+    expiry_day_state = build_ibkr_base_pipeline(
+        _report({"Trade": [open_put]}),
+        as_of=pd.Timestamp("2026-05-14").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+    assert len(expiry_day_state.open_options) == 1
+    assert expiry_day_state.open_options.iloc[0]["ticker"] == "ABC"
+    assert not expiry_day_state.realized_option_events
+
+    next_day_state = build_ibkr_base_pipeline(
+        _report({"Trade": [open_put]}),
+        as_of=pd.Timestamp("2026-05-15").date(),
+        fetch_price_history_fn=_empty_price_history,
+        align_benchmarks_monthly_fn=_empty_benchmarks,
+    )
+    assert next_day_state.open_options.empty
+    assert [(event.ticker, event.pnl, event.reason) for event in next_day_state.realized_option_events] == [
+        ("ABC", pytest.approx(249.0), "expiration")
+    ]
+
+
 def test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open():
     open_old = _trade(
         putCall="C",
