@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
 
+from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
 from portfolio_backend.mobile_api_service import build_mobile_refresh_payload
 from portfolio_backend.web_dashboard_payloads import (
     build_dashboard_data as build_web_dashboard_data,
@@ -565,6 +566,24 @@ def refresh(request: Request) -> Response:
             f"/?include_unrealized={1 if include_unrealized else 0}"
             f"&target_return={target_return:.6f}&section={section}&refreshed={cache_bust}"
         ),
+        status_code=303,
+    )
+
+
+@app.post("/import")
+def trigger_import(request: Request) -> Response:
+    if not _is_authenticated(request):
+        return _redirect_to_login()
+    section = request.query_params.get("section") or "diagnostics"
+    try:
+        import_start = trigger_ibkr_import_job()
+        status = import_start.status
+    except Exception as exc:
+        logger.warning("web_import_start_failed error=%s", exc)
+        status = "failed"
+    _clear_dashboard_data_cache()
+    return RedirectResponse(
+        url=f"/?section={section}&import_start={status}&v={int(time())}",
         status_code=303,
     )
 

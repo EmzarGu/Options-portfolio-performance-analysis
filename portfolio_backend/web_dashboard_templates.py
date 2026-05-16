@@ -1019,6 +1019,13 @@ function renderDiagnostics(){
   const required=coverage.required_count ?? coverage.stocks_requested ?? coverage.requested ?? 0;
   $("diagnostics").innerHTML = `
     ${sectionHead("Data Health", "Actionable issues are separated from expected IBKR audit notes.")}
+    <div class="panel">
+      <h3>IBKR import</h3>
+      <p class="muted">Use this when Diagnostics shows a missing or deferred IBKR statement. It starts the import job; refresh data after it finishes.</p>
+      <form id="importForm" method="post" action="/import?section=diagnostics">
+        <button class="primary" type="submit">Retry IBKR import</button>
+      </form>
+    </div>
     <div class="grid metrics">
       ${card("Actionable issues", fmtNum(sum.total_count || 0), "Warnings/errors requiring attention", (sum.total_count || 0) ? "neg" : "pos")}
       ${card("Audit notes", fmtNum(aud.total_count || 0), "Expected classification notes")}
@@ -1164,6 +1171,18 @@ function bindControls(){
         setUpdating(true, "Refreshing data...");
       });
     }
+  }
+  const importForm = $("importForm");
+  if (importForm && !importForm.dataset.bound) {
+    importForm.dataset.bound = "1";
+    importForm.addEventListener("submit", () => {
+      const button = importForm.querySelector("button");
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Starting import...";
+      }
+      setUpdating(true, "Starting IBKR import...");
+    });
   }
   document.querySelectorAll("[data-basis-control] button").forEach(btn => btn.addEventListener("click", () => {
     const next = btn.dataset.value !== "0";

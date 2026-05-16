@@ -648,6 +648,29 @@ def test_refresh_route_respects_explicit_cache_bust(api_harness):
     assert response.json()["refresh"]["cache_bust"] == 123
 
 
+def test_import_route_starts_ibkr_import_job(api_harness, monkeypatch):
+    class Started:
+        def as_dict(self):
+            return {
+                "status": "started",
+                "job_name": "ibkr-flex-import",
+                "region": "europe-west6",
+                "project_id": "project-1",
+                "operation_name": "operations/1",
+                "started_at": "2026-05-16T19:00:00+02:00",
+                "message": "started",
+            }
+
+    monkeypatch.setattr(mobile_api, "trigger_ibkr_import_job", lambda: Started())
+
+    response = api_harness.client.post("/v1/mobile/import")
+
+    assert response.status_code == 200
+    assert response.json()["import"]["status"] == "started"
+    assert response.json()["import"]["job_name"] == "ibkr-flex-import"
+    assert "/v1/mobile/issues" in response.json()["reload_endpoints"]
+
+
 def test_refresh_route_records_best_effort_audit(api_harness, monkeypatch):
     class FakeAuditStore:
         def __init__(self):

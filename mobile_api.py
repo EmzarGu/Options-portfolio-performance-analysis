@@ -22,6 +22,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when dep
 import streamlit_app as dashboard_app
 import pandas as pd
 from portfolio_backend.audit_store import RefreshAuditRecord, get_default_audit_store
+from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
 from portfolio_backend.mobile_api_service import (
     MobilePayloadContext,
     MobilePayloadRequest,
@@ -1232,6 +1233,33 @@ def refresh_mobile_payloads(
         finished_at=_now_iso(),
     )
     return payload
+
+
+@app.post("/v1/mobile/import")
+def trigger_mobile_ibkr_import() -> Dict[str, Any]:
+    try:
+        import_start = trigger_ibkr_import_job()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "import_start_failed",
+                "message": f"Could not start IBKR import job: {exc}",
+                "details": {},
+            },
+        ) from exc
+    return {
+        "import": import_start.as_dict(),
+        "reload_endpoints": [
+            "/v1/mobile/issues",
+            "/v1/mobile/dashboard",
+            "/v1/mobile/positions",
+            "/v1/mobile/open-option-shorts",
+            "/v1/mobile/tickers",
+            "/v1/mobile/performance/monthly",
+            "/v1/mobile/performance/yearly",
+        ],
+    }
 
 
 @app.get("/v1/mobile/dashboard")

@@ -1131,6 +1131,52 @@ Nullability:
   to append `cache_bust` unless they are deliberately debugging a specific
   rebuild token.
 
+## Endpoint 10: Trigger IBKR Import
+
+`POST /v1/mobile/import`
+
+Purpose: explicit user-triggered IBKR Flex import. This is separate from
+`POST /v1/mobile/refresh`: import asks IBKR for newly published statement rows;
+refresh reloads stored rows and current prices.
+
+Response:
+
+```json
+{
+  "import": {
+    "status": "started",
+    "job_name": "ibkr-flex-import",
+    "region": "europe-west6",
+    "project_id": "options-performance-dashboard",
+    "operation_name": "projects/.../operations/...",
+    "started_at": "2026-05-16T19:00:00+02:00",
+    "message": "IBKR import job started. Refresh data after the job finishes to load newly imported rows."
+  },
+  "reload_endpoints": [
+    "/v1/mobile/issues",
+    "/v1/mobile/dashboard",
+    "/v1/mobile/positions",
+    "/v1/mobile/open-option-shorts",
+    "/v1/mobile/tickers",
+    "/v1/mobile/performance/monthly",
+    "/v1/mobile/performance/yearly"
+  ]
+}
+```
+
+Client behavior:
+
+- Show this as a Settings/diagnostics action, not as the normal price refresh.
+- Disable the button while the request is in flight.
+- On success, show that the import was started. The Cloud Run Job runs
+  asynchronously, so the client should not assume new rows are available
+  immediately.
+- After a short delay or after the user taps normal refresh, call
+  `POST /v1/mobile/refresh` and reload the listed endpoints.
+- If the job starts but IBKR still has not published the statement, the next
+  `/v1/mobile/issues` payload should continue showing an actionable `import`
+  warning.
+
 ## Error Contract
 
 Non-2xx responses should use one consistent JSON shape:

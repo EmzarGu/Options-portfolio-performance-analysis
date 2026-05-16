@@ -208,6 +208,28 @@ def test_web_dashboard_api_requires_auth(monkeypatch):
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
 
 
+def test_web_dashboard_import_route_starts_job(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    calls = []
+
+    class Started:
+        status = "started"
+
+    def fake_trigger():
+        calls.append(True)
+        return Started()
+
+    monkeypatch.setattr(web_dashboard, "trigger_ibkr_import_job", fake_trigger)
+    client = TestClient(web_dashboard.app, follow_redirects=False)
+
+    response = client.post("/import?section=diagnostics")
+
+    assert response.status_code == 303
+    assert "section=diagnostics" in response.headers["location"]
+    assert "import_start=started" in response.headers["location"]
+    assert calls == [True]
+
+
 def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")

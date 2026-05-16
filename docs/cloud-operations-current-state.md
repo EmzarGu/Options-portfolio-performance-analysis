@@ -13,6 +13,12 @@ Last reviewed: 2026-05-12.
   `Europe/Zurich`
 - IBKR import job retries: `0`, so IBKR token pacing errors are not amplified
   by immediate Cloud Run retries.
+- Manual IBKR import trigger:
+  - Web dashboard Diagnostics tab: `Retry IBKR import`
+  - Mobile API: `POST /v1/mobile/import`
+  - The action starts the Cloud Run Job asynchronously. After it finishes,
+    regular `Refresh data` / `POST /v1/mobile/refresh` reloads the new import
+    marker and current prices.
 
 There is no separate Cloud Run Streamlit service. The old
 `options-roi-streamlit` service was deleted after the FastAPI web dashboard
@@ -33,6 +39,12 @@ and `Cash Transactions`.
 The import planner treats standalone weekend-only Activity Flex gaps as
 non-importable, and the Flex client spaces `SendRequest` calls to stay within
 IBKR pacing limits.
+
+If IBKR has not published the trailing business-day statement yet, the import
+job records a deferred run. Production issue payloads surface unresolved
+deferred/failed import attempts as actionable `import` warnings until a later
+successful import covers the same date. This keeps the dashboards honest while
+avoiding repeated automatic IBKR import attempts throughout the day.
 
 ## Persistent Storage
 
