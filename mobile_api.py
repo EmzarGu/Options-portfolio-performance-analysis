@@ -436,7 +436,7 @@ def _refresh_source_marker(timing_recorder=None) -> Optional[Dict[str, Any]]:
             if str(doc.get("status")) == "succeeded":
                 latest = _ibkr_import_marker_from_doc(doc, fallback_id=metadata_snap.id, query_id=query_id)
                 if latest is not None:
-                    return latest
+                    return _with_ibkr_import_health(client, query_id, latest)
 
         try:
             from google.cloud.firestore_v1 import FieldFilter
@@ -464,7 +464,7 @@ def _refresh_source_marker(timing_recorder=None) -> Optional[Dict[str, Any]]:
             client.collection("app_metadata").document(f"ibkr_latest_import_{query_id}").set(latest, merge=True)
         except Exception as exc:
             logger.warning("ibkr_refresh_marker_cache_write_failed error=%s", exc)
-        return latest
+        return _with_ibkr_import_health(client, query_id, latest)
     except Exception as exc:
         logger.warning("ibkr_refresh_source_check_failed error=%s", exc)
         return None
@@ -499,6 +499,104 @@ def _ibkr_import_marker_from_doc(
     return marker
 
 
+def _with_ibkr_import_health(client, query_id: str, marker: Dict[str, Any]) -> Dict[str, Any]:
+    marker = dict(marker)
+    marker["import_health"] = _ibkr_import_health(client, query_id, marker)
+    return marker
+
+
+def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect unresolved IBKR import failures/deferred trailing statements.
+
+    Pipeline data is loaded from successful raw-row imports. A trailing-day
+    statement can fail/defer after the last successful import; without checking
+    refresh_runs explicitly, the apps can incorrectly show data quality as OK
+    while yesterday's assignment/expiration rows are still missing.
+    """
+    latest_success_finished = str(latest_success_marker.get("finished_at") or "")
+    latest_success_to_date = _parse_iso_date(latest_success_marker.get("to_date"))
+    issues: List[Dict[str, Any]] = []
+    try:
+        try:
+            from google.cloud.firestore_v1 import FieldFilter
+
+            docs = client.collection("refresh_runs").where(filter=FieldFilter("source", "==", "ibkr_flex")).stream()
+        except Exception:
+            docs = client.collection("refresh_runs").where("source", "==", "ibkr_flex").stream()
+        for snap in docs:
+            doc = snap.to_dict() or {}
+            status = str(doc.get("status") or "")
+            if status not in {"failed", "deferred"}:
+                continue
+            doc_query_id = str(doc.get("query_id") or query_id)
+            if doc_query_id != str(query_id):
+                continue
+            finished_at = str(doc.get("finished_at") or "")
+            issue_to_date = _parse_iso_date(doc.get("to_date"))
+            if _ibkr_import_issue_resolved(
+                latest_success_finished=latest_success_finished,
+                latest_success_to_date=latest_success_to_date,
+                issue_finished_at=finished_at,
+                issue_to_date=issue_to_date,
+            ):
+                continue
+            from_date = doc.get("from_date")
+            to_date = doc.get("to_date")
+            label = str(to_date or from_date or "latest requested date")
+            if from_date and to_date and from_date != to_date:
+                label = f"{from_date} to {to_date}"
+            reason = str(doc.get("defer_reason") or doc.get("error_message") or status)
+            if reason == "trailing_statement_unavailable":
+                message = f"IBKR import deferred for {label}: statement was not available yet."
+            else:
+                message = f"IBKR import {status} for {label}: {reason}"
+            issues.append(
+                {
+                    "category": "import",
+                    "severity": "warning",
+                    "status": status,
+                    "from_date": from_date,
+                    "to_date": to_date,
+                    "finished_at": finished_at,
+                    "message": message,
+                    "action": "retry_import",
+                }
+            )
+    except Exception as exc:
+        logger.warning("ibkr_import_health_check_failed error=%s", exc)
+    issues.sort(key=lambda item: str(item.get("finished_at") or ""), reverse=True)
+    return {
+        "status": "warning" if issues else "ok",
+        "issues": issues[:5],
+        "unresolved_count": len(issues),
+        "latest_success_finished_at": latest_success_marker.get("finished_at"),
+        "latest_success_to_date": latest_success_marker.get("to_date"),
+    }
+
+
+def _parse_iso_date(value: Any) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _ibkr_import_issue_resolved(
+    *,
+    latest_success_finished: str,
+    latest_success_to_date: Optional[date],
+    issue_finished_at: str,
+    issue_to_date: Optional[date],
+) -> bool:
+    if latest_success_finished and issue_finished_at and latest_success_finished > issue_finished_at:
+        if issue_to_date is None or latest_success_to_date is None:
+            return True
+        return latest_success_to_date >= issue_to_date
+    return False
+
+
 def _source_metadata_for_marker(marker: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not marker:
         return {}
@@ -515,6 +613,8 @@ def _source_metadata_for_marker(marker: Optional[Dict[str, Any]]) -> Dict[str, A
         "ibkr_import_finished_at": marker.get("finished_at"),
         "ibkr_import_from_date": marker.get("from_date"),
         "ibkr_import_to_date": marker.get("to_date"),
+        "ibkr_import_health": marker.get("import_health") or {},
+        "ibkr_import_issues": (marker.get("import_health") or {}).get("issues") or [],
     }
 
 

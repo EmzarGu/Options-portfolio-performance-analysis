@@ -26,6 +26,7 @@
   },
   "issue_summary": {
     "audit_issue_count": 0,
+    "import_issue_count": 0,
     "parse_issue_count": 1,
     "price_issue_count": 1,
     "severity": "warning",

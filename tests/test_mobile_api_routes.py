@@ -22,6 +22,27 @@ def _request_payload(context):
     }
 
 
+def test_ibkr_import_issue_resolved_only_by_later_success_covering_same_date():
+    assert mobile_api._ibkr_import_issue_resolved(
+        latest_success_finished="2026-05-16T17:27:41Z",
+        latest_success_to_date=date(2026, 5, 15),
+        issue_finished_at="2026-05-16T05:30:21Z",
+        issue_to_date=date(2026, 5, 15),
+    )
+    assert not mobile_api._ibkr_import_issue_resolved(
+        latest_success_finished="2026-05-16T17:27:41Z",
+        latest_success_to_date=date(2026, 5, 14),
+        issue_finished_at="2026-05-16T05:30:21Z",
+        issue_to_date=date(2026, 5, 15),
+    )
+    assert not mobile_api._ibkr_import_issue_resolved(
+        latest_success_finished="2026-05-16T05:29:00Z",
+        latest_success_to_date=date(2026, 5, 14),
+        issue_finished_at="2026-05-16T05:30:21Z",
+        issue_to_date=date(2026, 5, 15),
+    )
+
+
 @pytest.fixture
 def api_harness(monkeypatch):
     mobile_api._clear_context_cache()

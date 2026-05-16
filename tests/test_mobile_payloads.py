@@ -729,8 +729,34 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "price_issue_count": 1,
         "parse_issue_count": 1,
         "audit_issue_count": 0,
+        "import_issue_count": 0,
         "top_messages": ["MISS: no price returned", "Mixed-leg option row needs review"],
     }
+
+
+def test_mobile_dashboard_counts_import_health_warnings():
+    dashboard = build_mobile_dashboard(
+        _mobile_state(),
+        {
+            "as_of": pd.Timestamp("2026-05-03"),
+            "include_unrealized": True,
+            "selected_sheets": ["IBKR Flex"],
+        },
+        source_metadata={
+            "import_issues": [
+                {
+                    "category": "import",
+                    "severity": "warning",
+                    "message": "IBKR import deferred for 2026-05-15: statement was not available yet.",
+                    "action": "retry_import",
+                }
+            ]
+        },
+    )
+
+    assert dashboard["issue_summary"]["severity"] == "warning"
+    assert dashboard["issue_summary"]["import_issue_count"] == 1
+    assert "IBKR import deferred for 2026-05-15" in dashboard["issue_summary"]["top_messages"][-1]
 
 
 def test_mobile_dashboard_matches_contract_fixture():
@@ -1627,6 +1653,47 @@ def test_mobile_issues_composes_contract_payload():
     }
     assert issues["audit_summary"] == {"total_count": 0, "by_category": {}, "by_severity": {}}
     assert issues["audit_notes"] == []
+
+
+def test_mobile_issues_exposes_import_health_warning():
+    payload = build_mobile_issues(
+        SimpleNamespace(
+            as_of=pd.Timestamp("2026-05-16"),
+            sheet_counts=pd.DataFrame({"source_sheet": ["IBKR Flex"], "rows": [637]}),
+            price_errors=[],
+            price_summary={},
+            historical_price_errors=[],
+            historical_price_summary={},
+            dividend_errors=[],
+            dividend_summary={},
+            capital_history_coverage_issues=[],
+            issues=[],
+        ),
+        {"selected_sheets": ["IBKR Flex"], "include_unrealized": True},
+        source_metadata={
+            "import_issues": [
+                {
+                    "category": "import",
+                    "severity": "warning",
+                    "message": "IBKR import deferred for 2026-05-15: statement was not available yet.",
+                    "action": "retry_import",
+                }
+            ]
+        },
+    )
+
+    assert payload["summary"]["severity"] == "warning"
+    assert payload["summary"]["total_count"] == 1
+    assert payload["issues"] == [
+        {
+            "id": "import-1",
+            "category": "import",
+            "severity": "warning",
+            "message": "IBKR import deferred for 2026-05-15: statement was not available yet.",
+            "tickers": [],
+            "action": "retry_import",
+        }
+    ]
 
 
 def test_mobile_issues_matches_contract_fixture():

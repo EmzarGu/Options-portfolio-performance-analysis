@@ -914,12 +914,40 @@ def build_mobile_yearly_performance(
     }
 
 
-def build_issue_summary(state) -> Dict[str, Any]:
+def _import_issue_rows_from_metadata(source_metadata: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    metadata = source_metadata or {}
+    rows: List[Dict[str, Any]] = []
+    for idx, item in enumerate(metadata.get("import_issues") or metadata.get("ibkr_import_issues") or [], start=1):
+        if isinstance(item, dict):
+            message = str(item.get("message") or item.get("error_message") or item)
+            severity = str(item.get("severity") or "warning")
+            category = str(item.get("category") or "import")
+            action = item.get("action") or "retry_import"
+        else:
+            message = str(item)
+            severity = "warning"
+            category = "import"
+            action = "retry_import"
+        rows.append(
+            _issue_row(
+                f"import-{idx}",
+                category=category,
+                severity=severity,
+                message=message,
+                action=action,
+            )
+        )
+    return rows
+
+
+def build_issue_summary(state, source_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     issues = list(getattr(state, "issues", []) or [])
     price_errors = list(getattr(state, "price_errors", []) or [])
     actionable_issues = [message for message in issues if classify_backend_issue(message).actionable]
     audit_issue_count = len(issues) - len(actionable_issues)
-    total_count = len(actionable_issues) + len(price_errors)
+    import_issue_rows = _import_issue_rows_from_metadata(source_metadata)
+    import_issues = [row["message"] for row in import_issue_rows if row.get("severity") in {"warning", "error"}]
+    total_count = len(actionable_issues) + len(price_errors) + len(import_issues)
     severity = "ok" if total_count == 0 else "warning"
     if bool(getattr(state, "unrealized_blocked", False)):
         severity = "warning"
@@ -929,7 +957,8 @@ def build_issue_summary(state) -> Dict[str, Any]:
         "price_issue_count": len(price_errors),
         "parse_issue_count": len(actionable_issues),
         "audit_issue_count": audit_issue_count,
-        "top_messages": json_safe([*price_errors, *actionable_issues][:3]),
+        "import_issue_count": len(import_issues),
+        "top_messages": json_safe([*price_errors, *actionable_issues, *import_issues][:3]),
     }
 
 
@@ -986,7 +1015,7 @@ def build_mobile_dashboard(
         "snapshot": build_mobile_snapshot(state, include_unrealized),
         "monthly_target": build_monthly_target(state, target_return=target_return),
         "open_option_short_preview": preview,
-        "issue_summary": build_issue_summary(state),
+        "issue_summary": build_issue_summary(state, source_metadata),
     }
 
 
@@ -1502,8 +1531,9 @@ def _issue_row(
     }
 
 
-def build_mobile_issue_rows(state) -> List[Dict[str, Any]]:
+def build_mobile_issue_rows(state, source_metadata: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     rows = []
+    rows.extend(_import_issue_rows_from_metadata(source_metadata))
     price_summary = getattr(state, "price_summary", {}) or {}
     missing_tickers = [str(ticker).upper().strip() for ticker in getattr(state, "missing_required_price_tickers", []) or []]
     requested = _int_number(price_summary.get("stocks_requested")) or _int_number(price_summary.get("requested")) or 0
@@ -1659,7 +1689,7 @@ def build_mobile_issues(
     selected_sheets = _request_value(request, "selected_sheets", [])
     include_unrealized = bool(_request_value(request, "include_unrealized", False))
     as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
-    issue_rows = build_mobile_issue_rows(state)
+    issue_rows = build_mobile_issue_rows(state, source_metadata)
     actionable_rows = [row for row in issue_rows if row.get("severity") in {"warning", "error"}]
     audit_rows = [row for row in issue_rows if row.get("severity") == "info"]
     return {
