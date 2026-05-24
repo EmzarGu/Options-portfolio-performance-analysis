@@ -16,6 +16,9 @@ The validation fetches only chains required by actual trades. It does not fetch 
 - `option_market_chain_snapshots`: one document per provider/ticker/trade-date/expiry/put-call request. Firestore snapshots keep compact raw page metadata to avoid document-size limits; full raw pages are retained by the local JSON store during validation runs.
 - `option_market_contracts`: normalized contract rows from each chain snapshot.
 - `option_market_trade_matches`: local matches between IBKR trades, sheet probability rows, and provider contracts.
+- `option_probability_import_runs`: one document per historical Google Sheet probability import.
+- `option_probability_rows`: normalized historical sheet probability rows.
+- `option_probability_trade_matches`: matches between IBKR short-option opening trades and historical probability rows.
 
 ## Provider contract
 
@@ -49,6 +52,24 @@ Example dry run:
 ```bash
 python scripts/option_market_validation_backfill.py --year 2024 --dry-run
 ```
+
+## Historical probability import
+
+Use the historical import script to load Google Sheet `Profit probability` values into Firestore or a local JSON simulation. This does not call any option-market provider and does not change accounting, mobile payloads, or dashboard output.
+
+Default scope is 2022 through the current year:
+
+```bash
+python scripts/import_option_probability_history.py --store local-json
+```
+
+Firestore import:
+
+```bash
+python scripts/import_option_probability_history.py --store firestore
+```
+
+The import writes normalized probability rows, IBKR trade match rows including missing-probability coverage, unmatched sheet rows, and a run document containing the exact persisted row and match IDs. Re-running the import creates a new run and upserts stable row/match documents, so consumers should read from the latest successful `option_probability_import_runs` document when reload semantics matter. Use `--matched-only` only for ad hoc local artifacts that should exclude missing-probability trade rows.
 
 ## Validation metrics
 

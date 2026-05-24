@@ -3,6 +3,8 @@ from portfolio_backend.option_market.models import (
     OptionMarketContract,
     OptionMarketFetchResult,
     OptionMarketMatch,
+    OptionProbabilityRow,
+    OptionProbabilityTradeMatch,
     OptionTradeCandidate,
 )
 from portfolio_backend.option_market.store import (
@@ -19,5 +21,7 @@ __all__ = [
     "OptionMarketContract",
     "OptionMarketFetchResult",
     "OptionMarketMatch",
+    "OptionProbabilityRow",
+    "OptionProbabilityTradeMatch",
     "OptionTradeCandidate",
 ]

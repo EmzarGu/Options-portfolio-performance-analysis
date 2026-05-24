@@ -9,6 +9,7 @@ from portfolio_backend.option_market.models import OptionChainRequest, OptionMar
 from portfolio_backend.option_market.store import LocalJsonOptionMarketStore
 from portfolio_backend.option_market.validation import (
     attach_sheet_probabilities,
+    build_probability_history_import,
     build_validation_report,
     candidates_from_ibkr_report,
     dedupe_chain_requests,
@@ -118,6 +119,36 @@ def test_local_json_store_persists_snapshot_contracts_and_matches(tmp_path):
     assert store.load_contracts(request)[0]["strike"] == 95
 
 
+def test_local_json_store_persists_probability_history(tmp_path):
+    candidate = candidates_from_ibkr_report(_report([_trade_row()]), year=2024)[0]
+    probability_rows = extract_sheet_probability_rows(
+        pd.DataFrame(
+            [
+                {
+                    "trans_date": pd.Timestamp("2024-03-15"),
+                    "ticker": "AAA",
+                    "type": "Put",
+                    "action": "Sell",
+                    "expiration": pd.Timestamp("2024-04-19"),
+                    "strike": 95,
+                    "Profit probability": "78%",
+                }
+            ]
+        ),
+        year=2024,
+    )
+    imported = build_probability_history_import([candidate], probability_rows)
+    store = LocalJsonOptionMarketStore(tmp_path)
+
+    store.begin_probability_import_run({"run_id": "run-1", "status": "running"})
+    store.save_probability_history(imported.probability_rows, imported.trade_matches)
+    store.finish_probability_import_run("run-1", {"status": "succeeded"})
+
+    assert (tmp_path / "option_probability_import_runs" / "run-1.json").exists()
+    assert len(list((tmp_path / "option_probability_rows").glob("*.json"))) == 1
+    assert len(list((tmp_path / "option_probability_trade_matches").glob("*.json"))) == 1
+
+
 def test_candidate_extraction_and_probability_column_variants_match():
     candidates = candidates_from_ibkr_report(_report([_trade_row()]), year=2024)
     sheet = pd.DataFrame(
@@ -140,6 +171,55 @@ def test_candidate_extraction_and_probability_column_variants_match():
     assert len(resolved) == 1
     assert resolved[0].profit_probability == 0.78
     assert round(resolved[0].assignment_risk_proxy, 6) == 0.22
+
+
+def test_probability_history_import_matches_and_tracks_unmatched_rows():
+    candidates = candidates_from_ibkr_report(
+        _report(
+            [
+                _trade_row(tradeID="trade-1", strike="95"),
+                _trade_row(tradeID="trade-2", strike="90"),
+            ]
+        ),
+        year=2024,
+    )
+    sheet = pd.DataFrame(
+        [
+            {
+                "trans_date": pd.Timestamp("2024-03-15"),
+                "ticker": "AAA",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-04-19"),
+                "strike": 95,
+                "Profit probability": "78%",
+                "source_sheet": "Options 2024",
+            },
+            {
+                "trans_date": pd.Timestamp("2024-03-15"),
+                "ticker": "BBB",
+                "type": "Put",
+                "action": "Sell",
+                "expiration": pd.Timestamp("2024-04-19"),
+                "strike": 50,
+                "Profit probability": "80%",
+                "source_sheet": "Options 2024",
+            },
+        ]
+    )
+    probability_rows = extract_sheet_probability_rows(sheet, year=2024)
+
+    imported = build_probability_history_import(candidates, probability_rows)
+
+    assert imported.summary["trade_count"] == 2
+    assert imported.summary["probability_row_count"] == 2
+    assert imported.summary["matched_trade_count"] == 1
+    assert imported.summary["unmatched_trade_count"] == 1
+    assert imported.summary["unmatched_probability_row_count"] == 1
+    matched = [match for match in imported.trade_matches if match.matched][0]
+    assert matched.trade.profit_probability == 0.78
+    assert round(matched.trade.assignment_risk_proxy or 0, 6) == 0.22
+    assert imported.unmatched_probability_rows[0].ticker == "BBB"
 
 
 def test_dedupe_prevents_duplicate_provider_calls():

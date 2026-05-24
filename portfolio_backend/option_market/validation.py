@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import warnings
 from typing import Any, Iterable, Optional
 
 import pandas as pd
@@ -12,6 +13,8 @@ from portfolio_backend.option_market.models import (
     OptionChainRequest,
     OptionMarketContract,
     OptionMarketMatch,
+    OptionProbabilityRow,
+    OptionProbabilityTradeMatch,
     OptionTradeCandidate,
     float_or_none,
     normalize_put_call,
@@ -35,6 +38,14 @@ class ValidationReport:
     matches: list[dict[str, Any]]
     bucket_summary: list[dict[str, Any]]
     warnings: list[str]
+
+
+@dataclass(frozen=True)
+class ProbabilityHistoryImport:
+    summary: dict[str, Any]
+    probability_rows: list[OptionProbabilityRow]
+    trade_matches: list[OptionProbabilityTradeMatch]
+    unmatched_probability_rows: list[OptionProbabilityRow]
 
 
 def candidates_from_ibkr_report(report: Any, *, year: int = 2024) -> list[OptionTradeCandidate]:
@@ -76,7 +87,7 @@ def extract_sheet_probability_rows(sheet_df: pd.DataFrame, *, year: int = 2024) 
     if probability_column is None:
         return []
     rows: list[dict[str, Any]] = []
-    for _, row in sheet_df.iterrows():
+    for row_index, row in sheet_df.iterrows():
         probability = parse_probability(row.get(probability_column))
         if probability is None:
             continue
@@ -90,17 +101,38 @@ def extract_sheet_probability_rows(sheet_df: pd.DataFrame, *, year: int = 2024) 
         action = str(row.get("action") or row.get("Action") or "").title().strip()
         if not ticker or not put_call or strike is None or action != "Sell":
             continue
-        rows.append(
+        explicit_source_row = row.get("source_row_number")
+        source_row_number = (
+            int(explicit_source_row)
+            if explicit_source_row is not None and not pd.isna(explicit_source_row)
+            else int(row_index) + 2
+            if isinstance(row_index, int)
+            else None
+        )
+        row_doc = {
+            "ticker": ticker,
+            "trade_date": trans_date,
+            "expiry": expiry,
+            "put_call": put_call,
+            "strike": strike,
+            "profit_probability": probability,
+            "source_sheet": row.get("source_sheet"),
+            "source_row_number": source_row_number,
+        }
+        row_doc["row_id"] = stable_hash(
             {
                 "ticker": ticker,
                 "trade_date": trans_date,
                 "expiry": expiry,
                 "put_call": put_call,
-                "strike": strike,
+                "strike": round(float(strike), 6),
                 "profit_probability": probability,
-                "source_sheet": row.get("source_sheet"),
-            }
+                "source_sheet": row_doc["source_sheet"],
+                "source_row_number": row_doc["source_row_number"],
+            },
+            length=24,
         )
+        rows.append(row_doc)
     return rows
 
 
@@ -149,6 +181,76 @@ def attach_sheet_probabilities(
             continue
         unmatched.extend(rows)
     return resolved, unmatched
+
+
+def build_probability_history_import(
+    candidates: Iterable[OptionTradeCandidate],
+    sheet_probability_rows: Iterable[dict[str, Any]],
+) -> ProbabilityHistoryImport:
+    probability_rows = [_probability_row_from_dict(row) for row in sheet_probability_rows]
+    by_key: dict[tuple[str, date, date, str, float], list[OptionProbabilityRow]] = {}
+    used_row_ids: set[str] = set()
+    for row in probability_rows:
+        by_key.setdefault(row.match_key, []).append(row)
+
+    trade_matches: list[OptionProbabilityTradeMatch] = []
+    for candidate in candidates:
+        key = _probability_key(
+            candidate.ticker,
+            candidate.trade_date,
+            candidate.expiry,
+            candidate.put_call,
+            candidate.strike,
+        )
+        rows = by_key.get(key) or []
+        probability_row = rows[0] if rows else None
+        warnings: list[str] = []
+        if probability_row is None:
+            warnings.append("missing_sheet_probability")
+        else:
+            used_row_ids.add(probability_row.row_id)
+            if len(rows) > 1:
+                warnings.append("duplicate_sheet_probability_rows")
+        matched_candidate = OptionTradeCandidate(
+            trade_id=candidate.trade_id,
+            ticker=candidate.ticker,
+            trade_date=candidate.trade_date,
+            expiry=candidate.expiry,
+            put_call=candidate.put_call,
+            strike=candidate.strike,
+            qty=candidate.qty,
+            trade_price=candidate.trade_price,
+            net_cash=candidate.net_cash,
+            source=candidate.source,
+            profit_probability=probability_row.profit_probability if probability_row else None,
+        )
+        trade_matches.append(
+            OptionProbabilityTradeMatch(
+                trade=matched_candidate,
+                probability_row_id=probability_row.row_id if probability_row else None,
+                matched=probability_row is not None,
+                warnings=warnings,
+            )
+        )
+
+    unmatched_rows = [row for row in probability_rows if row.row_id not in used_row_ids]
+    matched_count = sum(1 for match in trade_matches if match.matched)
+    summary = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "trade_count": len(trade_matches),
+        "probability_row_count": len(probability_rows),
+        "matched_trade_count": matched_count,
+        "matched_trade_rate": _ratio(matched_count, len(trade_matches)),
+        "unmatched_trade_count": len(trade_matches) - matched_count,
+        "unmatched_probability_row_count": len(unmatched_rows),
+        "warning_types": sorted({warning for match in trade_matches for warning in match.warnings}),
+    }
+    return ProbabilityHistoryImport(
+        summary=summary,
+        probability_rows=probability_rows,
+        trade_matches=trade_matches,
+        unmatched_probability_rows=unmatched_rows,
+    )
 
 
 def dedupe_chain_requests(candidates: Iterable[OptionTradeCandidate], *, provider: str) -> list[OptionChainRequest]:
@@ -287,7 +389,13 @@ def _find_probability_column(df: pd.DataFrame) -> Optional[str]:
 
 
 def _to_date(value: Any) -> Optional[date]:
-    parsed = pd.to_datetime(value, errors="coerce")
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Parsing dates in .* format when dayfirst=.* was specified.*",
+            category=UserWarning,
+        )
+        parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
     if pd.isna(parsed):
         return None
     return parsed.date()
@@ -295,6 +403,20 @@ def _to_date(value: Any) -> Optional[date]:
 
 def _probability_key(ticker: str, trade_date: date, expiry: date, put_call: str, strike: float):
     return (ticker.upper(), trade_date, expiry, normalize_put_call(put_call), round(float(strike), 6))
+
+
+def _probability_row_from_dict(row: dict[str, Any]) -> OptionProbabilityRow:
+    return OptionProbabilityRow(
+        row_id=str(row.get("row_id") or stable_hash(row, length=24)),
+        ticker=str(row["ticker"]).upper(),
+        trade_date=row["trade_date"],
+        expiry=row["expiry"],
+        put_call=normalize_put_call(row["put_call"]),
+        strike=float(row["strike"]),
+        profit_probability=float(row["profit_probability"]),
+        source_sheet=row.get("source_sheet"),
+        source_row_number=int(row["source_row_number"]) if row.get("source_row_number") is not None else None,
+    )
 
 
 def _ratio(numerator: int, denominator: int) -> Optional[float]:

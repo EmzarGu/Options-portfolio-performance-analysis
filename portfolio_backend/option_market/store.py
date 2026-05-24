@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 from typing import Any, Optional, Protocol
 
-from portfolio_backend.option_market.models import OptionChainRequest, OptionMarketFetchResult, OptionMarketMatch
+from portfolio_backend.option_market.models import (
+    OptionChainRequest,
+    OptionMarketFetchResult,
+    OptionMarketMatch,
+    OptionProbabilityRow,
+    OptionProbabilityTradeMatch,
+)
 
 
 class OptionMarketStore(Protocol):
@@ -26,6 +32,19 @@ class OptionMarketStore(Protocol):
     def save_trade_matches(self, matches: list[OptionMarketMatch]) -> None:
         ...
 
+    def begin_probability_import_run(self, run_doc: dict[str, Any]) -> None:
+        ...
+
+    def finish_probability_import_run(self, run_id: str, updates: dict[str, Any]) -> None:
+        ...
+
+    def save_probability_history(
+        self,
+        rows: list[OptionProbabilityRow],
+        matches: list[OptionProbabilityTradeMatch],
+    ) -> None:
+        ...
+
 
 class MemoryOptionMarketStore:
     def __init__(self) -> None:
@@ -33,6 +52,9 @@ class MemoryOptionMarketStore:
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.contracts: dict[str, dict[str, Any]] = {}
         self.matches: dict[str, dict[str, Any]] = {}
+        self.probability_runs: dict[str, dict[str, Any]] = {}
+        self.probability_rows: dict[str, dict[str, Any]] = {}
+        self.probability_matches: dict[str, dict[str, Any]] = {}
 
     def begin_fetch_run(self, run_doc: dict[str, Any]) -> None:
         self.runs[str(run_doc["run_id"])] = dict(run_doc)
@@ -58,6 +80,25 @@ class MemoryOptionMarketStore:
     def save_trade_matches(self, matches: list[OptionMarketMatch]) -> None:
         for match in matches:
             self.matches[match.match_id] = match.as_dict()
+
+    def begin_probability_import_run(self, run_doc: dict[str, Any]) -> None:
+        self.probability_runs[str(run_doc["run_id"])] = dict(run_doc)
+
+    def finish_probability_import_run(self, run_id: str, updates: dict[str, Any]) -> None:
+        self.probability_runs[str(run_id)] = {
+            **self.probability_runs.get(str(run_id), {"run_id": run_id}),
+            **updates,
+        }
+
+    def save_probability_history(
+        self,
+        rows: list[OptionProbabilityRow],
+        matches: list[OptionProbabilityTradeMatch],
+    ) -> None:
+        for row in rows:
+            self.probability_rows[row.row_id] = row.as_dict()
+        for match in matches:
+            self.probability_matches[match.match_id] = match.as_dict()
 
 
 class LocalJsonOptionMarketStore:
@@ -98,6 +139,24 @@ class LocalJsonOptionMarketStore:
         for match in matches:
             self._write_doc("option_market_trade_matches", match.match_id, match.as_dict())
 
+    def begin_probability_import_run(self, run_doc: dict[str, Any]) -> None:
+        self._write_doc("option_probability_import_runs", str(run_doc["run_id"]), run_doc)
+
+    def finish_probability_import_run(self, run_id: str, updates: dict[str, Any]) -> None:
+        path = self._doc_path("option_probability_import_runs", str(run_id))
+        existing = _read_json(path) if path.exists() else {"run_id": run_id}
+        self._write_doc("option_probability_import_runs", str(run_id), {**existing, **updates})
+
+    def save_probability_history(
+        self,
+        rows: list[OptionProbabilityRow],
+        matches: list[OptionProbabilityTradeMatch],
+    ) -> None:
+        for row in rows:
+            self._write_doc("option_probability_rows", row.row_id, row.as_dict())
+        for match in matches:
+            self._write_doc("option_probability_trade_matches", match.match_id, match.as_dict())
+
     def _doc_path(self, collection: str, doc_id: str) -> Path:
         return self.root_dir / collection / f"{doc_id}.json"
 
@@ -116,12 +175,18 @@ class FirestoreOptionMarketStore:
         chain_snapshots_collection: str = "option_market_chain_snapshots",
         contracts_collection: str = "option_market_contracts",
         trade_matches_collection: str = "option_market_trade_matches",
+        probability_import_runs_collection: str = "option_probability_import_runs",
+        probability_rows_collection: str = "option_probability_rows",
+        probability_trade_matches_collection: str = "option_probability_trade_matches",
     ) -> None:
         self.client = client or _firestore_client()
         self.fetch_runs_collection = fetch_runs_collection
         self.chain_snapshots_collection = chain_snapshots_collection
         self.contracts_collection = contracts_collection
         self.trade_matches_collection = trade_matches_collection
+        self.probability_import_runs_collection = probability_import_runs_collection
+        self.probability_rows_collection = probability_rows_collection
+        self.probability_trade_matches_collection = probability_trade_matches_collection
 
     def begin_fetch_run(self, run_doc: dict[str, Any]) -> None:
         self.client.collection(self.fetch_runs_collection).document(str(run_doc["run_id"])).set(run_doc, merge=True)
@@ -158,6 +223,26 @@ class FirestoreOptionMarketStore:
 
     def save_trade_matches(self, matches: list[OptionMarketMatch]) -> None:
         self._upsert_docs(self.trade_matches_collection, [(match.match_id, match.as_dict()) for match in matches])
+
+    def begin_probability_import_run(self, run_doc: dict[str, Any]) -> None:
+        self.client.collection(self.probability_import_runs_collection).document(str(run_doc["run_id"])).set(
+            run_doc,
+            merge=True,
+        )
+
+    def finish_probability_import_run(self, run_id: str, updates: dict[str, Any]) -> None:
+        self.client.collection(self.probability_import_runs_collection).document(str(run_id)).set(updates, merge=True)
+
+    def save_probability_history(
+        self,
+        rows: list[OptionProbabilityRow],
+        matches: list[OptionProbabilityTradeMatch],
+    ) -> None:
+        self._upsert_docs(self.probability_rows_collection, [(row.row_id, row.as_dict()) for row in rows])
+        self._upsert_docs(
+            self.probability_trade_matches_collection,
+            [(match.match_id, match.as_dict()) for match in matches],
+        )
 
     def _upsert_docs(self, collection: str, docs: list[tuple[str, dict[str, Any]]]) -> None:
         for chunk in _chunks(docs, 400):

@@ -232,6 +232,73 @@ class OptionTradeCandidate:
 
 
 @dataclass(frozen=True)
+class OptionProbabilityRow:
+    row_id: str
+    ticker: str
+    trade_date: date
+    expiry: date
+    put_call: str
+    strike: float
+    profit_probability: float
+    source_sheet: Optional[str] = None
+    source_row_number: Optional[int] = None
+
+    @property
+    def assignment_risk_proxy(self) -> float:
+        return 1.0 - self.profit_probability
+
+    @property
+    def match_key(self) -> tuple[str, date, date, str, float]:
+        return (
+            self.ticker.upper(),
+            self.trade_date,
+            self.expiry,
+            normalize_put_call(self.put_call),
+            round(float(self.strike), 6),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["ticker"] = self.ticker.upper()
+        data["trade_date"] = self.trade_date.isoformat()
+        data["expiry"] = self.expiry.isoformat()
+        data["put_call"] = normalize_put_call(self.put_call)
+        data["assignment_risk_proxy"] = self.assignment_risk_proxy
+        data["updated_at"] = now_iso()
+        return data
+
+
+@dataclass(frozen=True)
+class OptionProbabilityTradeMatch:
+    trade: OptionTradeCandidate
+    probability_row_id: Optional[str]
+    matched: bool
+    warnings: list[str]
+
+    @property
+    def match_id(self) -> str:
+        return stable_hash(
+            {
+                "trade": self.trade.as_dict(),
+                "probability_row_id": self.probability_row_id,
+            },
+            length=24,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "match_id": self.match_id,
+            "trade": self.trade.as_dict(),
+            "probability_row_id": self.probability_row_id,
+            "matched": self.matched,
+            "profit_probability": self.trade.profit_probability,
+            "assignment_risk_proxy": self.trade.assignment_risk_proxy,
+            "warnings": list(self.warnings),
+            "updated_at": now_iso(),
+        }
+
+
+@dataclass(frozen=True)
 class OptionMarketMatch:
     trade: OptionTradeCandidate
     request_id: str
