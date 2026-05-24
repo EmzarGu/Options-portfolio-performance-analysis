@@ -1,10 +1,12 @@
 # Option market validation
 
-This subsystem validates whether a historical option-data provider is reliable enough for future strike-selection analytics. It is intentionally separate from accounting, the mobile API, and the web dashboard.
+This subsystem validates whether an option-data provider is reliable enough for strike-selection analytics. It is intentionally separate from accounting, the mobile API, and the web dashboard.
 
 ## Scope
 
-The first provider is OptionChainIQ. The first validation scope is 2024 short option opening trades that can be compared to the legacy Google Sheet `Profit probability` columns.
+The first validation scope is short option opening trades that can be compared to the legacy Google Sheet `Profit probability` columns. The framework is provider-neutral; no live provider is currently active in this repo.
+
+OptionChainIQ was tested and removed as an active provider after live validation returned insufficient historical coverage for the required strategy period. Keep this note only as historical context; do not use OptionChainIQ env vars or command examples.
 
 The validation fetches only chains required by actual trades. It does not fetch all historical chains.
 
@@ -38,31 +40,14 @@ Normalized contracts expose:
 - `open_interest`
 - `volume`
 
-## OptionChainIQ
+## Provider state
 
-Use `OPTIONCHAINIQ_API_KEY` locally. Do not commit keys. If this provider is accepted, move the key to Secret Manager before any Cloud Run use.
+There is no active live provider adapter at the moment. The validation CLI can still perform dry-run candidate discovery and sheet-probability matching, but live fetches fail clearly until a replacement provider is added.
 
 Example dry run:
 
 ```bash
 python scripts/option_market_validation_backfill.py --year 2024 --dry-run
-```
-
-Example local JSON validation:
-
-```bash
-OPTIONCHAINIQ_API_KEY=... python scripts/option_market_validation_backfill.py \
-  --year 2024 \
-  --store local-json \
-  --max-requests 25
-```
-
-Example Firestore validation:
-
-```bash
-OPTIONCHAINIQ_API_KEY=... python scripts/option_market_validation_backfill.py \
-  --year 2024 \
-  --store firestore
 ```
 
 ## Validation metrics

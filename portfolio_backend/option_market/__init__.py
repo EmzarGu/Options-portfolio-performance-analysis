@@ -5,7 +5,6 @@ from portfolio_backend.option_market.models import (
     OptionMarketMatch,
     OptionTradeCandidate,
 )
-from portfolio_backend.option_market.optionchainiq import OptionChainIQClient
 from portfolio_backend.option_market.store import (
     FirestoreOptionMarketStore,
     LocalJsonOptionMarketStore,
@@ -16,7 +15,6 @@ __all__ = [
     "FirestoreOptionMarketStore",
     "LocalJsonOptionMarketStore",
     "MemoryOptionMarketStore",
-    "OptionChainIQClient",
     "OptionChainRequest",
     "OptionMarketContract",
     "OptionMarketFetchResult",

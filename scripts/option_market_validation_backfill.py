@@ -22,7 +22,6 @@ from portfolio_backend.ibkr.persisted_report import (  # noqa: E402
 from data_sources import download_excel_workbook, load_options_from_excel_bytes  # noqa: E402
 from portfolio_backend.gcp import service_account_credentials_from_config  # noqa: E402
 from portfolio_backend.option_market.models import contract_from_dict, now_iso  # noqa: E402
-from portfolio_backend.option_market.optionchainiq import OptionChainIQClient  # noqa: E402
 from portfolio_backend.option_market.store import (  # noqa: E402
     FirestoreOptionMarketStore,
     LocalJsonOptionMarketStore,
@@ -45,7 +44,7 @@ def main() -> int:
         description="Backfill and validate trade-scoped historical option market data."
     )
     parser.add_argument("--year", type=int, default=2024)
-    parser.add_argument("--provider", choices=["optionchainiq"], default="optionchainiq")
+    parser.add_argument("--provider", default="none")
     parser.add_argument("--store", choices=["local-json", "firestore", "memory"], default="local-json")
     parser.add_argument("--local-json-dir", default="tmp/option_market_validation/firestore_sim")
     parser.add_argument(
@@ -185,9 +184,7 @@ def _build_store(args):
 
 
 def _build_provider(args):
-    if args.provider == "optionchainiq":
-        return OptionChainIQClient()
-    raise ValueError(f"Unsupported provider: {args.provider}")
+    raise RuntimeError("No active option market provider configured.")
 
 
 def _write_outputs(output_dir: Path, run_id: str, candidates, matches, report) -> None:

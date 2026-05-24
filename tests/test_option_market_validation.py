@@ -5,8 +5,7 @@ from datetime import date
 import pandas as pd
 
 from portfolio_backend.ibkr.flex_parser import IbkrFlexReport, IbkrRawRow
-from portfolio_backend.option_market.models import OptionChainRequest, OptionMarketFetchResult
-from portfolio_backend.option_market.optionchainiq import _normalize_contracts
+from portfolio_backend.option_market.models import OptionChainRequest, OptionMarketContract, OptionMarketFetchResult
 from portfolio_backend.option_market.store import LocalJsonOptionMarketStore
 from portfolio_backend.option_market.validation import (
     attach_sheet_probabilities,
@@ -49,54 +48,60 @@ def _report(rows):
     )
 
 
-def test_optionchainiq_response_normalization_filters_put_call_and_keeps_greeks():
+def _contract(request: OptionChainRequest, **overrides) -> OptionMarketContract:
+    values = {
+        "provider": request.provider,
+        "request_id": request.request_id,
+        "ticker": request.ticker,
+        "trade_date": request.trade_date,
+        "expiry": request.expiry,
+        "put_call": request.put_call,
+        "strike": 95.0,
+    }
+    values.update(overrides)
+    return OptionMarketContract(**values)
+
+
+def test_option_market_contract_serializes_provider_neutral_greeks():
     request = OptionChainRequest(
-        provider="optionchainiq",
+        provider="test-provider",
         ticker="AAA",
         trade_date=date(2024, 3, 15),
         expiry=date(2024, 4, 19),
         put_call="PUT",
     )
-    rows = [
-        {
-            "symbol": "AAA240419P00095000",
-            "put_call": "PUT",
-            "strike": 95,
-            "bid": 2.05,
-            "ask": 2.2,
-            "mark": 2.12,
-            "underlying_price": 101.5,
-            "delta": -0.22,
-            "gamma": 0.03,
-            "theta": -0.04,
-            "vega": 0.12,
-            "volatility": 0.31,
-            "open_interest": 77,
-            "volume": 8,
-        },
-        {"symbol": "AAA240419C00095000", "put_call": "CALL", "strike": 95},
-    ]
+    contract = _contract(
+        request,
+        contract_symbol="AAA240419P00095000",
+        bid=2.05,
+        ask=2.2,
+        mark=2.12,
+        underlying_price=101.5,
+        delta=-0.22,
+        gamma=0.03,
+        theta=-0.04,
+        vega=0.12,
+        volatility=0.31,
+        open_interest=77,
+        volume=8,
+    )
+    doc = contract.as_dict()
 
-    contracts = _normalize_contracts(request, rows)
-
-    assert len(contracts) == 1
-    assert contracts[0].contract_symbol == "AAA240419P00095000"
-    assert contracts[0].delta == -0.22
-    assert contracts[0].open_interest == 77
+    assert doc["provider"] == "test-provider"
+    assert doc["contract_symbol"] == "AAA240419P00095000"
+    assert doc["delta"] == -0.22
+    assert doc["open_interest"] == 77
 
 
 def test_local_json_store_persists_snapshot_contracts_and_matches(tmp_path):
     request = OptionChainRequest(
-        provider="optionchainiq",
+        provider="test-provider",
         ticker="AAA",
         trade_date=date(2024, 3, 15),
         expiry=date(2024, 4, 19),
         put_call="PUT",
     )
-    contract = _normalize_contracts(
-        request,
-        [{"put_call": "PUT", "strike": 95, "mark": 2.12, "delta": -0.22}],
-    )[0]
+    contract = _contract(request, mark=2.12, delta=-0.22)
     result = OptionMarketFetchResult(
         request=request,
         contracts=[contract],
@@ -148,7 +153,7 @@ def test_dedupe_prevents_duplicate_provider_calls():
         year=2024,
     )
 
-    requests = dedupe_chain_requests(candidates, provider="optionchainiq")
+    requests = dedupe_chain_requests(candidates, provider="test-provider")
 
     assert len(requests) == 1
     assert requests[0].ticker == "AAA"
@@ -156,11 +161,8 @@ def test_dedupe_prevents_duplicate_provider_calls():
 
 def test_matching_contract_reports_delta_and_fill_spread_status():
     candidate = candidates_from_ibkr_report(_report([_trade_row()]), year=2024)[0]
-    request = dedupe_chain_requests([candidate], provider="optionchainiq")[0]
-    contract = _normalize_contracts(
-        request,
-        [{"put_call": "PUT", "strike": 95, "bid": 2.0, "ask": 2.3, "mark": 2.15, "delta": -0.21}],
-    )[0]
+    request = dedupe_chain_requests([candidate], provider="test-provider")[0]
+    contract = _contract(request, bid=2.0, ask=2.3, mark=2.15, delta=-0.21)
 
     match = match_trade_to_contract(candidate, request.request_id, [contract])
 
@@ -187,8 +189,8 @@ def test_validation_report_bucket_summary():
             profit_probability=0.78,
         )
     ]
-    request = dedupe_chain_requests(resolved, provider="optionchainiq")[0]
-    contract = _normalize_contracts(request, [{"put_call": "PUT", "strike": 95, "delta": -0.22}])[0]
+    request = dedupe_chain_requests(resolved, provider="test-provider")[0]
+    contract = _contract(request, delta=-0.22)
     match = match_trade_to_contract(resolved[0], request.request_id, [contract])
 
     report = build_validation_report([match], [])
