@@ -20,6 +20,9 @@ from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
 
 from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
+from portfolio_backend.decision_lab import build_decision_lab_data
+from portfolio_backend.decision_lab_templates import DECISION_LAB_HTML
+from portfolio_backend.gcp import firestore_client
 from portfolio_backend.mobile_api_service import build_mobile_refresh_payload
 from portfolio_backend.web_dashboard_payloads import (
     build_dashboard_data as build_web_dashboard_data,
@@ -51,6 +54,8 @@ NO_STORE_HEADERS = {
 _dashboard_data_cache_lock = threading.Lock()
 _dashboard_data_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
 _dashboard_data_key_locks: Dict[tuple, threading.Lock] = {}
+_probability_history_cache_lock = threading.Lock()
+_probability_history_cache: tuple[float, list[dict[str, Any]]] | None = None
 
 
 @app.middleware("http")
@@ -405,6 +410,49 @@ def _get_cached_dashboard_data(
         return payload
 
 
+def _probability_history_cache_seconds() -> int:
+    raw = os.getenv("WEB_PROBABILITY_HISTORY_CACHE_SECONDS", "300")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 300
+
+
+def _load_probability_trade_matches() -> list[dict[str, Any]]:
+    global _probability_history_cache
+    ttl_seconds = _probability_history_cache_seconds()
+    now = time()
+    with _probability_history_cache_lock:
+        if ttl_seconds > 0 and _probability_history_cache and now - _probability_history_cache[0] <= ttl_seconds:
+            return _probability_history_cache[1]
+
+    try:
+        client = firestore_client()
+        query = client.collection("option_probability_import_runs").order_by(
+            "finished_at",
+            direction="DESCENDING",
+        ).limit(10)
+        runs = [snapshot for snapshot in query.stream() if (snapshot.to_dict() or {}).get("status") == "succeeded"]
+        if not runs:
+            matches: list[dict[str, Any]] = []
+        else:
+            run_doc = runs[0].to_dict() or {}
+            ids = [str(item) for item in run_doc.get("trade_match_ids", []) if item]
+            refs = [client.collection("option_probability_trade_matches").document(doc_id) for doc_id in ids]
+            matches = []
+            for start in range(0, len(refs), 300):
+                for snapshot in client.get_all(refs[start : start + 300]):
+                    if snapshot.exists:
+                        matches.append(snapshot.to_dict() or {})
+    except Exception as exc:
+        logger.warning("decision_lab_probability_history_load_failed error=%s", exc)
+        matches = []
+
+    with _probability_history_cache_lock:
+        _probability_history_cache = (time(), matches)
+    return matches
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
@@ -599,6 +647,27 @@ def dashboard_json(request: Request) -> JSONResponse:
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
     return JSONResponse(payload)
+
+
+@app.get("/api/decision-lab")
+def decision_lab_json(request: Request) -> JSONResponse:
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    target_return = _target_return_from_query(request)
+    try:
+        payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
+        probability_matches = _load_probability_trade_matches()
+        return JSONResponse(build_decision_lab_data(payload, probability_matches=probability_matches))
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/decision-lab", response_class=HTMLResponse)
+def decision_lab_page(request: Request) -> Response:
+    if not _is_authenticated(request):
+        return _redirect_to_login()
+    return HTMLResponse(DECISION_LAB_HTML)
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -208,6 +208,52 @@ def test_web_dashboard_api_requires_auth(monkeypatch):
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
 
 
+def test_decision_lab_renders_shell_when_auth_disabled(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    client = TestClient(web_dashboard.app)
+
+    response = client.get("/decision-lab")
+
+    assert response.status_code == 200
+    assert "Decision Dashboard Lab" in response.text
+    assert "/api/decision-lab" in response.text
+    assert "Current dashboard" in response.text
+
+
+def test_decision_lab_api_builds_real_data_model(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(
+        web_dashboard,
+        "_load_probability_trade_matches",
+        lambda: [
+            {
+                "matched": True,
+                "profit_probability": 0.78,
+                "assignment_risk_proxy": 0.22,
+                "trade": {
+                    "ticker": "AAA",
+                    "trade_date": "2024-03-15",
+                    "strike": 95,
+                    "qty": 1,
+                    "net_cash": 100,
+                    "profit_probability": 0.78,
+                    "assignment_risk_proxy": 0.22,
+                },
+            }
+        ],
+    )
+    client = TestClient(web_dashboard.app)
+
+    response = client.get("/api/decision-lab")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["probability_match_count"] == 1
+    assert data["strike_selection"]["bucket_summary"]
+    assert data["monthly_decision"]["projected_pnl"] == 125.0
+
+
 def test_web_dashboard_import_route_starts_job(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     calls = []
