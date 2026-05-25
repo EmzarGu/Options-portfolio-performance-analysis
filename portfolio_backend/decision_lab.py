@@ -55,6 +55,7 @@ def _summary(payload: dict[str, Any], probability_matches: list[dict[str, Any]])
 
 def _action_queue(payload: dict[str, Any]) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
+    active_recovery_tickers = _active_recovery_tickers(payload)
     issues = ((payload.get("issues") or {}).get("issues") or [])[:8]
     for issue in issues:
         actions.append(
@@ -149,18 +150,24 @@ def _action_queue(payload: dict[str, Any]) -> list[dict[str, Any]]:
             )
 
     for row in (payload.get("tickers") or {}).get("items") or []:
+        ticker = str(row.get("ticker") or "").upper()
         options = _num(row.get("realized_options_pnl")) or 0
         total = _num(row.get("total_pnl")) or 0
         if options > 0 and total < 0:
+            active_recovery = ticker in active_recovery_tickers
             actions.append(
                 {
-                    "priority": "medium",
-                    "ticker": row.get("ticker"),
-                    "reason": "Positive premiums but negative total P&L",
+                    "priority": "medium" if active_recovery else "high",
+                    "ticker": ticker,
+                    "reason": (
+                        "Negative total P&L during assignment recovery"
+                        if active_recovery
+                        else "Positive premiums but negative total P&L"
+                    ),
                     "impact": total,
                     "expiry": "",
                     "dte": None,
-                    "suggested_action": "avoid adding",
+                    "suggested_action": "review before adding" if active_recovery else "avoid adding",
                     "source": "ticker quality",
                 }
             )
@@ -295,6 +302,8 @@ def _ticker_scorecard(payload: dict[str, Any]) -> list[dict[str, Any]]:
             status = "Review"
         else:
             status = "Avoid"
+        if status == "Avoid" and options > 0 and (open_rows or inv_rows):
+            status = "Review"
         rows.append(
             {
                 "ticker": ticker,
@@ -312,6 +321,19 @@ def _ticker_scorecard(payload: dict[str, Any]) -> list[dict[str, Any]]:
         )
     rows.sort(key=lambda item: (item["score"], item["total_pnl"]), reverse=True)
     return rows
+
+
+def _active_recovery_tickers(payload: dict[str, Any]) -> set[str]:
+    tickers: set[str] = set()
+    for row in _open_short_rows(payload):
+        ticker = str(row.get("ticker") or "").upper()
+        if ticker:
+            tickers.add(ticker)
+    for row in _inventory_rows(payload):
+        ticker = str(row.get("ticker") or "").upper()
+        if ticker:
+            tickers.add(ticker)
+    return tickers
 
 
 def _open_positions(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
