@@ -233,6 +233,7 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
                 "assignment_risk_proxy": 0.22,
                 "trade": {
                     "ticker": "AAA",
+                    "put_call": "Put",
                     "trade_date": "2024-03-15",
                     "strike": 95,
                     "qty": 1,
@@ -250,8 +251,11 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["summary"]["probability_match_count"] == 1
-    assert data["strike_selection"]["bucket_summary"]
-    assert data["monthly_decision"]["projected_pnl"] == 125.0
+    assert data["strike_quality"]["put_entry_quality"]["bucket_summary"]
+    assert "ticker_scorecard" not in data
+    assert "open_positions" not in data
+    assert "performance_insights" not in data
+    assert data["active_cycle"]["portfolio_put_exposure"] == 0
 
 
 def test_web_dashboard_import_route_starts_job(monkeypatch):
