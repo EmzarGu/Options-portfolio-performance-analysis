@@ -299,6 +299,83 @@ class OptionProbabilityTradeMatch:
 
 
 @dataclass(frozen=True)
+class OptionHistoricalEnrichment:
+    trade: OptionTradeCandidate
+    provider: str
+    contract_symbol: Optional[str]
+    provider_contract_matched: bool
+    option_close: Optional[float] = None
+    option_vwap: Optional[float] = None
+    option_volume: Optional[int] = None
+    option_trade_count: Optional[int] = None
+    underlying_price: Optional[float] = None
+    entry_moneyness: Optional[float] = None
+    dte: Optional[int] = None
+    premium_per_capital: Optional[float] = None
+    profit_probability_source: str = "unavailable"
+    risk_proxy_source: str = "unavailable"
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def enrichment_id(self) -> str:
+        return stable_hash(
+            {
+                "provider": self.provider,
+                "trade_id": self.trade.trade_id,
+                "ticker": self.trade.ticker,
+                "trade_date": self.trade.trade_date,
+                "expiry": self.trade.expiry,
+                "put_call": self.trade.put_call,
+                "strike": self.trade.strike,
+            },
+            length=24,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["trade"] = self.trade.as_dict()
+        data["enrichment_id"] = self.enrichment_id
+        data["provider"] = self.provider.lower()
+        data["warnings"] = list(self.warnings)
+        data["updated_at"] = now_iso()
+        return data
+
+
+def historical_enrichment_from_dict(data: dict[str, Any]) -> OptionHistoricalEnrichment:
+    trade_doc = data.get("trade") if isinstance(data.get("trade"), dict) else {}
+    trade = OptionTradeCandidate(
+        trade_id=str(trade_doc.get("trade_id") or data.get("trade_id") or ""),
+        ticker=str(trade_doc.get("ticker") or data.get("ticker") or "").upper(),
+        trade_date=date_from_value(trade_doc.get("trade_date") or data.get("trade_date")),
+        expiry=date_from_value(trade_doc.get("expiry") or data.get("expiry")),
+        put_call=normalize_put_call(trade_doc.get("put_call") or data.get("put_call")),
+        strike=float(trade_doc.get("strike") or data.get("strike")),
+        qty=float_or_none(trade_doc.get("qty") or data.get("qty")) or 0.0,
+        trade_price=float_or_none(trade_doc.get("trade_price") or data.get("trade_price")) or 0.0,
+        net_cash=float_or_none(trade_doc.get("net_cash") or data.get("net_cash")) or 0.0,
+        source=str(trade_doc.get("source") or data.get("source") or "ibkr"),
+        profit_probability=float_or_none(trade_doc.get("profit_probability") or data.get("profit_probability")),
+    )
+    return OptionHistoricalEnrichment(
+        trade=trade,
+        provider=str(data.get("provider") or ""),
+        contract_symbol=data.get("contract_symbol"),
+        provider_contract_matched=bool(data.get("provider_contract_matched")),
+        option_close=float_or_none(data.get("option_close")),
+        option_vwap=float_or_none(data.get("option_vwap")),
+        option_volume=int_or_none(data.get("option_volume")),
+        option_trade_count=int_or_none(data.get("option_trade_count")),
+        underlying_price=float_or_none(data.get("underlying_price")),
+        entry_moneyness=float_or_none(data.get("entry_moneyness")),
+        dte=int_or_none(data.get("dte")),
+        premium_per_capital=float_or_none(data.get("premium_per_capital")),
+        profit_probability_source=str(data.get("profit_probability_source") or "unavailable"),
+        risk_proxy_source=str(data.get("risk_proxy_source") or "unavailable"),
+        warnings=tuple(str(item) for item in data.get("warnings") or []),
+    )
+
+
+@dataclass(frozen=True)
 class OptionMarketMatch:
     trade: OptionTradeCandidate
     request_id: str

@@ -86,6 +86,45 @@ def _fake_dashboard_data():
     }
 
 
+def _fake_decision_lab_data():
+    return {
+        "summary": {"action_item_count": 0},
+        "ticker_situations": [],
+        "active_cycle": {
+            "cycle_label": "June 2026",
+            "expiry_dates": ["2026-06-18"],
+            "min_dte": 20,
+            "max_dte": 20,
+            "open_contract_count": 2,
+            "realized_cycle_pnl": 0.0,
+            "premium_component": 100.0,
+            "itm_put_unrealized_loss": 0.0,
+            "projected_pnl": 100.0,
+            "target_pnl": 200.0,
+            "remaining_to_target": 100.0,
+            "projected_return_roac": 0.01,
+            "target_return": 0.02,
+            "target_floor": 0.01,
+            "cycle_put_exposure": 10000.0,
+            "cycle_itm_put_exposure": 0.0,
+            "portfolio_put_exposure": 10000.0,
+            "portfolio_itm_put_exposure": 0.0,
+            "covered_call_upside_foregone": 0.0,
+        },
+        "option_market_data": {
+            "status": {
+                "provider": "cutemarkets",
+                "source": "stored",
+                "last_fetched_at": "2026-05-29T12:00:00+00:00",
+                "contract_count": 10,
+            }
+        },
+        "recommendation_candidates": [],
+        "strike_quality": {},
+        "coverage_notes": [],
+    }
+
+
 def test_web_dashboard_health_is_public(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
@@ -124,6 +163,7 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert shell_data["loading"] is True
     assert shell_data["source"]["kind"] == "ibkr_flex"
     assert "Dashboard" in response.text
+    assert "Decision Lab" in response.text
     assert "IBKR Flex" in response.text
     assert "dashboard-data" in response.text
     assert "Period" in response.text
@@ -184,6 +224,7 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
         return payload
 
     monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
+    monkeypatch.setattr(web_dashboard, "_build_decision_lab_payload", lambda payload, force_refresh=False: _fake_decision_lab_data())
     client = TestClient(web_dashboard.app)
 
     first = client.get("/api/dashboard?target_return_pct=2.25")
@@ -192,8 +233,21 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["web"]["target_return"] == 0.0225
+    assert first.json()["decision_lab"]["active_cycle"]["cycle_label"] == "June 2026"
     assert calls == [{"as_of": None, "include_unrealized": True, "target_return": 0.0225}]
     web_dashboard._clear_dashboard_data_cache()
+
+
+def test_web_dashboard_refresh_accepts_decision_lab_section(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(web_dashboard, "_get_context", lambda **_: (object(), 123))
+    monkeypatch.setattr(web_dashboard, "build_mobile_refresh_payload", lambda *_, **__: {})
+    client = TestClient(web_dashboard.app, follow_redirects=False)
+
+    response = client.post("/refresh?section=decision_lab&target_return=0.02")
+
+    assert response.status_code == 303
+    assert "section=decision_lab" in response.headers["location"]
 
 
 def test_web_dashboard_api_requires_auth(monkeypatch):
@@ -218,6 +272,10 @@ def test_decision_lab_renders_shell_when_auth_disabled(monkeypatch):
     assert "Decision Dashboard Lab" in response.text
     assert "/api/decision-lab" in response.text
     assert "Current dashboard" in response.text
+    assert "Only ticker-level situations" not in response.text
+    assert "not a trading recommendation" not in response.text
+    assert "Probability coverage" not in response.text
+    assert "Fetch option data" in response.text
 
 
 def test_decision_lab_api_builds_real_data_model(monkeypatch):
@@ -244,6 +302,12 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
             }
         ],
     )
+    monkeypatch.setattr(web_dashboard, "_load_historical_option_enrichments", lambda: [])
+    monkeypatch.setattr(
+        web_dashboard,
+        "_decision_option_loader",
+        lambda force_refresh=False: (lambda _situations, _cycle, _candidates, _payload: {"status": {"source": "none"}, "contracts": []}),
+    )
     client = TestClient(web_dashboard.app)
 
     response = client.get("/api/decision-lab")
@@ -256,6 +320,35 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
     assert "open_positions" not in data
     assert "performance_insights" not in data
     assert data["active_cycle"]["portfolio_put_exposure"] == 0
+
+
+def test_decision_lab_option_refresh_uses_force_loader(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(web_dashboard, "_load_probability_trade_matches", lambda: [])
+    monkeypatch.setattr(web_dashboard, "_load_historical_option_enrichments", lambda: [])
+    calls = []
+
+    def fake_loader(force_refresh=False):
+        calls.append(force_refresh)
+        return lambda _situations, _cycle, _candidates, _payload: {
+            "status": {
+                "provider": "cutemarkets",
+                "source": "provider_refresh",
+                "last_fetched_at": "2026-05-25T12:00:00+00:00",
+                "contract_count": 0,
+            },
+            "contracts": [],
+        }
+
+    monkeypatch.setattr(web_dashboard, "_decision_option_loader", fake_loader)
+    client = TestClient(web_dashboard.app)
+
+    response = client.post("/api/decision-lab/options/refresh")
+
+    assert response.status_code == 200
+    assert calls == [True]
+    assert response.json()["option_market_data"]["status"]["source"] == "provider_refresh"
 
 
 def test_web_dashboard_import_route_starts_job(monkeypatch):

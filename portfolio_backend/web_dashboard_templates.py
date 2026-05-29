@@ -73,7 +73,7 @@ body{background:#080c0f;color:var(--text)}
 .control-label{color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}.segmented{display:flex;gap:4px;flex-wrap:wrap}.range-panel{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:10px 12px;background:#0d1417;border:1px solid var(--line2);border-radius:8px}.range-panel .segmented button{padding:7px 10px}
 .grid{display:grid;gap:12px}.grid>*{min-width:0}.metrics{grid-template-columns:repeat(4,minmax(180px,1fr))}.two{grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr)}.two-even{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .card,.panel{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.card{padding:14px}.panel{padding:16px}
-.metric-label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:25px;font-weight:900;margin-top:5px;line-height:1.08}.metric-note{color:var(--muted);font-size:12px;margin-top:5px}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.warn-text{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}
+.metric-label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:25px;font-weight:900;margin-top:5px;line-height:1.08}.metric-note{color:var(--muted);font-size:12px;margin-top:5px}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.warn-text{color:var(--amber)}.blue{color:var(--blue)}.mono{font-variant-numeric:tabular-nums}
 h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select,.section-head select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
 .table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:#11191c}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
@@ -82,6 +82,9 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 .risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
 .chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px;min-width:0;overflow:hidden}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart-wrap{height:310px;position:relative;min-width:0}.chart-canvas{width:100%!important;height:100%!important}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}.chart-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:#c0cbc7!important;font-size:13px;font-weight:700}.chart-legend span{display:inline-flex;align-items:center;gap:6px;color:#c0cbc7!important}.chart-legend i{display:inline-block;width:12px;height:12px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
+.waterfall{display:grid;gap:8px}.water-row{display:grid;grid-template-columns:210px minmax(140px,1fr) 112px;gap:10px;align-items:center}.bar-track{height:18px;border-radius:999px;background:#1b282b;overflow:hidden}.bar{height:100%;border-radius:999px}.bar.pos{background:var(--green)}.bar.neg{background:var(--red)}.bar.warn-text{background:var(--amber)}.bar.blue{background:var(--blue)}
+.option-controls{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:0 0 14px;padding:12px 14px;background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.option-status{color:var(--muted);font-size:13px}.action-btn{border:0;border-radius:8px;background:var(--accent);color:#06201b;font-weight:900;padding:9px 12px;cursor:pointer;white-space:nowrap}.action-btn:disabled{opacity:.55;cursor:wait}
+.candidate-card{padding:14px;border:1px solid var(--line2);border-radius:8px;background:#11191c}.candidate-action{font-size:18px;font-weight:900}.state-title{margin-top:12px;color:var(--muted);font-weight:850;text-transform:uppercase;font-size:11px;letter-spacing:.04em}.state-grid{display:flex;flex-wrap:wrap;gap:7px;margin:6px 0 12px}.candidate-mini{padding:7px 8px;border-radius:7px;background:#0d1417;min-width:118px;max-width:260px;flex:0 1 auto}.candidate-mini.wide{min-width:220px;max-width:520px}.candidate-mini b{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.candidate-mini span{display:block;overflow:hidden;text-overflow:ellipsis}
 .loading-panel{min-height:220px;display:grid;place-items:center;text-align:center}.loading-panel h2{margin:0 0 8px}.loading-panel p{margin:0;color:var(--muted)}.retry-load{margin-top:14px}
 .view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating,body.is-loading .view-updating{opacity:1;transform:translateY(0)}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
@@ -115,6 +118,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
     </div>
   </section>
   <section id="dashboard" class="section active"></section>
+  <section id="decision_lab" class="section"></section>
   <section id="monthly" class="section"></section>
   <section id="tickers" class="section"></section>
   <section id="performance" class="section"></section>
@@ -149,12 +153,13 @@ const appState = {
   renderTimer: null
 };
 const sections = [
-  ["dashboard","Dashboard"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
+  ["dashboard","Dashboard"], ["decision_lab","Decision Lab"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
   ["settings","Settings"], ["diagnostics","Diagnostics"],
   ["methodology","Methodology"]
 ];
 const pageTitles = {
   dashboard: "Dashboard",
+  decision_lab: "Decision Lab",
   performance: "Performance",
   monthly: "Monthly",
   tickers: "Tickers",
@@ -205,6 +210,14 @@ const monthName = (v) => {
 };
 const cls = (v) => numeric(v) === null ? "" : Number(v) < 0 ? "neg" : Number(v) > 0 ? "pos" : "";
 const moneynessCls = (v) => numeric(v) === null ? "" : Number(v) > 0 ? "neg" : Number(v) < 0 ? "pos" : "";
+const bandTone = (value, floor=targetFloor(), target=targetReturn()) => {
+  if (numeric(value) === null) return "";
+  const v = Number(value);
+  if (v < 0) return "neg";
+  if (v < Number(floor || 0)) return "warn-text";
+  if (v <= Number(target || 0)) return "pos";
+  return "blue";
+};
 const get = (obj, key) => key.split(".").reduce((acc, part) => acc == null ? undefined : acc[part], obj);
 function labelize(v){
   return safe(String(v ?? "n/a").replaceAll("_"," ").replace(/\\b\\w/g, ch => ch.toUpperCase()));
@@ -775,6 +788,17 @@ function monthlyRows(){
   const cycles = new Map((data.tables.monthly_cycles || []).map(row => [fmtDate(row.month), row]));
   return (data.monthly.months || []).map(row => ({...(cycles.get(fmtDate(row.month)) || {}), ...row}));
 }
+function monthlyChartRows(){
+  const rows = monthlyRows();
+  const seen = new Set(rows.map(row => fmtDate(row.month)));
+  const activeCycle = decisionActiveCycle();
+  const activeMonth = activeCycle.cycle ? `${activeCycle.cycle}-01` : null;
+  const future = (data.monthly.future_months || []).filter(row => {
+    const month = fmtDate(row.month);
+    return month && month !== "n/a" && !seen.has(month) && (!activeMonth || month.slice(0,7) === activeMonth.slice(0,7));
+  });
+  return [...rows, ...future].sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+}
 function inventoryColumns(){
   return [
     {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
@@ -787,6 +811,188 @@ function inventoryColumns(){
     {key:"covered_strike",label:"Covered strike",format:(v,r)=>r.covered_strike_mixed ? "Mixed" : fmtMoney(v,2),num:true},
     {key:"unrealized_pnl",label:"Unrealized",format:fmtMoney,num:true,className:cls}
   ];
+}
+function decisionData(){
+  return data.decision_lab || {};
+}
+function decisionActiveCycle(){
+  return decisionData().active_cycle || {};
+}
+function activeCycleWaterfall(c){
+  const parts = [
+    ["Realized cycle P&L", c.realized_cycle_pnl],
+    ["Open premium collected", c.premium_component],
+    ["ITM put unrealized loss", c.itm_put_unrealized_loss],
+    ["Projected cycle P&L", c.projected_pnl],
+    ["Target P&L", c.target_pnl],
+    ["Remaining", c.remaining_to_target],
+  ];
+  const max = Math.max(...parts.map(p => Math.abs(numeric(p[1]) || 0)), 1);
+  const returnTone = bandTone(c.projected_return_roac, c.target_floor ?? targetFloor(), c.target_return ?? targetReturn());
+  return `<div class="waterfall" style="margin-top:12px">${parts.map(([label,value]) => {
+    let tone = (numeric(value) || 0) < 0 ? "neg" : "pos";
+    if (label === "Projected cycle P&L") tone = returnTone;
+    if (label === "Remaining") tone = (numeric(value) || 0) > 0 ? "warn-text" : "blue";
+    return `<div class="water-row"><strong>${safe(label)}</strong><div class="bar-track"><div class="bar ${tone}" style="width:${Math.max(4, Math.abs(numeric(value) || 0) / max * 100)}%"></div></div><div class="mono ${tone}">${fmtMoney(value)}</div></div>`;
+  }).join("")}</div>`;
+}
+function activeCycleBlock(){
+  const c = decisionActiveCycle();
+  if (!c || !Object.keys(c).length) return "";
+  const snap = currentSnapshot();
+  const returnTone = bandTone(c.projected_return_roac, c.target_floor ?? targetFloor(), c.target_return ?? targetReturn());
+  return `
+    ${sectionHead("Active Cycle Target & Exposure")}
+    <div class="grid two">
+      <div class="panel">
+        <h3>${safe(c.cycle_label || "Active cycle")}</h3>
+        <div class="sub">Expiries ${safe((c.expiry_dates || []).join(", ") || "n/a")} · DTE ${safe(c.min_dte)}-${safe(c.max_dte)} · ${fmtNum(c.open_contract_count)} contracts</div>
+        ${activeCycleWaterfall(c)}
+      </div>
+      <div class="grid metrics" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        ${card("Projected RoAC", fmtPct(c.projected_return_roac), `Target ${safe(fmtPct(c.target_return ?? targetReturn()))}`, returnTone)}
+        ${card("Cycle put exposure", fmtMoney(c.cycle_put_exposure), `${safe(fmtMoney(c.cycle_itm_put_exposure))} ITM`, c.cycle_itm_put_exposure ? "neg" : "")}
+        ${card("Portfolio put exposure", fmtMoney(c.portfolio_put_exposure), `${safe(fmtMoney(c.portfolio_itm_put_exposure))} ITM`, c.portfolio_itm_put_exposure ? "neg" : "")}
+        ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required ?? c.portfolio_itm_put_exposure), `${safe(snap.itm_put_contracts || 0)} ITM puts`, (numeric(snap.itm_put_cash_required ?? c.portfolio_itm_put_exposure) || 0) > 0 ? "neg" : "")}
+        ${card("Covered-call upside foregone", fmtMoney(c.covered_call_upside_foregone), "Active cycle signal", c.covered_call_upside_foregone ? "warn-text" : "")}
+      </div>
+    </div>`;
+}
+function optionDataStatusText(){
+  const status = ((decisionData().option_market_data || {}).status) || {};
+  if (status.last_fetched_at) {
+    return `${safe(status.provider || "option data")} fetched ${safe(fmtLocalDateTime(status.last_fetched_at))} · ${safe(fmtNum(status.contract_count || 0))} contracts`;
+  }
+  return `${safe(status.provider || "option data")} ${safe(status.status || "not fetched")} · ${safe(fmtNum(status.contract_count || 0))} contracts`;
+}
+function optionDataControls(){
+  return `<div class="option-controls"><div><div class="metric-label">Option data</div><div class="option-status mono">${optionDataStatusText()}</div></div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
+}
+function decisionActionRows(){
+  return dataTable("decision-actions", decisionData().ticker_situations || [], [
+    {key:"priority",label:"Priority",format:v=>`<span class="pill ${safe(v)}">${safe(v)}</span>`},
+    {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+    {key:"category",label:"Category"},
+    {key:"objective",label:"Objective"},
+    {key:"realized_pnl",label:"Realized P&L",format:fmtMoney,num:true,className:cls},
+    {key:"unrealized_pnl",label:"Current unrealized",format:fmtMoney,num:true,className:cls},
+    {key:"total_pnl",label:"Ticker total",format:fmtMoney,num:true,className:cls},
+    {key:"signal_label",label:"Decision signal"},
+    {key:"signal_value",label:"Signal value",format:fmtMoney,num:true,className:cls},
+    {key:"expiry",label:"Expiry",format:fmtDate},
+    {key:"dte",label:"DTE",num:true},
+    {key:"recommendation",label:"Recommendation"},
+    {key:"supporting_signals",label:"Signals",format:v=>Array.isArray(v)?safe(v.join(" · ")):safe(v)}
+  ], {title:"Ticker-level action queue", wide:true});
+}
+function mini(label, value, tone="", wide=false){
+  return `<div class="candidate-mini ${wide ? "wide" : ""}"><b>${safe(label)}</b><span class="mono ${tone}">${safe(value)}</span></div>`;
+}
+function currentCandidateState(s){
+  const open = (s.open_options || []).map(o=>`${safe(o.type)} ${fmtMoney(o.strike,2)} ${fmtDate(o.expiry)}${numeric(o.dte)!==null?` / ${safe(o.dte)} DTE`:""}`).join(" · ");
+  return `<div class="state-title">Current state</div><div class="state-grid">
+    ${mini("Current", fmtMoney(s.current_price,2))}
+    ${mini("Assigned", `${fmtNum(s.assigned_shares || 0)} shares${s.assignment_date ? ` · ${fmtDate(s.assignment_date)}` : ""}`)}
+    ${mini("Cost basis", fmtMoney(s.cost_basis,2))}
+    ${mini("Realized", fmtMoney(s.realized_pnl), cls(s.realized_pnl))}
+    ${mini("Unrealized", fmtMoney(s.current_unrealized), cls(s.current_unrealized))}
+    ${mini("Ticker total", fmtMoney(s.ticker_total), cls(s.ticker_total))}
+    ${mini("Open options", open || `${fmtNum(s.open_contracts || 0)} contracts`, "", true)}
+  </div>`;
+}
+function candidateTable(rows, status={}){
+  if (!rows || !rows.length) {
+    const msg = status.message || "No actionable provider contract found for this ticker/action.";
+    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}</div>`;
+  }
+  return dataTable("candidate-" + Math.random().toString(36).slice(2), rows || [], [
+    {key:"action",label:"Action"},
+    {key:"contract_count",label:"Contracts",format:v=>numeric(v)===null?"n/a":fmtNum(v),num:true},
+    {key:"strike",label:"Strike",format:v=>numeric(v)===null?"n/a":fmtMoney(v,2),num:true},
+    {key:"expiry",label:"Expiry",format:fmtDate},
+    {key:"dte",label:"DTE",num:true},
+    {key:"premium",label:"Premium or new credit",format:fmtMoney,num:true,className:cls},
+    {key:"roll_close_cost",label:"Est. close cost",format:fmtMoney,num:true,className:cls},
+    {key:"roll_new_credit",label:"Est. new credit",format:fmtMoney,num:true,className:cls},
+    {key:"roll_net_credit",label:"Net credit after close",format:fmtMoney,num:true,className:cls},
+    {key:"incremental_exit_pnl",label:"Net improvement vs current",format:fmtMoney,num:true,className:cls},
+    {key:"expected_value",label:"Expected value",format:fmtMoney,num:true,className:cls},
+    {key:"expected_value_vs_current",label:"EV vs current",format:fmtMoney,num:true,className:cls},
+    {key:"exercise_result",label:"If exercised",format:fmtMoney,num:true,className:cls},
+    {key:"no_exercise_result",label:"If not exercised",format:fmtMoney,num:true,className:cls},
+    {key:"upside_left",label:"Added upside room",format:fmtMoney,num:true,className:cls},
+    {key:"upside_foregone",label:"Current price above strike",format:fmtMoney,num:true,className:cls},
+    {key:"exercise_probability",label:"Exercise probability",format:v=>numeric(v)===null?"n/a":`${(Math.abs(Number(v))*100).toFixed(1)}%`,num:true},
+    {key:"delta",label:"Delta/risk",format:v=>numeric(v)===null?"n/a":Math.abs(Number(v)).toFixed(2),num:true},
+    {key:"liquidity",label:"Liquidity"},
+    {key:"tradeability",label:"Tradeability"},
+    {key:"price_source",label:"Price source"},
+    {key:"score",label:"Score",num:true},
+    {key:"score_reason",label:"Score reason"}
+  ], {wide:true, compact:true, count:false});
+}
+function candidateCard(row){
+  const rows = row.candidates || [row.recommended, ...(row.alternatives || [])].filter(Boolean);
+  return `<div class="candidate-card"><div><div class="candidate-action">${safe(row.ticker)} · ${safe(row.category)}</div><div class="sub">${safe(row.objective)}</div></div>${currentCandidateState(row.current_state || {})}${candidateTable(rows, row.candidate_status || {})}</div>`;
+}
+function decisionCandidates(){
+  const rows = decisionData().recommendation_candidates || [];
+  if (!rows.length) return `<div class="panel empty">No recommendation candidates.</div>`;
+  return `<div class="grid">${rows.map(candidateCard).join("")}</div>`;
+}
+function decisionStrikeQuality(){
+  const s = decisionData().strike_quality || {};
+  const putRows = (s.put_entry_quality || {}).bucket_summary || [];
+  const callRows = (s.call_exit_quality || {}).bucket_summary || [];
+  return `<div class="grid two-even">
+    ${strikeQualityChart("Put Entry Quality", putRows, "#7ee092")}
+    ${strikeQualityChart("Call / Exit Quality", callRows, "#45d2c5")}
+  </div><div style="height:12px"></div><div class="grid two-even">
+    ${strikeQualityTable("Put risk bucket lifecycle", putRows)}
+    ${strikeQualityTable("Call risk bucket lifecycle", callRows)}
+  </div>`;
+}
+function strikeQualityChart(title, rows, color){
+  return chartRegister(title, "", {
+    type:"bar",
+    data:{labels:(rows || []).map(r=>r.bucket),datasets:[{label:"Lifecycle P&L",data:(rows || []).map(r=>numeric(r.lifecycle_pnl)===null?null:r.lifecycle_pnl),backgroundColor:(rows || []).map(r=>(numeric(r.lifecycle_pnl)||0)>=0?color:"#ff6f78"),borderWidth:0,borderRadius:2}]},
+    options: chartCommonOptions(fmtCompactMoney)
+  });
+}
+function strikeQualityTable(title, rows){
+  return dataTable(title.toLowerCase().replaceAll(" ","-"), rows || [], [
+    {key:"bucket",label:"Risk bucket"},
+    {key:"count",label:"Trades",num:true},
+    {key:"avg_assignment_risk_proxy",label:"Avg risk",format:fmtPct,num:true},
+    {key:"opening_premium",label:"Premium",format:fmtMoney,num:true,className:cls},
+    {key:"option_pnl",label:"Option P&L",format:fmtMoney,num:true,className:cls},
+    {key:"stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+    {key:"unrealized_drag",label:"Unrealized",format:fmtMoney,num:true,className:cls},
+    {key:"lifecycle_pnl",label:"Lifecycle P&L",format:fmtMoney,num:true,className:cls},
+    {key:"pnl_per_capital",label:"P&L/capital",format:fmtPct,num:true},
+    {key:"attribution_rate",label:"Attributed",format:fmtPct,num:true}
+  ], {title, wide:true});
+}
+function decisionCoverage(){
+  const notes = decisionData().coverage_notes || [];
+  return `<div class="note-list">${notes.map(n=>`<div class="note"><strong>${safe(n.severity)}</strong><span class="muted">${safe(n.message)}</span></div>`).join("")}</div>`;
+}
+function renderDecisionLab(){
+  if (!data.decision_lab || data.decision_lab.error) {
+    $("decision_lab").innerHTML = `<div class="panel"><h2>Decision Lab unavailable</h2><p class="error">${safe(data.decision_lab?.error || "Decision data has not loaded.")}</p></div>`;
+    return;
+  }
+  $("decision_lab").innerHTML = `
+    ${optionDataControls()}
+    ${sectionHead("Action Needed")}
+    ${decisionActionRows()}
+    ${sectionHead("Recommendation Candidates / Recovery Planner")}
+    ${decisionCandidates()}
+    ${sectionHead("Strike Selection Quality")}
+    ${decisionStrikeQuality()}
+    ${sectionHead("Data Coverage Notes")}
+    ${decisionCoverage()}
+  `;
 }
 function renderHeader(){
   const d=data.dashboard || {}, freshness=d.data_freshness || {}, price=freshness.price_coverage || {}, issue=d.issue_summary || {};
@@ -803,12 +1009,7 @@ function renderHeader(){
   renderBasisControl();
 }
 function renderDashboard(){
-  const snap=currentSnapshot(), mt=data.dashboard.monthly_target || {}, shorts=openShortRows();
-  const riskMonthPnl = numeric(mt.risk_adjusted_projected_month_pnl) !== null ? mt.risk_adjusted_projected_month_pnl : mt.projected_month_pnl;
-  const riskMonthReturn = displayMonthReturn(mt);
-  const riskRemaining = displayRemainingToTarget(mt);
-  const riskStatus = displayTargetStatus(mt);
-  const target = targetReturn();
+  const snap=currentSnapshot(), shorts=openShortRows();
   $("dashboard").innerHTML = `
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized YTD + current unrealized" : "Realized P&L only", cls(snap.ytd_total_pnl))}
@@ -816,13 +1017,7 @@ function renderDashboard(){
       ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options net ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
-    ${sectionHead("Current Month")}
-    <div class="grid metrics">
-      ${card("Risk-adjusted month P&L", fmtMoney(riskMonthPnl), `Realized ${safe(fmtMoney(mt.realized_month_pnl))} + open option net ${safe(fmtMoney(mt.open_expiring_option_unrealized_pnl ?? mt.current_unrealized_pnl))}`, cls(riskMonthPnl))}
-      ${card("Risk-adjusted return", `${safe(fmtPct(riskMonthReturn))} RoAC`, `Target ${safe(fmtPct(target))} - ${labelize(riskStatus)}`, cls((numeric(riskMonthReturn)||0) - target))}
-      ${card("Remaining to target", fmtMoney(riskRemaining), "Based on risk-adjusted monthly target", cls(-1*(numeric(riskRemaining)||0)))}
-      ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required), `${safe(snap.itm_put_contracts || 0)} ITM puts`, cls(-1*(numeric(snap.itm_put_cash_required)||0)))}
-    </div>
+    ${activeCycleBlock()}
     ${sectionHead("Assigned Holdings and Exposure")}
     ${dataTable("dashboard-inventory", data.positions.inventory || [], inventoryColumns(), {title:"Assigned holdings", compact:true})}
     ${sectionHead("Open Option Shorts", `${shorts.length} rows after filters.`)}
@@ -832,7 +1027,8 @@ function renderDashboard(){
 }
 function renderMonthly(){
   const rows = monthlyRows();
-  const filtered = rangeFiltered(rows, "month");
+  const chartRows = monthlyChartRows();
+  const filtered = rangeFiltered(chartRows, "month");
   const future = data.monthly.future_months || [];
   $("monthly").innerHTML = `
     ${sectionHead("Monthly Performance")}
@@ -1117,7 +1313,7 @@ function renderMethodology(){
   $("methodology").innerHTML = `
     ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
     <div class="grid two-even">
-      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Monthly projections</h3><p>The dashboard current-month target uses realized month P&L plus current-month open option net exposure. Premium-only and roll-adjusted premium fields remain available in the monthly table for reconciliation.</p></div>
+      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Active cycle</h3><p>The Dashboard target panel follows the nearest open option expiry cycle, while Monthly keeps closed calendar-month reporting and the future expiry table for reconciliation.</p></div>
       <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh checks whether the IBKR source changed. If not, it updates current prices only and keeps the existing accounting pipeline.</p></div>
     </div>
   `;
@@ -1218,9 +1414,36 @@ function bindControls(){
     updateUrlState();
     render();
   });
+  const optionFetch = $("fetchOptionData");
+  if (optionFetch && !optionFetch.dataset.bound) {
+    optionFetch.dataset.bound = "1";
+    optionFetch.addEventListener("click", async () => {
+      optionFetch.disabled = true;
+      optionFetch.textContent = "Fetching...";
+      setUpdating(true, "Fetching option data...");
+      try {
+        const response = await fetch("/api/decision-lab/options/refresh" + window.location.search, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {"Accept": "application/json"}
+        });
+        const refreshed = await response.json();
+        if (!response.ok) throw new Error(refreshed.error || `HTTP ${response.status}`);
+        data.decision_lab = refreshed;
+        render();
+      } catch (err) {
+        optionFetch.disabled = false;
+        optionFetch.textContent = "Fetch option data";
+        alert(err && err.message || err);
+      } finally {
+        setUpdating(false);
+      }
+    });
+  }
 }
 const sectionRenderers = {
   dashboard: renderDashboard,
+  decision_lab: renderDecisionLab,
   monthly: renderMonthly,
   tickers: renderTickers,
   performance: renderPerformance,

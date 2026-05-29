@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import math
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+from portfolio_backend.decision_lab_candidates import apply_option_market_candidates, recommendation_candidates
+from portfolio_backend.option_market.history import historical_enrichment_to_probability_match
 
 
 RISK_BUCKETS = [
@@ -16,24 +18,36 @@ RISK_BUCKETS = [
 ]
 
 
+
 def build_decision_lab_data(
     dashboard_payload: dict[str, Any],
     *,
     probability_matches: Optional[list[dict[str, Any]]] = None,
+    historical_enrichments: Optional[list[dict[str, Any]]] = None,
+    option_market_data: Optional[dict[str, Any]] = None,
+    option_market_loader: Optional[
+        Callable[[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
+    ] = None,
 ) -> dict[str, Any]:
-    probability_matches = probability_matches or []
+    probability_matches = _combine_historical_matches(probability_matches or [], historical_enrichments or [])
+    probability_matches = _enrich_probability_matches(dashboard_payload, probability_matches)
     ticker_situations = _ticker_situations(dashboard_payload)
     active_cycle = _active_cycle(dashboard_payload)
+    candidate_groups = recommendation_candidates(ticker_situations)
+    if option_market_loader is not None:
+        option_market_data = option_market_loader(ticker_situations, active_cycle, candidate_groups, dashboard_payload)
+    recommendation_rows = apply_option_market_candidates(candidate_groups, option_market_data or {})
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": dashboard_payload.get("source", {}),
         "data_freshness": (dashboard_payload.get("dashboard") or {}).get("data_freshness", {}),
-        "summary": _summary(dashboard_payload, probability_matches, ticker_situations, active_cycle),
-        "ticker_situations": ticker_situations,
+        "summary": _summary(dashboard_payload, probability_matches, ticker_situations, active_cycle, option_market_data or {}),
+        "ticker_situations": [_public_situation(situation) for situation in ticker_situations],
         "active_cycle": active_cycle,
-        "recommendation_candidates": _recommendation_candidates(ticker_situations),
+        "option_market_data": _public_option_market_data(option_market_data or {}),
+        "recommendation_candidates": recommendation_rows,
         "strike_quality": _strike_quality(probability_matches),
-        "coverage_notes": _coverage_notes(dashboard_payload, probability_matches),
+        "coverage_notes": _coverage_notes(dashboard_payload, probability_matches, option_market_data or {}),
     }
 
 
@@ -42,11 +56,19 @@ def _summary(
     probability_matches: list[dict[str, Any]],
     ticker_situations: list[dict[str, Any]],
     active_cycle: dict[str, Any],
+    option_market_data: dict[str, Any],
 ) -> dict[str, Any]:
     dashboard = payload.get("dashboard") or {}
     snapshot = dashboard.get("snapshot") or {}
     issues = dashboard.get("issue_summary") or {}
-    matched = [match for match in probability_matches if match.get("matched")]
+    matched = [match for match in probability_matches if _assignment_risk(match) is not None]
+    provider_rows = [match for match in probability_matches if match.get("provider")]
+    provider_contract_rows = [match for match in provider_rows if match.get("historical_provider_contract_matched")]
+    provider_price_rows = [
+        match
+        for match in provider_rows
+        if _num(match.get("option_close")) is not None or _num(match.get("option_vwap")) is not None
+    ]
     return {
         "ytd_total_pnl": _num(snapshot.get("ytd_total_pnl")),
         "current_unrealized_pnl": _num(snapshot.get("current_unrealized_pnl")),
@@ -60,7 +82,57 @@ def _summary(
         "probability_match_count": len(matched),
         "probability_trade_count": len(probability_matches),
         "probability_coverage_rate": _ratio(len(matched), len(probability_matches)),
+        "historical_provider_trade_count": len(provider_rows),
+        "historical_provider_contract_match_count": len(provider_contract_rows),
+        "historical_provider_option_price_count": len(provider_price_rows),
+        "option_contract_count": (option_market_data.get("status") or {}).get("contract_count"),
+        "option_last_fetched_at": (option_market_data.get("status") or {}).get("last_fetched_at"),
+        "option_candidate_source": (option_market_data.get("status") or {}).get("source"),
     }
+
+
+def _public_situation(situation: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in situation.items() if not str(key).startswith("_")}
+
+
+def _public_option_market_data(option_market_data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": option_market_data.get("status") or {},
+        "universe": option_market_data.get("universe") or {},
+    }
+
+
+def _realized_pnl_from_metrics(metrics: dict[str, Any]) -> float:
+    option = _num(metrics.get("realized_options_pnl"))
+    stock = _num(metrics.get("realized_stock_pnl"))
+    dividends = _num(metrics.get("dividends"))
+    if option is not None or stock is not None or dividends is not None:
+        return (option or 0.0) + (stock or 0.0) + (dividends or 0.0)
+    return _num(metrics.get("combined_realized_pnl")) or 0.0
+
+
+def _total_pnl_from_metrics(metrics: dict[str, Any]) -> float:
+    total = _num(metrics.get("total_pnl"))
+    unrealized = _num(metrics.get("unrealized_pnl"))
+    dividends = _num(metrics.get("dividends")) or 0.0
+    if total is not None:
+        if dividends and unrealized is not None:
+            option = _num(metrics.get("realized_options_pnl"))
+            stock = _num(metrics.get("realized_stock_pnl"))
+            combined = _num(metrics.get("combined_realized_pnl"))
+            option_stock = (option or 0.0) + (stock or 0.0)
+            combined_includes_dividends = (
+                combined is not None
+                and (option is not None or stock is not None)
+                and abs(combined - (option_stock + dividends)) < 0.01
+            )
+            realized_ex_dividends = combined if combined is not None else option_stock
+            if not combined_includes_dividends and abs(total - (realized_ex_dividends + unrealized)) < 0.01:
+                return total + dividends
+        return total
+    if unrealized is not None:
+        return _realized_pnl_from_metrics(metrics) + unrealized
+    return 0.0
 
 
 def _ticker_situations(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -93,10 +165,20 @@ def _ticker_situations(payload: dict[str, Any]) -> list[dict[str, Any]]:
             situations.append(situation)
 
     priority_order = {"high": 0, "medium": 1, "low": 2}
+    category_order = {
+        "Reduce assignment risk": 0,
+        "Monitor assignment risk": 1,
+        "Recover with covered call": 2,
+        "Roll to improve recovery": 3,
+        "Evaluate exit vs roll": 4,
+        "Harvest unused put risk": 5,
+        "Accept / monitor exit": 6,
+    }
     situations.sort(
         key=lambda item: (
             priority_order.get(str(item.get("priority")), 9),
-            _num(item.get("impact")) or 0,
+            category_order.get(str(item.get("category")), 9),
+            _num(item.get("signal_value")) or 0,
             str(item.get("ticker") or ""),
         )
     )
@@ -111,13 +193,19 @@ def _classify_ticker_situation(
 ) -> dict[str, Any]:
     open_puts = [row for row in open_rows if _option_type(row).startswith("put")]
     open_calls = [row for row in open_rows if _option_type(row).startswith("call")]
-    itm_puts = [row for row in open_puts if _open_short_intrinsic_gap(row) < 0]
+    itm_puts = [row for row in open_puts if _open_short_assignment_gap(row) < 0]
     near_puts = [
         row
         for row in open_puts
-        if _open_short_intrinsic_gap(row) >= 0 and (_num(row.get("moneyness")) is not None and abs(_num(row.get("moneyness")) or 0) <= 0.05)
+        if _open_short_assignment_gap(row) >= 0 and (_num(row.get("moneyness")) is not None and abs(_num(row.get("moneyness")) or 0) <= 0.05)
     ]
-    capped_calls = [row for row in open_calls if _open_short_intrinsic_gap(row) < 0]
+    deeply_otm_puts = [
+        row
+        for row in open_puts
+        if _open_short_put_otm_distance(row) > 0
+        and _open_short_put_otm_ratio(row) >= 0.25
+    ]
+    capped_calls = [row for row in open_calls if _covered_call_upside_foregone(row) < 0]
     uncovered_underwater = [
         row
         for row in inv_rows
@@ -128,14 +216,10 @@ def _classify_ticker_situation(
         for row in inv_rows
         if (_num(row.get("covered_shares")) or 0) > 0 and (_num(row.get("shares")) or 0) > 0
     ]
-    total_pnl = _num(metrics.get("total_pnl")) or 0
+    total_pnl = _total_pnl_from_metrics(metrics)
     options_pnl = _num(metrics.get("realized_options_pnl")) or 0
     unrealized_pnl = _num(metrics.get("unrealized_pnl")) or 0
-    realized_pnl = (_num(metrics.get("combined_realized_pnl")) or 0) or (
-        (_num(metrics.get("realized_options_pnl")) or 0)
-        + (_num(metrics.get("realized_stock_pnl")) or 0)
-        + (_num(metrics.get("dividends")) or 0)
-    )
+    realized_pnl = _realized_pnl_from_metrics(metrics)
 
     if itm_puts:
         primary = min(itm_puts, key=lambda row: _num(row.get("days_to_expiration")) or 9999)
@@ -145,7 +229,8 @@ def _classify_ticker_situation(
             category="Reduce assignment risk",
             objective="Reduce near-term put assignment risk",
             reason="Open put is in the money",
-            impact=sum(_open_short_projected_pnl(row) or 0 for row in itm_puts),
+            signal_label="ITM put unrealized loss",
+            signal_value=sum(_open_short_assignment_gap(row) for row in itm_puts),
             expiry=primary.get("expiration"),
             dte=_num(primary.get("days_to_expiration")),
             recommendation="Compare close vs roll down/out",
@@ -164,7 +249,8 @@ def _classify_ticker_situation(
             category="Recover with covered call",
             objective="Recover income without forcing a bad exit",
             reason="Assigned holding below cost and uncovered",
-            impact=_num(worst.get("unrealized_pnl")),
+            signal_label="Assigned holding drag",
+            signal_value=_num(worst.get("unrealized_pnl")),
             expiry=None,
             dte=None,
             recommendation="Find covered-call candidate",
@@ -195,7 +281,8 @@ def _classify_ticker_situation(
             category=category,
             objective=objective,
             reason="Covered holding/call creates exit-or-roll decision",
-            impact=sum(_open_short_projected_pnl(row) or 0 for row in capped_calls) if capped_calls else holding_unrealized,
+            signal_label="Covered-call upside foregone" if capped_calls else "Holding unrealized P&L",
+            signal_value=sum(_covered_call_upside_foregone(row) for row in capped_calls) if capped_calls else holding_unrealized,
             expiry=call.get("expiration"),
             dte=_num(call.get("days_to_expiration")),
             recommendation=recommendation,
@@ -217,7 +304,8 @@ def _classify_ticker_situation(
             category="Monitor assignment risk",
             objective="Avoid surprise assignment while preserving premium",
             reason="Open put is near strike",
-            impact=sum(_open_short_projected_pnl(row) or 0 for row in near_puts),
+            signal_label="Near-strike put gap",
+            signal_value=sum(_open_short_assignment_gap(row) for row in near_puts),
             expiry=primary.get("expiration"),
             dte=_num(primary.get("days_to_expiration")),
             recommendation="Monitor or pre-plan roll",
@@ -228,6 +316,26 @@ def _classify_ticker_situation(
             supporting_signals=[f"{len(near_puts)} near-strike put(s)"],
         )
 
+    if deeply_otm_puts:
+        primary = min(deeply_otm_puts, key=lambda row: _num(row.get("days_to_expiration")) or 9999)
+        return _situation(
+            ticker=ticker,
+            priority="medium",
+            category="Harvest unused put risk",
+            objective="Consider rolling put strike up for more credit if risk remains acceptable",
+            reason="Open put is far out of the money",
+            signal_label="Put distance above strike",
+            signal_value=_open_short_put_otm_distance(primary),
+            expiry=primary.get("expiration"),
+            dte=_num(primary.get("days_to_expiration")),
+            recommendation="Compare keep vs roll strike up",
+            source="ticker-level",
+            open_rows=open_rows,
+            inventory_rows=inv_rows,
+            metrics=metrics,
+            supporting_signals=[f"{len(deeply_otm_puts)} far OTM put(s)"],
+        )
+
     if options_pnl > 0 and total_pnl < 0 and (open_rows or inv_rows):
         return _situation(
             ticker=ticker,
@@ -235,7 +343,8 @@ def _classify_ticker_situation(
             category="Pause new entries",
             objective="Avoid adding risk while recovery is active",
             reason="Positive premium but negative total lifecycle P&L",
-            impact=total_pnl,
+            signal_label="Current unrealized drag",
+            signal_value=unrealized_pnl,
             expiry=None,
             dte=None,
             recommendation="Review before adding exposure",
@@ -252,7 +361,8 @@ def _classify_ticker_situation(
         category="No action",
         objective="No current decision required",
         reason="No active decision signal",
-        impact=total_pnl,
+        signal_label="Current unrealized",
+        signal_value=unrealized_pnl,
         expiry=None,
         dte=None,
         recommendation="No action",
@@ -271,7 +381,8 @@ def _situation(
     category: str,
     objective: str,
     reason: str,
-    impact: Optional[float],
+    signal_label: str,
+    signal_value: Optional[float],
     expiry: Any,
     dte: Optional[float],
     recommendation: str,
@@ -287,20 +398,17 @@ def _situation(
         "category": category,
         "objective": objective,
         "reason": reason,
-        "impact": impact,
+        "signal_label": signal_label,
+        "signal_value": signal_value,
+        "open_risk_drag": signal_value,
         "expiry": expiry,
         "dte": dte,
         "recommendation": recommendation,
         "source": source,
         "open_contract_count": len(open_rows),
         "assigned_lot_count": len(inventory_rows),
-        "realized_pnl": (
-            (_num(metrics.get("combined_realized_pnl")) or 0)
-            or (_num(metrics.get("realized_options_pnl")) or 0)
-            + (_num(metrics.get("realized_stock_pnl")) or 0)
-            + (_num(metrics.get("dividends")) or 0)
-        ),
-        "total_pnl": _num(metrics.get("total_pnl")) or 0,
+        "realized_pnl": _realized_pnl_from_metrics(metrics),
+        "total_pnl": _total_pnl_from_metrics(metrics),
         "unrealized_pnl": _num(metrics.get("unrealized_pnl")) or 0,
         "current_price": _first_num(
             [metrics.get("current_price")]
@@ -309,8 +417,63 @@ def _situation(
         ),
         "cost_basis": _avg([_num(row.get("cost_per_share")) for row in inventory_rows]),
         "supporting_signals": supporting_signals,
+        "current_state": _current_state(ticker, open_rows, inventory_rows, metrics),
         "_open_rows": open_rows,
         "_inventory_rows": inventory_rows,
+    }
+
+
+def _current_state(
+    ticker: str,
+    open_rows: list[dict[str, Any]],
+    inventory_rows: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    assigned_shares = _sum([abs(_num(row.get("shares")) or 0) for row in inventory_rows])
+    assigned_dates = [
+        parsed.isoformat()
+        for parsed in [
+            _parse_date(
+                row.get("assignment_date")
+                or row.get("assigned_date")
+                or row.get("buy_date")
+                or row.get("first_buy_date")
+                or row.get("latest_buy_date")
+                or row.get("open_date")
+                or row.get("date")
+                or row.get("lot_date")
+            )
+            for row in inventory_rows
+        ]
+        if parsed is not None
+    ]
+    option_bits = []
+    for row in open_rows[:4]:
+        option_bits.append(
+            {
+                "type": str(row.get("option_type") or row.get("put_call") or ""),
+                "strike": _num(row.get("strike")),
+                "expiry": row.get("expiration"),
+                "dte": _num(row.get("days_to_expiration")),
+                "quantity": _num(row.get("quantity")),
+                "premium": _open_short_premium(row),
+            }
+        )
+    return {
+        "ticker": ticker,
+        "current_price": _first_num(
+            [metrics.get("current_price")]
+            + [row.get("current_price") for row in inventory_rows]
+            + [row.get("current_price") for row in open_rows]
+        ),
+        "assigned_shares": assigned_shares,
+        "assignment_date": max(assigned_dates) if assigned_dates else None,
+        "cost_basis": _avg([_num(row.get("cost_per_share")) for row in inventory_rows]),
+        "realized_pnl": _realized_pnl_from_metrics(metrics),
+        "current_unrealized": _num(metrics.get("unrealized_pnl")) or 0,
+        "ticker_total": _total_pnl_from_metrics(metrics),
+        "open_contracts": int(_sum([abs(_num(row.get("quantity")) or 0) for row in open_rows])),
+        "open_options": option_bits,
     }
 
 
@@ -335,14 +498,55 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         active_year_month = None
 
     monthly_target = (payload.get("dashboard") or {}).get("monthly_target") or {}
+    cycle_month_row = _active_cycle_month_row(payload, active_year_month)
     target_return = _num(monthly_target.get("target_return")) or _num((payload.get("web") or {}).get("target_return")) or 0.02
+    target_floor = _num((payload.get("web") or {}).get("target_floor")) or _num(monthly_target.get("target_floor")) or 0.01
     portfolio_puts = [row for row in open_rows if _option_type(row).startswith("put")]
     cycle_puts = [row for row in cycle_rows if _option_type(row).startswith("put")]
     portfolio_put_exposure = _put_exposure(portfolio_puts)
     cycle_put_exposure = _put_exposure(cycle_puts)
-    projected_pnl = _sum([_open_short_projected_pnl(row) for row in cycle_rows])
-    target_base = cycle_put_exposure or portfolio_put_exposure or _num(monthly_target.get("target_pnl")) or 0
-    target_pnl = target_base * target_return if target_base else _num(monthly_target.get("target_pnl"))
+    premium_component = _first_num(
+        [
+            cycle_month_row.get("open_expiring_incremental_premium") if cycle_month_row else None,
+            cycle_month_row.get("open_expiring_option_premium") if cycle_month_row else None,
+        ]
+    )
+    if premium_component is None:
+        premium_component = _sum([_open_short_premium(row) for row in cycle_rows])
+    realized_cycle_pnl = _first_num(
+        [
+            cycle_month_row.get("realized_month_pnl") if cycle_month_row else None,
+            cycle_month_row.get("total_realized_pnl") if cycle_month_row else None,
+        ]
+    )
+    if realized_cycle_pnl is None:
+        realized_cycle_pnl = 0.0
+    itm_put_unrealized_loss = _sum(
+        [gap for gap in [_open_short_assignment_gap(row) for row in cycle_puts] if gap < 0]
+    )
+    projected_pnl = _num(cycle_month_row.get("projected_month_pnl")) if cycle_month_row else None
+    if projected_pnl is None:
+        projected_pnl = realized_cycle_pnl + premium_component
+    projected_pnl = projected_pnl + itm_put_unrealized_loss
+    covered_call_upside_foregone = _sum(
+        [
+            gap
+            for gap in [_covered_call_upside_foregone(row) for row in cycle_rows if _option_type(row).startswith("call")]
+            if gap < 0
+        ]
+    )
+    target_base = _first_num(
+        [
+            cycle_month_row.get("avg_capital") if cycle_month_row else None,
+            _avg_capital_from_target(monthly_target),
+        ]
+    )
+    if target_base:
+        target_pnl = target_base * target_return
+    elif cycle_month_row:
+        target_pnl = _num(cycle_month_row.get("target_pnl"))
+    else:
+        target_pnl = _num(monthly_target.get("target_pnl"))
     return {
         "cycle": f"{active_year_month[0]:04d}-{active_year_month[1]:02d}" if active_year_month else None,
         "cycle_label": _cycle_label(active_year_month),
@@ -350,23 +554,27 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         "min_dte": min([_num(row.get("days_to_expiration")) for row in cycle_rows if _num(row.get("days_to_expiration")) is not None], default=None),
         "max_dte": max([_num(row.get("days_to_expiration")) for row in cycle_rows if _num(row.get("days_to_expiration")) is not None], default=None),
         "open_contract_count": int(_sum([abs(_num(row.get("quantity")) or 0) for row in cycle_rows])),
-        "open_option_net": projected_pnl,
-        "premium_component": _sum([_open_short_premium(row) for row in cycle_rows]),
-        "intrinsic_gap": _sum([_open_short_intrinsic_gap(row) for row in cycle_rows]),
+        "realized_cycle_pnl": realized_cycle_pnl,
+        "premium_component": premium_component,
+        "itm_put_unrealized_loss": itm_put_unrealized_loss,
+        "covered_call_upside_foregone": covered_call_upside_foregone,
         "projected_pnl": projected_pnl,
         "target_return": target_return,
+        "target_floor": target_floor,
+        "target_base": target_base,
+        "target_basis": "avg_capital" if target_base else None,
         "target_pnl": target_pnl,
         "remaining_to_target": max((target_pnl or 0) - projected_pnl, 0) if target_pnl is not None else None,
         "projected_return_roac": projected_pnl / target_base if target_base else None,
         "portfolio_put_exposure": portfolio_put_exposure,
-        "portfolio_itm_put_exposure": _put_exposure([row for row in portfolio_puts if _open_short_intrinsic_gap(row) < 0]),
+        "portfolio_itm_put_exposure": _put_exposure([row for row in portfolio_puts if _open_short_assignment_gap(row) < 0]),
         "cycle_put_exposure": cycle_put_exposure,
-        "cycle_itm_put_exposure": _put_exposure([row for row in cycle_puts if _open_short_intrinsic_gap(row) < 0]),
+        "cycle_itm_put_exposure": _put_exposure([row for row in cycle_puts if _open_short_assignment_gap(row) < 0]),
         "near_strike_put_exposure": _put_exposure(
             [
                 row
                 for row in cycle_puts
-                if _open_short_intrinsic_gap(row) >= 0
+                if _open_short_assignment_gap(row) >= 0
                 and _num(row.get("moneyness")) is not None
                 and abs(_num(row.get("moneyness")) or 0) <= 0.05
             ]
@@ -374,198 +582,156 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _recommendation_candidates(ticker_situations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = []
-    for situation in ticker_situations:
-        candidates = _simulated_candidates_for_situation(situation)
-        if not candidates:
+def _combine_historical_matches(
+    probability_matches: list[dict[str, Any]],
+    historical_enrichments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not historical_enrichments:
+        return probability_matches
+    combined: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for doc in historical_enrichments:
+        match = historical_enrichment_to_probability_match(doc)
+        trade_id = str((match.get("trade") or {}).get("trade_id") or match.get("match_id") or "")
+        if not trade_id:
             continue
-        rows.append(
-            {
-                "ticker": situation["ticker"],
-                "category": situation["category"],
-                "objective": situation["objective"],
-                "disclaimer": "Prototype only: simulated option-chain data; not a trading recommendation.",
-                "recommended": candidates[0],
-                "alternatives": candidates[1:3],
-            }
-        )
-    return rows
+        combined[trade_id] = match
+        order.append(trade_id)
+
+    for match in probability_matches:
+        trade = match.get("trade") if isinstance(match.get("trade"), dict) else {}
+        trade_id = str(trade.get("trade_id") or match.get("trade_id") or match.get("match_id") or "")
+        if not trade_id or trade_id not in combined:
+            key = trade_id or str(match.get("match_id") or len(order))
+            combined[key] = dict(match)
+            order.append(key)
+            continue
+        existing = combined[trade_id]
+        existing_trade = existing.get("trade") if isinstance(existing.get("trade"), dict) else {}
+        if existing_trade.get("profit_probability") is None and trade.get("profit_probability") is not None:
+            existing_trade = {**existing_trade, "profit_probability": trade.get("profit_probability")}
+            probability = _num(trade.get("profit_probability"))
+            if probability is not None:
+                existing_trade["assignment_risk_proxy"] = 1.0 - probability
+            existing["trade"] = existing_trade
+            existing["profit_probability"] = existing_trade.get("profit_probability")
+            existing["assignment_risk_proxy"] = existing_trade.get("assignment_risk_proxy")
+        if match.get("probability_row_id") is not None:
+            existing["probability_row_id"] = match.get("probability_row_id")
+        existing["sheet_probability_matched"] = bool(match.get("matched"))
+        existing["matched"] = bool(existing.get("provider_contract_matched") or match.get("matched"))
+
+    return [combined[key] for key in order if key in combined]
 
 
-def _simulated_candidates_for_situation(situation: dict[str, Any]) -> list[dict[str, Any]]:
-    category = str(situation.get("category") or "")
-    if category == "Recover with covered call":
-        return _covered_call_candidates(situation, objective="Recover income")
-    if category in {"Evaluate exit vs roll", "Roll to improve recovery", "Accept / monitor exit"}:
-        return _roll_or_exit_candidates(situation)
-    if category in {"Reduce assignment risk", "Monitor assignment risk"}:
-        return _put_risk_candidates(situation)
-    if category == "Pause new entries":
-        return [_candidate("Pause new puts", None, None, 0, 0, None, None, "n/a", 78, "Active recovery state; do not add exposure until exit/recovery improves.")]
-    return []
-
-
-def _covered_call_candidates(situation: dict[str, Any], *, objective: str) -> list[dict[str, Any]]:
-    ticker = str(situation.get("ticker") or "")
-    current = _num(situation.get("current_price")) or _num(situation.get("cost_basis")) or 50
-    cost = _num(situation.get("cost_basis")) or current
-    base_dtes = [24, 38, 52]
-    strikes = [_round_strike(max(cost, current * 1.03)), _round_strike(max(cost * 1.05, current * 1.06)), _round_strike(max(cost * 1.1, current * 1.1))]
-    candidates = []
-    for idx, (dte, strike) in enumerate(zip(base_dtes, strikes)):
-        premium = _sim_premium(ticker, strike, current, dte, "call")
-        exit_pnl = (strike - cost) * 100 + premium
-        score = 58 + min(max(exit_pnl / 120, -18), 26) + (8 if strike >= cost else -15) - idx * 3
-        candidates.append(
-            _candidate(
-                "Sell covered call",
-                strike,
-                _future_expiry(dte),
-                dte,
-                premium,
-                _sim_delta(ticker, strike, current, "call"),
-                _sim_iv(ticker),
-                _sim_liquidity(ticker, idx),
-                score,
-                f"{objective}: strike {'above' if strike >= cost else 'below'} cost basis; estimated called-away P&L {_money(exit_pnl)}.",
-            )
-        )
-    return sorted(candidates, key=lambda row: row["score"], reverse=True)
-
-
-def _roll_or_exit_candidates(situation: dict[str, Any]) -> list[dict[str, Any]]:
-    ticker = str(situation.get("ticker") or "")
-    current = _num(situation.get("current_price")) or _num(situation.get("cost_basis")) or 50
-    cost = _num(situation.get("cost_basis")) or current
-    open_calls = [row for row in situation.get("_open_rows", []) if _option_type(row).startswith("call")]
-    current_strike = _num(open_calls[0].get("strike")) if open_calls else None
-    exit_strike = current_strike or _round_strike(max(cost, current))
-    exit_pnl = (exit_strike - cost) * 100 + _sum([_open_short_premium(row) for row in open_calls])
-    candidates = [
-        _candidate(
-            "Accept / monitor exit",
-            exit_strike,
-            open_calls[0].get("expiration") if open_calls else None,
-            _num(open_calls[0].get("days_to_expiration")) if open_calls else None,
-            _sum([_open_short_premium(row) for row in open_calls]),
-            None,
-            None,
-            "current",
-            64 + min(max(exit_pnl / 150, -18), 18),
-            f"Current cap exits near {_money(exit_pnl)} estimated lifecycle result; avoids extending recovery.",
-        )
-    ]
-    for idx, dte in enumerate([31, 45]):
-        strike = _round_strike(max(current * (1.05 + idx * 0.04), cost * (1.02 + idx * 0.04), (current_strike or current) * 1.05))
-        premium = _sim_premium(ticker, strike, current, dte, "call")
-        unlocked = max(strike - (current_strike or current), 0) * 100
-        score = 60 + min(unlocked / 90, 22) + min(premium / 60, 10) - idx * 4
-        candidates.append(
-            _candidate(
-                "Roll up/out",
-                strike,
-                _future_expiry(dte),
-                dte,
-                premium,
-                _sim_delta(ticker, strike, current, "call"),
-                _sim_iv(ticker),
-                _sim_liquidity(ticker, idx),
-                score,
-                f"Preserves about {_money(unlocked)} more upside before costs; compare against added time.",
-            )
-        )
-    return sorted(candidates, key=lambda row: row["score"], reverse=True)
-
-
-def _put_risk_candidates(situation: dict[str, Any]) -> list[dict[str, Any]]:
-    ticker = str(situation.get("ticker") or "")
-    puts = [row for row in situation.get("_open_rows", []) if _option_type(row).startswith("put")]
-    current = _num(situation.get("current_price")) or 50
-    strike = _num(puts[0].get("strike")) if puts else current
-    candidates = [
-        _candidate(
-            "Close put risk",
-            strike,
-            puts[0].get("expiration") if puts else None,
-            _num(puts[0].get("days_to_expiration")) if puts else None,
-            -abs(_open_short_intrinsic_gap(puts[0])) if puts else 0,
-            None,
-            None,
-            "current",
-            62,
-            "Removes assignment exposure; useful if cash risk is the priority.",
-        )
-    ]
-    for idx, dte in enumerate([31, 45]):
-        new_strike = _round_strike((strike or current) * (0.94 - idx * 0.03))
-        credit = _sim_premium(ticker, new_strike, current, dte, "put")
-        score = 60 + idx * 3 + max((strike or current) - new_strike, 0)
-        candidates.append(
-            _candidate(
-                "Roll down/out",
-                new_strike,
-                _future_expiry(dte),
-                dte,
-                credit,
-                _sim_delta(ticker, new_strike, current, "put"),
-                _sim_iv(ticker),
-                _sim_liquidity(ticker, idx),
-                score,
-                f"Reduces assignment strike by {_money((strike or current) - new_strike, 2)} while keeping premium opportunity.",
-            )
-        )
-    return sorted(candidates, key=lambda row: row["score"], reverse=True)
-
-
-def _candidate(
-    action: str,
-    strike: Optional[float],
-    expiry: Any,
-    dte: Optional[float],
-    premium: Optional[float],
-    delta: Optional[float],
-    iv: Optional[float],
-    liquidity: str,
-    score: float,
-    explanation: str,
-) -> dict[str, Any]:
-    return {
-        "action": action,
-        "strike": strike,
-        "expiry": expiry,
-        "dte": dte,
-        "premium": premium,
-        "delta": delta,
-        "iv": iv,
-        "liquidity": liquidity,
-        "score": round(max(0, min(100, score)), 1),
-        "explanation": explanation,
-        "is_simulated": True,
+def _enrich_probability_matches(payload: dict[str, Any], matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not matches:
+        return []
+    ticker_metrics = {
+        str(row.get("ticker") or "").upper(): row
+        for row in (payload.get("tickers") or {}).get("items") or []
+        if row.get("ticker")
     }
+    inventory_by_ticker: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in _inventory_rows(payload):
+        ticker = str(row.get("ticker") or "").upper()
+        if ticker:
+            inventory_by_ticker[ticker].append(row)
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    enriched = [dict(match) for match in matches]
+    for match in enriched:
+        if not match.get("matched"):
+            continue
+        ticker = str((match.get("trade") or {}).get("ticker") or match.get("ticker") or "").upper()
+        if ticker:
+            grouped[ticker].append(match)
+
+    for ticker, rows in grouped.items():
+        metrics = ticker_metrics.get(ticker, {})
+        weights = [_opening_premium(row) or _trade_capital(row) or 1.0 for row in rows]
+        weight_total = sum(weights) or float(len(rows) or 1)
+        put_rows = [row for row in rows if _match_put_call(row).startswith("put")]
+        put_weights = [_opening_premium(row) or _trade_capital(row) or 1.0 for row in put_rows]
+        put_weight_total = sum(put_weights) or float(len(put_rows) or 1)
+
+        realized_options = _metric_present(metrics, "realized_options_pnl")
+        realized_stock = _metric_present(metrics, "realized_stock_pnl", "stock_pnl")
+        dividends = _metric_present(metrics, "dividends", "dividend_pnl")
+        ticker_unrealized = _metric_present(metrics, "unrealized_pnl")
+        assigned_unrealized = _sum_or_none([_num(row.get("unrealized_pnl")) for row in inventory_by_ticker.get(ticker, [])])
+        if assigned_unrealized is None:
+            assigned_unrealized = ticker_unrealized
+
+        for row, weight in zip(rows, weights):
+            share = weight / weight_total if weight_total else 0
+            put_share = 0.0
+            if row in put_rows:
+                put_weight = _opening_premium(row) or _trade_capital(row) or 1.0
+                put_share = put_weight / put_weight_total if put_weight_total else 0
+            option_pnl = realized_options * share if realized_options is not None else None
+            stock_pnl = realized_stock * put_share if realized_stock is not None and put_share else None
+            dividend_pnl = dividends * put_share if dividends is not None and put_share else None
+            unrealized_pnl = assigned_unrealized * put_share if assigned_unrealized is not None and put_share else None
+            row["option_pnl"] = option_pnl
+            row["stock_pnl"] = stock_pnl
+            row["dividends"] = dividend_pnl
+            row["unrealized_pnl"] = unrealized_pnl
+            row["lifecycle_pnl"] = _sum_or_none([option_pnl, stock_pnl, dividend_pnl, unrealized_pnl])
+            row["attribution"] = {
+                "option": option_pnl is not None,
+                "stock": stock_pnl is not None,
+                "dividends": dividend_pnl is not None,
+                "unrealized": unrealized_pnl is not None,
+                "full_lifecycle": option_pnl is not None
+                and (not _match_put_call(row).startswith("put") or unrealized_pnl is not None or stock_pnl is not None),
+                "method": "ticker_weighted_best_effort",
+            }
+    return enriched
 
 
 def _strike_quality(probability_matches: list[dict[str, Any]]) -> dict[str, Any]:
     matched = [match for match in probability_matches if match.get("matched")]
     puts = [match for match in matched if _match_put_call(match).startswith("put")]
     calls = [match for match in matched if _match_put_call(match).startswith("call")]
+    attributed = [match for match in matched if (match.get("attribution") or {}).get("option")]
+    stock_attributed = [match for match in matched if (match.get("attribution") or {}).get("stock")]
+    full_attributed = [match for match in matched if (match.get("attribution") or {}).get("full_lifecycle")]
+    provider_rows = [match for match in probability_matches if match.get("provider")]
+    provider_contract_rows = [match for match in provider_rows if match.get("historical_provider_contract_matched")]
+    provider_price_rows = [
+        match
+        for match in provider_rows
+        if _num(match.get("option_close")) is not None or _num(match.get("option_vwap")) is not None
+    ]
+    risk_rows = [match for match in probability_matches if _assignment_risk(match) is not None]
     return {
         "coverage": {
             "matched_count": len(matched),
             "trade_count": len(probability_matches),
             "coverage_rate": _ratio(len(matched), len(probability_matches)),
+            "risk_proxy_count": len(risk_rows),
+            "risk_proxy_rate": _ratio(len(risk_rows), len(probability_matches)),
+            "historical_provider_trade_count": len(provider_rows),
+            "historical_provider_contract_match_count": len(provider_contract_rows),
+            "historical_provider_contract_match_rate": _ratio(len(provider_contract_rows), len(provider_rows)),
+            "historical_provider_option_price_count": len(provider_price_rows),
+            "historical_provider_option_price_rate": _ratio(len(provider_price_rows), len(provider_rows)),
+            "option_lifecycle_attributed_count": len(attributed),
+            "stock_outcome_attributed_count": len(stock_attributed),
+            "full_lifecycle_attributed_count": len(full_attributed),
+            "option_lifecycle_attribution_rate": _ratio(len(attributed), len(matched)),
+            "stock_outcome_attribution_rate": _ratio(len(stock_attributed), len(matched)),
+            "full_lifecycle_attribution_rate": _ratio(len(full_attributed), len(matched)),
         },
         "put_entry_quality": {
             "title": "Put Entry Quality",
-            "estimated": True,
             "bucket_summary": _bucket_lifecycle_summary(puts, side="put"),
         },
         "call_exit_quality": {
-            "title": "Covered Call / Exit Quality",
-            "estimated": True,
-            "bucket_summary": _call_quality_summary(calls),
+            "title": "Call / Exit Quality",
+            "bucket_summary": _bucket_lifecycle_summary(calls, side="call"),
         },
-        "note": "Estimated lifecycle attribution is prototype-only and must be verified with lot-level matching before production use.",
     }
 
 
@@ -584,10 +750,14 @@ def _bucket_lifecycle_summary(rows: list[dict[str, Any]], *, side: str) -> list[
         total_premium = _sum(premiums)
         total_capital = _sum(capital)
         avg_risk = _avg([_assignment_risk(match) for match in bucket_rows]) or 0
-        stock_pnl = -total_capital * max(avg_risk - 0.22, 0) * 0.035 if side == "put" else 0
-        dividends = total_capital * 0.0015 if side == "put" and bucket_rows else 0
-        unrealized_drag = -total_capital * max(avg_risk - 0.25, 0) * 0.025 if side == "put" else 0
-        total_lifecycle = total_premium + stock_pnl + dividends + unrealized_drag
+        option_pnl = _sum_or_none([_match_metric(match, "option_pnl", "realized_options_pnl") for match in bucket_rows])
+        stock_pnl = _sum_or_none([_match_metric(match, "stock_pnl", "realized_stock_pnl", "stock_realized_pnl") for match in bucket_rows])
+        dividends = _sum_or_none([_match_metric(match, "dividends", "dividend_pnl", "dividends_net") for match in bucket_rows])
+        unrealized_drag = _sum_or_none([_match_metric(match, "unrealized_pnl", "current_unrealized_pnl", "open_unrealized_pnl") for match in bucket_rows])
+        lifecycle_values = [_match_metric(match, "total_pnl", "lifecycle_pnl", "combined_pnl") for match in bucket_rows]
+        total_lifecycle = _sum_or_none(lifecycle_values)
+        attributed_count = sum(1 for match in bucket_rows if (match.get("attribution") or {}).get("option"))
+        full_lifecycle_count = sum(1 for match in bucket_rows if (match.get("attribution") or {}).get("full_lifecycle"))
         out.append(
             {
                 "bucket": label,
@@ -595,83 +765,103 @@ def _bucket_lifecycle_summary(rows: list[dict[str, Any]], *, side: str) -> list[
                 "avg_profit_probability": _avg([_profit_probability(match) for match in bucket_rows]),
                 "avg_assignment_risk_proxy": _avg([_assignment_risk(match) for match in bucket_rows]),
                 "opening_premium": total_premium,
-                "stock_pnl_estimated": stock_pnl,
-                "dividends_estimated": dividends,
-                "unrealized_drag_estimated": unrealized_drag,
-                "lifecycle_pnl_estimated": total_lifecycle,
-                "pnl_per_capital_estimated": total_lifecycle / total_capital if total_capital else None,
-                "assignment_rate_estimated": avg_risk if bucket_rows else None,
+                "option_pnl": option_pnl,
+                "stock_pnl": stock_pnl,
+                "dividends": dividends,
+                "unrealized_drag": unrealized_drag,
+                "lifecycle_pnl": total_lifecycle,
+                "pnl_per_capital": total_lifecycle / total_capital if total_lifecycle is not None and total_capital else None,
+                "assignment_rate": avg_risk if bucket_rows else None,
+                "attributed_count": attributed_count,
+                "full_lifecycle_count": full_lifecycle_count,
+                "attribution_rate": _ratio(attributed_count, len(bucket_rows)),
+                "full_lifecycle_attribution_rate": _ratio(full_lifecycle_count, len(bucket_rows)),
                 "top_tickers": _top_tickers(bucket_rows),
             }
         )
     return out
 
 
-def _call_quality_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups = {
-        "Low-delta income": [],
-        "Balanced recovery": [],
-        "Aggressive exit/cap": [],
-    }
-    for match in rows:
-        risk = _assignment_risk(match) or 0
-        if risk <= 0.20:
-            groups["Low-delta income"].append(match)
-        elif risk <= 0.35:
-            groups["Balanced recovery"].append(match)
-        else:
-            groups["Aggressive exit/cap"].append(match)
-    out = []
-    for label, bucket_rows in groups.items():
-        premium = _sum([_opening_premium(match) for match in bucket_rows])
-        capital = _sum([_trade_capital(match) for match in bucket_rows])
-        avg_risk = _avg([_assignment_risk(match) for match in bucket_rows])
-        capped_upside = -(capital * max((avg_risk or 0) - 0.25, 0) * 0.015)
-        exit_pnl = premium + capped_upside
-        out.append(
-            {
-                "bucket": label,
-                "count": len(bucket_rows),
-                "avg_assignment_risk_proxy": avg_risk,
-                "opening_premium": premium,
-                "capped_upside_estimated": capped_upside,
-                "exit_pnl_estimated": exit_pnl,
-                "pnl_per_capital_estimated": exit_pnl / capital if capital else None,
-                "roll_usefulness": "higher" if label == "Aggressive exit/cap" else "medium" if label == "Balanced recovery" else "low",
-                "top_tickers": _top_tickers(bucket_rows),
-            }
-        )
-    return out
-
-
-def _coverage_notes(payload: dict[str, Any], probability_matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _coverage_notes(
+    payload: dict[str, Any],
+    probability_matches: list[dict[str, Any]],
+    option_market_data: dict[str, Any],
+) -> list[dict[str, Any]]:
     notes = []
     coverage = ((payload.get("dashboard") or {}).get("data_freshness") or {}).get("price_coverage") or {}
     missing = int(_num(coverage.get("missing_count")) or 0)
+    requested = int(_num(coverage.get("stocks_requested")) or 0)
+    fetched = int(_num(coverage.get("stocks_fetched")) or 0)
+    if requested:
+        notes.append({"severity": "status", "message": f"Price coverage: {fetched}/{requested} tickers."})
     if missing:
-        notes.append({"severity": "warning", "message": f"{missing} required price(s) missing from current snapshot."})
+        notes.append({"severity": "status", "message": f"Missing prices: {missing}."})
     matched = sum(1 for match in probability_matches if match.get("matched"))
-    if probability_matches:
+    risk_proxy = sum(1 for match in probability_matches if _assignment_risk(match) is not None)
+    provider_rows = [match for match in probability_matches if match.get("provider")]
+    provider_contract_rows = [match for match in provider_rows if match.get("historical_provider_contract_matched")]
+    provider_price_rows = [
+        match
+        for match in provider_rows
+        if _num(match.get("option_close")) is not None or _num(match.get("option_vwap")) is not None
+    ]
+    if provider_rows:
         notes.append(
             {
-                "severity": "info",
-                "message": f"Historical probability coverage: {matched}/{len(probability_matches)} IBKR short-option opening trades.",
+                "severity": "status",
+                "message": (
+                    "Historical option facts: "
+                    f"{len(provider_rows)} trades, {len(provider_contract_rows)} contract matches, "
+                    f"{len(provider_price_rows)} option price observations."
+                ),
+            }
+        )
+    if probability_matches:
+        attributed = sum(1 for match in probability_matches if (match.get("attribution") or {}).get("option"))
+        stock_attributed = sum(1 for match in probability_matches if (match.get("attribution") or {}).get("stock"))
+        full_attributed = sum(1 for match in probability_matches if (match.get("attribution") or {}).get("full_lifecycle"))
+        notes.append(
+            {
+                "severity": "status",
+                "message": f"Historical risk proxy: {risk_proxy}/{len(probability_matches)} short-option opening trades.",
+            }
+        )
+        notes.append(
+            {
+                "severity": "status",
+                "message": f"Lifecycle attribution: option {attributed}/{matched}, stock {stock_attributed}/{matched}, full {full_attributed}/{matched}.",
             }
         )
     else:
-        notes.append({"severity": "info", "message": "Historical probability import is not available in this environment."})
-    notes.append(
-        {
-            "severity": "warning",
-            "message": "Recommendation candidates use simulated option-chain data in this prototype and are not trading recommendations.",
-        }
-    )
-    notes.append(
-        {
-            "severity": "warning",
-            "message": "Lifecycle attribution by risk bucket is estimated until verified with lot-level matching tests.",
-        }
-    )
+        notes.append({"severity": "status", "message": "Historical risk proxy: unavailable."})
+    option_status = option_market_data.get("status") or {}
+    if option_status:
+        source = option_status.get("source") or "none"
+        provider = option_status.get("provider") or "n/a"
+        contract_count = option_status.get("contract_count") or 0
+        last_fetched = option_status.get("last_fetched_at") or "not fetched"
+        quote_coverage = _ratio(
+            int(_num(option_status.get("quote_coverage_count")) or 0),
+            int(_num(option_status.get("contract_count")) or 0),
+        )
+        greek_coverage = _ratio(
+            int(_num(option_status.get("greek_coverage_count")) or 0),
+            int(_num(option_status.get("contract_count")) or 0),
+        )
+        notes.append(
+            {
+                "severity": "status",
+                "message": f"Option data: {provider}, {source}, {contract_count} contracts, last fetched {last_fetched}.",
+            }
+        )
+        notes.append(
+            {
+                "severity": "status",
+                "message": f"Option coverage: quotes {fmt_pct_for_note(quote_coverage)}, greeks {fmt_pct_for_note(greek_coverage)}.",
+            }
+        )
+    else:
+        notes.append({"severity": "status", "message": "Option data: no stored provider data loaded."})
     return notes
 
 
@@ -691,12 +881,6 @@ def _option_type(row: dict[str, Any]) -> str:
     return str(row.get("option_type") or row.get("put_call") or "").lower()
 
 
-def _open_short_projected_pnl(row: dict[str, Any]) -> Optional[float]:
-    premium = _open_short_premium(row)
-    gap = _open_short_intrinsic_gap(row)
-    return premium + gap
-
-
 def _open_short_premium(row: dict[str, Any]) -> float:
     premium = _num(row.get("display_premium_collected"))
     if premium is None:
@@ -706,16 +890,39 @@ def _open_short_premium(row: dict[str, Any]) -> float:
     return premium or 0
 
 
-def _open_short_intrinsic_gap(row: dict[str, Any]) -> float:
+def _open_short_assignment_gap(row: dict[str, Any]) -> float:
     strike = _num(row.get("strike"))
     current = _num(row.get("current_price"))
     qty = abs(_num(row.get("quantity")) or 0)
-    if strike is None or current is None or not qty:
+    if strike is None or current is None or not qty or not _option_type(row).startswith("put"):
         return 0.0
-    option_type = _option_type(row)
-    if option_type.startswith("call"):
-        return -max(current - strike, 0) * 100 * qty
     return -max(strike - current, 0) * 100 * qty
+
+
+def _open_short_put_otm_distance(row: dict[str, Any]) -> float:
+    strike = _num(row.get("strike"))
+    current = _num(row.get("current_price"))
+    qty = abs(_num(row.get("quantity")) or 0)
+    if strike is None or current is None or not qty or not _option_type(row).startswith("put"):
+        return 0.0
+    return max(current - strike, 0) * 100 * qty
+
+
+def _open_short_put_otm_ratio(row: dict[str, Any]) -> float:
+    strike = _num(row.get("strike"))
+    current = _num(row.get("current_price"))
+    if strike is None or strike <= 0 or current is None or not _option_type(row).startswith("put"):
+        return 0.0
+    return max(current - strike, 0) / strike
+
+
+def _covered_call_upside_foregone(row: dict[str, Any]) -> float:
+    strike = _num(row.get("strike"))
+    current = _num(row.get("current_price"))
+    qty = abs(_num(row.get("quantity")) or 0)
+    if strike is None or current is None or not qty or not _option_type(row).startswith("call"):
+        return 0.0
+    return -max(current - strike, 0) * 100 * qty
 
 
 def _put_exposure(rows: list[dict[str, Any]]) -> float:
@@ -730,6 +937,28 @@ def _cash_required_if_assigned(row: dict[str, Any]) -> Optional[float]:
     if strike is None or not qty:
         return None
     return strike * 100 * qty
+
+
+def _active_cycle_month_row(payload: dict[str, Any], year_month: Optional[tuple[int, int]]) -> dict[str, Any]:
+    if not year_month:
+        return {}
+    candidates = []
+    monthly = payload.get("monthly") or {}
+    candidates.extend(monthly.get("future_months") or [])
+    candidates.extend(monthly.get("months") or [])
+    for row in candidates:
+        month = _parse_date(row.get("month") or str(row.get("id") or "").replace("month:", ""))
+        if month and (month.year, month.month) == year_month:
+            return row
+    return {}
+
+
+def _avg_capital_from_target(monthly_target: dict[str, Any]) -> Optional[float]:
+    target_pnl = _num(monthly_target.get("target_pnl"))
+    target_return = _num(monthly_target.get("target_return"))
+    if target_pnl is None or not target_return:
+        return None
+    return target_pnl / target_return
 
 
 def _risk_bucket(value: float) -> str:
@@ -747,6 +976,25 @@ def _assignment_risk(match: dict[str, Any]) -> Optional[float]:
 def _profit_probability(match: dict[str, Any]) -> Optional[float]:
     trade = match.get("trade") or {}
     return _num(match.get("profit_probability")) or _num(trade.get("profit_probability"))
+
+
+def _match_metric(match: dict[str, Any], *names: str) -> Optional[float]:
+    trade = match.get("trade") or {}
+    for name in names:
+        value = _num(match.get(name))
+        if value is not None:
+            return value
+        value = _num(trade.get(name))
+        if value is not None:
+            return value
+    return None
+
+
+def _metric_present(row: dict[str, Any], *names: str) -> Optional[float]:
+    for name in names:
+        if name in row:
+            return _num(row.get(name))
+    return None
 
 
 def _opening_premium(match: dict[str, Any]) -> Optional[float]:
@@ -803,52 +1051,34 @@ def _cycle_label(year_month: Optional[tuple[int, int]]) -> str:
     return date(year_month[0], year_month[1], 1).strftime("%B %Y")
 
 
-def _future_expiry(dte: int) -> str:
-    return (date.today() + timedelta(days=dte)).isoformat()
+def _standard_monthly_expiries(count: int) -> list[str]:
+    today = date.today()
+    expiries: list[str] = []
+    year = today.year
+    month = today.month
+    while len(expiries) < count and len(expiries) < 12:
+        expiry = _third_friday(year, month)
+        expiry = _adjust_us_option_expiry_holiday(expiry)
+        if expiry >= today + timedelta(days=7):
+            expiries.append(expiry.isoformat())
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return expiries
 
 
-def _round_strike(value: float) -> float:
-    if value >= 100:
-        step = 5
-    elif value >= 50:
-        step = 2.5
-    else:
-        step = 1
-    return round(round(value / step) * step, 2)
+def _third_friday(year: int, month: int) -> date:
+    first = date(year, month, 1)
+    days_to_friday = (4 - first.weekday()) % 7
+    return first + timedelta(days=days_to_friday + 14)
 
 
-def _stable_unit(ticker: str, salt: str = "") -> float:
-    digest = hashlib.sha256(f"{ticker}:{salt}".encode("utf-8")).hexdigest()
-    return int(digest[:8], 16) / 0xFFFFFFFF
-
-
-def _sim_premium(ticker: str, strike: float, current: float, dte: float, option_type: str) -> float:
-    distance = abs(strike - current) / max(current, 1)
-    iv = _sim_iv(ticker) or 0.35
-    base = current * iv * math.sqrt(max(dte, 1) / 365) * max(0.08, 0.22 - distance)
-    if option_type == "put":
-        base *= 1.08
-    return round(max(base * 100, 5), 2)
-
-
-def _sim_delta(ticker: str, strike: float, current: float, option_type: str) -> float:
-    distance = (strike - current) / max(current, 1)
-    base = 0.28 - abs(distance) * 1.4 + _stable_unit(ticker, "delta") * 0.08
-    value = max(0.08, min(0.62, base))
-    return round(-value if option_type == "put" else value, 2)
-
-
-def _sim_iv(ticker: str) -> float:
-    return round(0.24 + _stable_unit(ticker, "iv") * 0.32, 2)
-
-
-def _sim_liquidity(ticker: str, idx: int) -> str:
-    value = _stable_unit(ticker, f"liq-{idx}")
-    if value > 0.72:
-        return "weak"
-    if value > 0.38:
-        return "fair"
-    return "good"
+def _adjust_us_option_expiry_holiday(value: date) -> date:
+    # Juneteenth is a US market holiday; listed monthly equity options expire on the previous trading day.
+    if value.month == 6 and value.day == 19:
+        return value - timedelta(days=1)
+    return value
 
 
 def _first_num(values: list[Any]) -> Optional[float]:
@@ -875,6 +1105,11 @@ def _sum(values: list[Optional[float]]) -> float:
     return sum(value for value in values if value is not None)
 
 
+def _sum_or_none(values: list[Optional[float]]) -> Optional[float]:
+    clean = [value for value in values if value is not None]
+    return sum(clean) if clean else None
+
+
 def _avg(values: list[Optional[float]]) -> Optional[float]:
     clean = [value for value in values if value is not None]
     return sum(clean) / len(clean) if clean else None
@@ -888,3 +1123,9 @@ def _money(value: Optional[float], digits: int = 0) -> str:
     if value is None:
         return "n/a"
     return f"${value:,.{digits}f}"
+
+
+def fmt_pct_for_note(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value * 100:.1f}%"

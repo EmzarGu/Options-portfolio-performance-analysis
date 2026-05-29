@@ -910,13 +910,13 @@ def test_ticker_summary_rows_emit_mobile_contract_shape():
         "realized_options_pnl": 10.0,
         "realized_stock_pnl": 20.0,
         "dividends": 12.5,
-        "combined_realized_pnl": 30.0,
+        "combined_realized_pnl": 42.5,
         "unrealized_pnl": 1500.0,
         "current_option_premium_unrealized_pnl": 150.0,
         "current_put_assignment_unrealized_pnl": 0.0,
         "current_option_unrealized_pnl": 150.0,
         "current_stock_unrealized_pnl": 1500.0,
-        "total_pnl": 1530.0,
+        "total_pnl": 1542.5,
         "open_option_count": 1,
         "inventory_share_count": 100,
         "risk_labels": ["In the money"],
@@ -926,7 +926,8 @@ def test_ticker_summary_rows_emit_mobile_contract_shape():
                 "year": 2026,
                 "realized_options_pnl": 10.0,
                 "realized_stock_pnl": 20.0,
-                "combined_realized_pnl": 30.0,
+                "dividends": 12.5,
+                "combined_realized_pnl": 42.5,
             }
         ],
     }
@@ -958,8 +959,8 @@ def test_ticker_summary_rows_support_year_filter_and_blocked_unrealized():
 
     putt = next(row for row in rows if row["ticker"] == "PUTT")
     assert putt["realized_options_pnl"] == 150.0
-    assert putt["combined_realized_pnl"] == 150.0
     assert putt["dividends"] == 11.0
+    assert putt["combined_realized_pnl"] == 161.0
     assert putt["unrealized_pnl"] is None
     assert putt["current_option_premium_unrealized_pnl"] is None
     assert putt["current_put_assignment_unrealized_pnl"] is None
@@ -1070,7 +1071,8 @@ def test_mobile_tickers_composes_contract_payload():
             "year": 2026,
             "realized_options_pnl": 150.0,
             "realized_stock_pnl": 0.0,
-            "combined_realized_pnl": 150.0,
+            "dividends": 11.0,
+            "combined_realized_pnl": 161.0,
         }
     ]
 

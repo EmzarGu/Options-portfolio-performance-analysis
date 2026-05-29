@@ -24,6 +24,9 @@ from portfolio_backend.decision_lab import build_decision_lab_data
 from portfolio_backend.decision_lab_templates import DECISION_LAB_HTML
 from portfolio_backend.gcp import firestore_client
 from portfolio_backend.mobile_api_service import build_mobile_refresh_payload
+from portfolio_backend.option_market.cutemarkets import CuteMarketsClient
+from portfolio_backend.option_market.decision_data import decision_option_loader
+from portfolio_backend.option_market.store import FirestoreOptionMarketStore
 from portfolio_backend.web_dashboard_payloads import (
     build_dashboard_data as build_web_dashboard_data,
     dashboard_shell_data as build_web_dashboard_shell_data,
@@ -56,6 +59,8 @@ _dashboard_data_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
 _dashboard_data_key_locks: Dict[tuple, threading.Lock] = {}
 _probability_history_cache_lock = threading.Lock()
 _probability_history_cache: tuple[float, list[dict[str, Any]]] | None = None
+_option_history_cache_lock = threading.Lock()
+_option_history_cache: tuple[float, list[dict[str, Any]]] | None = None
 
 
 @app.middleware("http")
@@ -453,6 +458,76 @@ def _load_probability_trade_matches() -> list[dict[str, Any]]:
     return matches
 
 
+def _load_historical_option_enrichments() -> list[dict[str, Any]]:
+    global _option_history_cache
+    ttl_seconds = _probability_history_cache_seconds()
+    now = time()
+    with _option_history_cache_lock:
+        if ttl_seconds > 0 and _option_history_cache and now - _option_history_cache[0] <= ttl_seconds:
+            return _option_history_cache[1]
+
+    try:
+        store = FirestoreOptionMarketStore()
+        run = store.load_latest_historical_enrichment_run(provider=CuteMarketsClient.provider)
+        if not run:
+            enrichments: list[dict[str, Any]] = []
+        else:
+            ids = [str(item) for item in run.get("enrichment_ids", []) if item]
+            enrichments = store.load_historical_enrichments_by_ids(ids)
+    except Exception as exc:
+        logger.warning("decision_lab_historical_option_enrichment_load_failed error=%s", exc)
+        enrichments = []
+
+    with _option_history_cache_lock:
+        _option_history_cache = (time(), enrichments)
+    return enrichments
+
+
+def _decision_option_store() -> FirestoreOptionMarketStore:
+    return FirestoreOptionMarketStore()
+
+
+def _decision_option_provider() -> CuteMarketsClient:
+    return CuteMarketsClient()
+
+
+def _decision_option_loader(*, force_refresh: bool = False):
+    return decision_option_loader(
+        store_factory=_decision_option_store,
+        provider_factory=_decision_option_provider,
+        force_refresh=force_refresh,
+    )
+
+
+def _build_decision_lab_payload(payload: Dict[str, Any], *, force_refresh: bool = False) -> Dict[str, Any]:
+    probability_matches = _load_probability_trade_matches()
+    historical_enrichments = _load_historical_option_enrichments()
+    return build_decision_lab_data(
+        payload,
+        probability_matches=probability_matches,
+        historical_enrichments=historical_enrichments,
+        option_market_loader=_decision_option_loader(force_refresh=force_refresh),
+    )
+
+
+def _with_decision_lab(payload: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(payload)
+    try:
+        enriched["decision_lab"] = _build_decision_lab_payload(payload, force_refresh=False)
+    except Exception as exc:
+        logger.warning("dashboard_decision_lab_load_failed error=%s", exc)
+        enriched["decision_lab"] = {
+            "error": str(exc),
+            "ticker_situations": [],
+            "active_cycle": {},
+            "recommendation_candidates": [],
+            "strike_quality": {},
+            "coverage_notes": [],
+            "option_market_data": {"status": {"status": "failed", "error": str(exc)}},
+        }
+    return enriched
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
@@ -583,6 +658,7 @@ def refresh(request: Request) -> Response:
     section = request.query_params.get("section") or "dashboard"
     if section not in {
         "dashboard",
+        "decision_lab",
         "performance",
         "monthly",
         "tickers",
@@ -646,7 +722,7 @@ def dashboard_json(request: Request) -> JSONResponse:
         payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
-    return JSONResponse(payload)
+    return JSONResponse(_with_decision_lab(payload))
 
 
 @app.get("/api/decision-lab")
@@ -657,9 +733,23 @@ def decision_lab_json(request: Request) -> JSONResponse:
     target_return = _target_return_from_query(request)
     try:
         payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
-        probability_matches = _load_probability_trade_matches()
-        return JSONResponse(build_decision_lab_data(payload, probability_matches=probability_matches))
+        return JSONResponse(_build_decision_lab_payload(payload, force_refresh=False))
     except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/decision-lab/options/refresh")
+def decision_lab_options_refresh(request: Request) -> JSONResponse:
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    target_return = _target_return_from_query(request)
+    try:
+        payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
+        _clear_dashboard_data_cache()
+        return JSONResponse(_build_decision_lab_payload(payload, force_refresh=True))
+    except Exception as exc:
+        logger.warning("decision_lab_option_refresh_failed error=%s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
