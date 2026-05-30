@@ -874,7 +874,6 @@ function activeCycleWaterfall(c){
     ["Realized cycle P&L", c.realized_cycle_pnl],
     ["Open premium collected", c.premium_component],
     ["Stock unrealized P&L", c.stock_unrealized_pnl],
-    ["ITM put unrealized loss", c.itm_put_unrealized_loss],
     ["Projected cycle P&L", c.projected_pnl],
     ["Target P&L", c.target_pnl],
     ["Remaining", c.remaining_to_target],
@@ -906,6 +905,7 @@ function activeCycleBlock(){
         ${card("Cycle put exposure", fmtMoney(c.cycle_put_exposure), `${safe(fmtMoney(c.cycle_itm_put_exposure))} ITM`, c.cycle_itm_put_exposure ? "neg" : "")}
         ${card("Portfolio put exposure", fmtMoney(c.portfolio_put_exposure), `${safe(fmtMoney(c.portfolio_itm_put_exposure))} ITM`, c.portfolio_itm_put_exposure ? "neg" : "")}
         ${card("ITM put cash required", fmtMoney(snap.itm_put_cash_required ?? c.portfolio_itm_put_exposure), `${safe(snap.itm_put_contracts || 0)} ITM puts`, (numeric(snap.itm_put_cash_required ?? c.portfolio_itm_put_exposure) || 0) > 0 ? "neg" : "")}
+        ${card("ITM put unrealized loss", fmtMoney(c.itm_put_unrealized_loss), "Active cycle signal", c.itm_put_unrealized_loss ? "neg" : "")}
         ${card("Covered-call upside foregone", fmtMoney(c.covered_call_upside_foregone), "Active cycle signal", c.covered_call_upside_foregone ? "warn-text" : "")}
       </div>
     </div>`;
