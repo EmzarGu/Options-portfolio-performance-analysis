@@ -666,6 +666,27 @@ def _open_option_counts_by_expiration_month(state) -> Dict[pd.Timestamp, int]:
     return {month: int(count) for month, count in options.groupby("month").size().items()}
 
 
+def _open_option_ticker_counts_by_expiration_month(state) -> Dict[pd.Timestamp, int]:
+    open_options = getattr(state, "open_options", pd.DataFrame())
+    if (
+        open_options is None
+        or open_options.empty
+        or "expiration" not in open_options.columns
+        or "ticker" not in open_options.columns
+    ):
+        return {}
+    options = open_options.copy()
+    options["expiration"] = pd.to_datetime(options["expiration"], errors="coerce")
+    options = options.loc[options["expiration"].notna()]
+    if options.empty:
+        return {}
+    options["month"] = options["expiration"].dt.to_period("M").dt.to_timestamp("M")
+    return {
+        month: int(group["ticker"].astype(str).str.upper().nunique())
+        for month, group in options.groupby("month")
+    }
+
+
 def build_future_monthly_performance_rows(
     state,
     *,
@@ -676,6 +697,7 @@ def build_future_monthly_performance_rows(
         return []
     current_month = as_of_ts.to_period("M").to_timestamp("M")
     counts_by_month = _open_option_counts_by_expiration_month(state)
+    ticker_counts_by_month = _open_option_ticker_counts_by_expiration_month(state)
     rows = []
     for month_end in sorted(month for month in counts_by_month if month > current_month):
         row = {
@@ -694,6 +716,7 @@ def build_future_monthly_performance_rows(
                 "id": f"month:{json_safe(month_end)}",
                 "month": json_safe(month_end),
                 "open_option_count": int(counts_by_month.get(month_end, 0)),
+                "open_ticker_count": int(ticker_counts_by_month.get(month_end, 0)),
                 "open_expiring_option_premium": json_safe(projection["open_expiring_option_premium"]),
                 "open_expiring_incremental_premium": json_safe(projection["open_expiring_incremental_premium"]),
                 "open_expiring_roll_adjusted_premium": json_safe(projection["open_expiring_roll_adjusted_premium"]),

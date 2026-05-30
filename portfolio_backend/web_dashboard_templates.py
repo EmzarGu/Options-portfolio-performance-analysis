@@ -822,6 +822,7 @@ function futureCycleRows(){
     if (activeMonth && month.slice(0,7) === activeMonth) {
       return {
         month: row.month,
+        open_ticker_count: active.open_ticker_count ?? row.open_ticker_count ?? row.open_option_count,
         open_option_count: active.open_contract_count ?? row.open_option_count,
         realized_cycle_pnl: active.realized_cycle_pnl,
         open_premium_collected: active.premium_component,
@@ -836,6 +837,7 @@ function futureCycleRows(){
     const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium) || 0;
     return {
       month: row.month,
+      open_ticker_count: row.open_ticker_count ?? row.open_option_count,
       open_option_count: row.open_option_count,
       realized_cycle_pnl: 0,
       open_premium_collected: premium,
@@ -896,7 +898,7 @@ function activeCycleBlock(){
     <div class="grid two">
       <div class="panel">
         <h3>${safe(c.cycle_label || "Active cycle")}</h3>
-        <div class="sub">Expiries ${safe((c.expiry_dates || []).join(", ") || "n/a")} · DTE ${safe(c.min_dte)}-${safe(c.max_dte)} · ${fmtNum(c.open_contract_count)} contracts</div>
+        <div class="sub">Expiries ${safe((c.expiry_dates || []).join(", ") || "n/a")} · DTE ${safe(c.min_dte)}-${safe(c.max_dte)} · ${fmtNum(c.open_ticker_count ?? c.open_contract_count)} tickers</div>
         ${activeCycleWaterfall(c)}
       </div>
       <div class="grid metrics" style="grid-template-columns:repeat(2,minmax(0,1fr))">
@@ -1107,7 +1109,7 @@ function renderMonthly(){
     ${sectionHead("Future Open Expiry Months")}
     ${dataTable("future-months", future, [
       {key:"month",label:"Month",format:monthName},
-      {key:"open_option_count",label:"Open options",num:true},
+      {key:"open_ticker_count",label:"Open tickers",num:true},
       {key:"realized_cycle_pnl",label:"Realized cycle P&L",format:fmtMoney,num:true,className:cls},
       {key:"open_premium_collected",label:"Open premium collected",format:fmtMoney,num:true,className:cls},
       {key:"stock_unrealized_pnl",label:"Stock unrealized P&L",format:fmtMoney,num:true,className:cls},

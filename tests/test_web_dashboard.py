@@ -95,6 +95,7 @@ def _fake_decision_lab_data():
             "expiry_dates": ["2026-06-18"],
             "min_dte": 20,
             "max_dte": 20,
+            "open_ticker_count": 2,
             "open_contract_count": 2,
             "realized_cycle_pnl": 0.0,
             "premium_component": 100.0,

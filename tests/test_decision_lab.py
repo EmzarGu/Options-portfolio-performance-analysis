@@ -172,6 +172,7 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
     assert cycle["target_pnl"] == pytest.approx(6000.0)
     assert cycle["projected_return_roac"] == pytest.approx(0.001)
     assert cycle["cycle_put_exposure"] == pytest.approx(2900.0)
+    assert cycle["open_ticker_count"] == 2
 
 
 def test_active_cycle_includes_dashboard_stock_unrealized_component():

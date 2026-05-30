@@ -555,6 +555,7 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         "expiry_dates": [expiry.isoformat() for expiry in expiries],
         "min_dte": min([_num(row.get("days_to_expiration")) for row in cycle_rows if _num(row.get("days_to_expiration")) is not None], default=None),
         "max_dte": max([_num(row.get("days_to_expiration")) for row in cycle_rows if _num(row.get("days_to_expiration")) is not None], default=None),
+        "open_ticker_count": len({str(row.get("ticker") or "").upper() for row in cycle_rows if row.get("ticker")}),
         "open_contract_count": int(_sum([abs(_num(row.get("quantity")) or 0) for row in cycle_rows])),
         "realized_cycle_pnl": realized_cycle_pnl,
         "premium_component": premium_component,
