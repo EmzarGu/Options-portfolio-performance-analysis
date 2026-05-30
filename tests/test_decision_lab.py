@@ -174,6 +174,30 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
     assert cycle["cycle_put_exposure"] == pytest.approx(2900.0)
 
 
+def test_active_cycle_includes_dashboard_stock_unrealized_component():
+    payload = _base_payload()
+    payload["dashboard"]["snapshot"] = {"current_stock_unrealized_pnl": 150.0}
+    payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
+    payload["positions"]["open_option_shorts"] = [
+        {
+            "ticker": "BEN",
+            "option_type": "Put",
+            "strike": 29.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 24,
+            "quantity": -1,
+            "current_price": 31.0,
+            "display_premium_collected": 200.0,
+        },
+    ]
+
+    cycle = build_decision_lab_data(payload)["active_cycle"]
+
+    assert cycle["premium_component"] == pytest.approx(200.0)
+    assert cycle["stock_unrealized_pnl"] == pytest.approx(150.0)
+    assert cycle["projected_pnl"] == pytest.approx(350.0)
+
+
 def test_missing_option_data_does_not_emit_provider_candidates():
     payload = _base_payload()
     payload["positions"]["inventory"] = [

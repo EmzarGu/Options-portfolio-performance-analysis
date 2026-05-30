@@ -189,6 +189,16 @@ def test_web_dashboard_does_not_add_extra_benchmark_baseline_label():
     assert "Start (${fullLabels[0]})" not in DASHBOARD_HTML
 
 
+def test_web_dashboard_uses_standard_monthly_projection_terms():
+    assert "Roll-adjusted premium" not in DASHBOARD_HTML
+    assert "Incremental premium" not in DASHBOARD_HTML
+    assert "ITM put gap" not in DASHBOARD_HTML
+    assert "Open option net" not in DASHBOARD_HTML
+    assert "Target-view P&L" not in DASHBOARD_HTML
+    assert "Projected cycle P&L" in DASHBOARD_HTML
+    assert "Stock unrealized P&L" in DASHBOARD_HTML
+
+
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     client = TestClient(web_dashboard.app)

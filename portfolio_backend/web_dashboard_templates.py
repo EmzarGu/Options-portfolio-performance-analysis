@@ -79,7 +79,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 .table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:#11191c}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .table-scroll{overflow:auto;max-height:620px}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}th{position:sticky;top:0;z-index:2;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}td.num,th.num{text-align:right}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.compact-table table{min-width:100%;table-layout:auto}.col-compact{width:1%;max-width:96px}.empty{padding:18px;color:var(--muted)}
 .risk-row-itm td{background:rgba(255,111,120,.12)}.risk-row-near td{background:rgba(246,194,91,.11)}.risk-row-clear td{background:rgba(69,210,197,.07)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--red)}.dot-warn{background:var(--amber)}.dot-good{background:var(--green)}.dot-blue{background:var(--blue)}
-.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.bad{background:#3a171d;color:#ffc4c9}.pill.warn{background:#352714;color:#ffe1a0}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
+.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:#10181b;border:1px solid var(--line2);border-radius:8px;padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:999px;padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.high,.pill.bad{background:#3a171d;color:#ffc4c9}.pill.medium,.pill.warn{background:#4a330f;color:#ffe1a0}.pill.low{background:#17243c;color:#cadcff}.pill.good{background:#143420;color:#bff3c7}.pill.blue{background:#17243c;color:#cadcff}
 .chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px;min-width:0;overflow:hidden}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart-wrap{height:310px;position:relative;min-width:0}.chart-canvas{width:100%!important;height:100%!important}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}.chart-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:#c0cbc7!important;font-size:13px;font-weight:700}.chart-legend span{display:inline-flex;align-items:center;gap:6px;color:#c0cbc7!important}.chart-legend i{display:inline-block;width:12px;height:12px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
 .waterfall{display:grid;gap:8px}.water-row{display:grid;grid-template-columns:210px minmax(140px,1fr) 112px;gap:10px;align-items:center}.bar-track{height:18px;border-radius:999px;background:#1b282b;overflow:hidden}.bar{height:100%;border-radius:999px}.bar.pos{background:var(--green)}.bar.neg{background:var(--red)}.bar.warn-text{background:var(--amber)}.bar.blue{background:var(--blue)}
@@ -259,6 +259,7 @@ function apiDashboardUrl(){
   const url = new URL("/api/dashboard", window.location.origin);
   url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
   url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
+  url.searchParams.set("target_floor", Number(appState.targetFloor || 0).toFixed(6));
   return url;
 }
 function loadingPanel(message="Loading portfolio data...", detail="The dashboard shell is ready while Cloud Run builds or reads the latest IBKR snapshot.", error=""){
@@ -397,16 +398,18 @@ function rangeFiltered(rows, dateKey){
   const asOf = parseDate(data.dashboard.request?.as_of || data.generated_at) || new Date();
   if (dateKey === "month") {
     const asOfMonth = monthIndex(asOf);
+    const activeMonth = decisionActiveCycle()?.cycle ? monthIndex(parseDate(`${decisionActiveCycle().cycle}-01`)) : null;
+    const endMonth = activeMonth === null ? asOfMonth : Math.max(asOfMonth, activeMonth);
     let startMonth = null;
-    if (range === "3M") startMonth = asOfMonth - 2;
-    if (range === "6M") startMonth = asOfMonth - 5;
-    if (range === "1Y") startMonth = asOfMonth - 11;
+    if (range === "3M") startMonth = endMonth - 2;
+    if (range === "6M") startMonth = endMonth - 5;
+    if (range === "1Y") startMonth = endMonth - 11;
     if (range === "YTD") startMonth = asOf.getUTCFullYear() * 12;
     return (rows || []).filter(row => {
       const d = parseDate(get(row,dateKey));
       if (!d) return false;
       const m = monthIndex(d);
-      return (startMonth === null || m >= startMonth) && m <= asOfMonth;
+      return (startMonth === null || m >= startMonth) && m <= endMonth;
     });
   }
   let start = null;
@@ -465,7 +468,7 @@ function chartCommonOptions(valueFormatter){
     },
     scales: {
       x: {
-        offset: false,
+        offset: true,
         grid: {display: false},
         ticks: {
           color: "#c0cbc7",
@@ -524,20 +527,15 @@ function targetCapital(row){
   return null;
 }
 function displayMonthPnl(row){
-  const explicit = numeric(row.risk_adjusted_projected_month_pnl);
+  const explicit = numeric(row.projected_month_pnl);
   if (explicit !== null) return explicit;
-  const openNet = numeric(row.open_expiring_option_unrealized_pnl);
-  if (openNet !== null) {
-    const realized = numeric(row.realized_month_pnl ?? row.total_realized_pnl) || 0;
-    return realized + openNet;
-  }
-  return numeric(row.projected_month_pnl) ?? numeric(row.total_realized_pnl);
+  return numeric(row.realized_month_pnl) ?? numeric(row.total_realized_pnl);
 }
 function displayMonthReturn(row){
   const capital = targetCapital(row);
   const pnl = displayMonthPnl(row);
   if (capital && pnl !== null) return pnl / capital;
-  return numeric(row.risk_adjusted_projected_return_roac) ?? numeric(row.projected_return_roac) ?? numeric(row.return_roac);
+  return numeric(row.projected_return_roac) ?? numeric(row.return_roac);
 }
 function displayTargetPnl(row){
   const capital = targetCapital(row);
@@ -546,7 +544,7 @@ function displayTargetPnl(row){
 function displayRemainingToTarget(row){
   const targetPnl = displayTargetPnl(row);
   const pnl = displayMonthPnl(row);
-  if (targetPnl === null || pnl === null) return numeric(row.risk_adjusted_projected_remaining_pnl ?? row.projected_remaining_pnl);
+  if (targetPnl === null || pnl === null) return numeric(row.projected_remaining_pnl);
   return Math.max(targetPnl - pnl, 0);
 }
 function displayTargetStatus(row){
@@ -793,11 +791,62 @@ function monthlyChartRows(){
   const seen = new Set(rows.map(row => fmtDate(row.month)));
   const activeCycle = decisionActiveCycle();
   const activeMonth = activeCycle.cycle ? `${activeCycle.cycle}-01` : null;
-  const future = (data.monthly.future_months || []).filter(row => {
+  const future = activeMonth && !seen.has(fmtDate(activeMonth)) ? [activeCycleMonthlyRow(activeCycle)] : [];
+  return [...rows, ...future].filter(Boolean).sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+}
+function activeCycleMonthlyRow(c){
+  if (!c || !c.cycle) return null;
+  return {
+    month: `${c.cycle}-01`,
+    realized_options_pnl: c.realized_cycle_pnl,
+    realized_stock_pnl: c.stock_unrealized_pnl,
+    dividends: 0,
+    total_realized_pnl: c.projected_pnl,
+    avg_capital: c.target_base,
+    peak_capital: c.target_base,
+    return_roac: c.projected_return_roac,
+    return_ropc: c.projected_return_roac,
+    projected_month_pnl: c.projected_pnl,
+    projected_return_roac: c.projected_return_roac,
+    target_pnl: c.target_pnl,
+    projected_remaining_pnl: c.remaining_to_target,
+    monthly_target_status: c.projected_return_roac >= (c.target_return ?? targetReturn()) ? "Beat Target" : "Below Target",
+    is_active_cycle_projection: true
+  };
+}
+function futureCycleRows(){
+  const active = decisionActiveCycle();
+  const activeMonth = active.cycle ? fmtDate(`${active.cycle}-01`).slice(0,7) : null;
+  return (data.monthly.future_months || []).map(row => {
     const month = fmtDate(row.month);
-    return month && month !== "n/a" && !seen.has(month) && (!activeMonth || month.slice(0,7) === activeMonth.slice(0,7));
+    if (activeMonth && month.slice(0,7) === activeMonth) {
+      return {
+        month: row.month,
+        open_option_count: active.open_contract_count ?? row.open_option_count,
+        realized_cycle_pnl: active.realized_cycle_pnl,
+        open_premium_collected: active.premium_component,
+        stock_unrealized_pnl: active.stock_unrealized_pnl,
+        itm_put_unrealized_loss: active.itm_put_unrealized_loss,
+        projected_cycle_pnl: active.projected_pnl,
+        target_pnl: active.target_pnl,
+        remaining_to_target: active.remaining_to_target,
+        projected_return_roac: active.projected_return_roac,
+      };
+    }
+    const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium) || 0;
+    return {
+      month: row.month,
+      open_option_count: row.open_option_count,
+      realized_cycle_pnl: 0,
+      open_premium_collected: premium,
+      stock_unrealized_pnl: null,
+      itm_put_unrealized_loss: null,
+      projected_cycle_pnl: premium,
+      target_pnl: null,
+      remaining_to_target: null,
+      projected_return_roac: null,
+    };
   });
-  return [...rows, ...future].sort((a,b)=>String(a.month).localeCompare(String(b.month)));
 }
 function inventoryColumns(){
   return [
@@ -822,6 +871,7 @@ function activeCycleWaterfall(c){
   const parts = [
     ["Realized cycle P&L", c.realized_cycle_pnl],
     ["Open premium collected", c.premium_component],
+    ["Stock unrealized P&L", c.stock_unrealized_pnl],
     ["ITM put unrealized loss", c.itm_put_unrealized_loss],
     ["Projected cycle P&L", c.projected_pnl],
     ["Target P&L", c.target_pnl],
@@ -1014,7 +1064,7 @@ function renderDashboard(){
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized YTD + current unrealized" : "Realized P&L only", cls(snap.ytd_total_pnl))}
       ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
-      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options net ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put gap ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
+      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put unrealized loss ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
     ${activeCycleBlock()}
@@ -1029,7 +1079,7 @@ function renderMonthly(){
   const rows = monthlyRows();
   const chartRows = monthlyChartRows();
   const filtered = rangeFiltered(chartRows, "month");
-  const future = data.monthly.future_months || [];
+  const future = futureCycleRows();
   $("monthly").innerHTML = `
     ${sectionHead("Monthly Performance")}
     ${rangePicker()}
@@ -1049,24 +1099,23 @@ function renderMonthly(){
       {key:"return_roac",label:"RoAC",format:fmtPct,num:true,className:cls},
       {key:"return_ropc",label:"RoPC",format:fmtPct,num:true,className:cls},
       {key:"open_expiring_incremental_premium",label:"Open premium",format:fmtMoney,num:true,className:cls},
-      {key:"open_expiring_intrinsic_value_gap",label:"ITM put gap",format:fmtMoney,num:true,className:cls},
-      {key:"open_expiring_option_unrealized_pnl",label:"Open option net",format:fmtMoney,num:true,className:cls},
-      {key:"risk_adjusted_projected_month_pnl",label:"Target-view P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
-      {key:"risk_adjusted_projected_return_roac",label:"Target-view RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:cls},
-      {key:"risk_adjusted_projected_remaining_pnl",label:"Remaining",value:displayRemainingToTarget,format:fmtMoney,num:true,className:(v)=>numeric(v)>0?"neg":"pos"},
+      {key:"projected_month_pnl",label:"Projected P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
+      {key:"projected_return_roac",label:"Projected RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:cls},
+      {key:"projected_remaining_pnl",label:"Remaining",value:displayRemainingToTarget,format:fmtMoney,num:true,className:(v)=>numeric(v)>0?"neg":"pos"},
       {key:"monthly_target_status",label:"Target status",value:displayTargetStatus,format:statusPill}
     ], {title:"Monthly table", wide:true})}
     ${sectionHead("Future Open Expiry Months")}
     ${dataTable("future-months", future, [
       {key:"month",label:"Month",format:monthName},
       {key:"open_option_count",label:"Open options",num:true},
-      {key:"open_expiring_incremental_premium",label:"Incremental premium",format:fmtMoney,num:true,className:cls},
-      {key:"open_expiring_roll_adjusted_premium",label:"Roll-adjusted premium",format:fmtMoney,num:true,className:cls},
-      {key:"open_expiring_intrinsic_value_gap",label:"ITM put gap",format:fmtMoney,num:true,className:cls},
-      {key:"open_expiring_option_unrealized_pnl",label:"Open option net",format:fmtMoney,num:true,className:cls},
-      {key:"projected_month_pnl",label:"Target-view P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
-      {key:"projected_return_roac",label:"Target-view RoAC",value:displayMonthReturn,format:fmtPct,num:true},
-      {key:"projection_basis",label:"Basis"}
+      {key:"realized_cycle_pnl",label:"Realized cycle P&L",format:fmtMoney,num:true,className:cls},
+      {key:"open_premium_collected",label:"Open premium collected",format:fmtMoney,num:true,className:cls},
+      {key:"stock_unrealized_pnl",label:"Stock unrealized P&L",format:fmtMoney,num:true,className:cls},
+      {key:"itm_put_unrealized_loss",label:"ITM put unrealized loss",format:fmtMoney,num:true,className:cls},
+      {key:"projected_cycle_pnl",label:"Projected cycle P&L",format:fmtMoney,num:true,className:cls},
+      {key:"target_pnl",label:"Target P&L",format:fmtMoney,num:true},
+      {key:"remaining_to_target",label:"Remaining",format:fmtMoney,num:true,className:(v)=>numeric(v)>0?"warn-text":"blue"},
+      {key:"projected_return_roac",label:"Projected RoAC",format:fmtPct,num:true}
     ], {title:"Future expiry months", small:true})}
   `;
 }

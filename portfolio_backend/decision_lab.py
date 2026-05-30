@@ -521,13 +521,15 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if realized_cycle_pnl is None:
         realized_cycle_pnl = 0.0
+    snapshot = (payload.get("dashboard") or {}).get("snapshot") or {}
+    stock_unrealized_pnl = _num(snapshot.get("current_stock_unrealized_pnl")) or 0.0
     itm_put_unrealized_loss = _sum(
         [gap for gap in [_open_short_assignment_gap(row) for row in cycle_puts] if gap < 0]
     )
     projected_pnl = _num(cycle_month_row.get("projected_month_pnl")) if cycle_month_row else None
     if projected_pnl is None:
         projected_pnl = realized_cycle_pnl + premium_component
-    projected_pnl = projected_pnl + itm_put_unrealized_loss
+    projected_pnl = projected_pnl + stock_unrealized_pnl + itm_put_unrealized_loss
     covered_call_upside_foregone = _sum(
         [
             gap
@@ -556,6 +558,7 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         "open_contract_count": int(_sum([abs(_num(row.get("quantity")) or 0) for row in cycle_rows])),
         "realized_cycle_pnl": realized_cycle_pnl,
         "premium_component": premium_component,
+        "stock_unrealized_pnl": stock_unrealized_pnl,
         "itm_put_unrealized_loss": itm_put_unrealized_loss,
         "covered_call_upside_foregone": covered_call_upside_foregone,
         "projected_pnl": projected_pnl,
