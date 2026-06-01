@@ -822,7 +822,7 @@ function latestMonthlyCapital(){
   return dated.length ? numeric(dated[dated.length - 1].capital) : null;
 }
 function futureOpenPremium(row){
-  const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium);
+  const premium = numeric(row.open_expiring_incremental_premium);
   return premium ?? 0;
 }
 function futureCycleRows(){

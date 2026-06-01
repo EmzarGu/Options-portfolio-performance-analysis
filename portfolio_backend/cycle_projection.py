@@ -219,7 +219,6 @@ def _build_projection(
         [
             cycle_month_row.get("open_premium_collected") if cycle_month_row else None,
             cycle_month_row.get("open_expiring_incremental_premium") if cycle_month_row else None,
-            cycle_month_row.get("open_expiring_option_premium") if cycle_month_row else None,
         ]
     )
     if premium is None:

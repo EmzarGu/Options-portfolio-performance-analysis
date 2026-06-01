@@ -42,7 +42,6 @@ def _fake_dashboard_data():
                 "target_return": 0.015,
                 "realized_month_pnl": 100.0,
                 "open_expiring_incremental_premium": 25.0,
-                "open_expiring_roll_adjusted_premium": 30.0,
                 "projected_month_pnl": 125.0,
                 "projected_return_roac": 0.02,
                 "monthly_target_status": "beat",
