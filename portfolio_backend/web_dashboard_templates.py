@@ -823,16 +823,31 @@ function latestMonthlyCapital(){
 }
 function futureOpenPremium(row){
   const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium);
-  const openPremium = numeric(row.open_expiring_roll_adjusted_premium);
-  if ((premium === null || premium === 0) && openPremium !== null && openPremium !== 0) return openPremium;
   return premium ?? 0;
 }
 function futureCycleRows(){
   const active = decisionActiveCycle();
   const activeMonth = active.cycle ? fmtDate(`${active.cycle}-01`).slice(0,7) : null;
   const targetBase = latestMonthlyCapital();
-  return (data.monthly.future_months || []).map(row => {
+  const sourceRows = (data.monthly.cycle_months && data.monthly.cycle_months.length) ? data.monthly.cycle_months : (data.monthly.future_months || []);
+  return sourceRows.map(row => {
     const month = fmtDate(row.month);
+    const projection = row.cycle_projection || {};
+    if (projection.cycle) {
+      return {
+        month: row.month,
+        open_ticker_count: projection.open_ticker_count ?? row.open_ticker_count ?? row.open_option_count,
+        open_option_count: projection.open_contract_count ?? row.open_option_count,
+        realized_cycle_pnl: projection.realized_cycle_pnl,
+        open_premium_collected: projection.open_premium_collected ?? projection.premium_component,
+        stock_unrealized_pnl: projection.stock_unrealized_pnl,
+        itm_put_unrealized_loss: projection.itm_put_unrealized_loss,
+        projected_cycle_pnl: projection.projected_cycle_pnl ?? projection.projected_pnl,
+        target_pnl: projection.target_pnl,
+        remaining_to_target: projection.remaining_to_target,
+        projected_return_roac: projection.projected_return_roac,
+      };
+    }
     if (activeMonth && month.slice(0,7) === activeMonth) {
       return {
         month: row.month,

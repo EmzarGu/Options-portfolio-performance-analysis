@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
+from portfolio_backend.cycle_projection import build_payload_cycle_projection
 from portfolio_backend.decision_lab_candidates import apply_option_market_candidates, recommendation_candidates
 from portfolio_backend.option_market.history import historical_enrichment_to_probability_match
 
@@ -478,113 +479,7 @@ def _current_state(
 
 
 def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
-    open_rows = _open_short_rows(payload)
-    today = _as_of_date(payload)
-    dated_rows = [(row, _parse_date(row.get("expiration"))) for row in open_rows]
-    future_rows = [(row, expiry) for row, expiry in dated_rows if expiry is not None and expiry >= today]
-    if not future_rows:
-        future_rows = [(row, expiry) for row, expiry in dated_rows if expiry is not None]
-    if future_rows:
-        active_year_month = min((expiry.year, expiry.month) for _row, expiry in future_rows)
-        cycle_rows = [
-            row
-            for row, expiry in future_rows
-            if expiry is not None and (expiry.year, expiry.month) == active_year_month
-        ]
-        expiries = sorted({expiry for _row, expiry in future_rows if expiry and (expiry.year, expiry.month) == active_year_month})
-    else:
-        cycle_rows = []
-        expiries = []
-        active_year_month = None
-
-    monthly_target = (payload.get("dashboard") or {}).get("monthly_target") or {}
-    cycle_month_row = _active_cycle_month_row(payload, active_year_month)
-    target_return = _num(monthly_target.get("target_return")) or _num((payload.get("web") or {}).get("target_return")) or 0.02
-    target_floor = _num((payload.get("web") or {}).get("target_floor")) or _num(monthly_target.get("target_floor")) or 0.01
-    portfolio_puts = [row for row in open_rows if _option_type(row).startswith("put")]
-    cycle_puts = [row for row in cycle_rows if _option_type(row).startswith("put")]
-    portfolio_put_exposure = _put_exposure(portfolio_puts)
-    cycle_put_exposure = _put_exposure(cycle_puts)
-    premium_component = _first_num(
-        [
-            cycle_month_row.get("open_expiring_incremental_premium") if cycle_month_row else None,
-            cycle_month_row.get("open_expiring_option_premium") if cycle_month_row else None,
-        ]
-    )
-    if premium_component is None:
-        premium_component = _sum([_open_short_premium(row) for row in cycle_rows])
-    realized_cycle_pnl = _first_num(
-        [
-            cycle_month_row.get("realized_month_pnl") if cycle_month_row else None,
-            cycle_month_row.get("total_realized_pnl") if cycle_month_row else None,
-        ]
-    )
-    if realized_cycle_pnl is None:
-        realized_cycle_pnl = 0.0
-    snapshot = (payload.get("dashboard") or {}).get("snapshot") or {}
-    stock_unrealized_pnl = _num(snapshot.get("current_stock_unrealized_pnl")) or 0.0
-    itm_put_unrealized_loss = _sum(
-        [gap for gap in [_open_short_assignment_gap(row) for row in cycle_puts] if gap < 0]
-    )
-    projected_pnl = _num(cycle_month_row.get("projected_month_pnl")) if cycle_month_row else None
-    if projected_pnl is None:
-        projected_pnl = realized_cycle_pnl + premium_component
-    projected_pnl = projected_pnl + stock_unrealized_pnl + itm_put_unrealized_loss
-    covered_call_upside_foregone = _sum(
-        [
-            gap
-            for gap in [_covered_call_upside_foregone(row) for row in cycle_rows if _option_type(row).startswith("call")]
-            if gap < 0
-        ]
-    )
-    target_base = _first_num(
-        [
-            cycle_month_row.get("avg_capital") if cycle_month_row else None,
-            _avg_capital_from_target(monthly_target),
-            _latest_monthly_capital(payload),
-        ]
-    )
-    if target_base:
-        target_pnl = target_base * target_return
-    elif cycle_month_row:
-        target_pnl = _num(cycle_month_row.get("target_pnl"))
-    else:
-        target_pnl = _num(monthly_target.get("target_pnl"))
-    return {
-        "cycle": f"{active_year_month[0]:04d}-{active_year_month[1]:02d}" if active_year_month else None,
-        "cycle_label": _cycle_label(active_year_month),
-        "expiry_dates": [expiry.isoformat() for expiry in expiries],
-        "min_dte": min([_num(row.get("days_to_expiration")) for row in cycle_rows if _num(row.get("days_to_expiration")) is not None], default=None),
-        "max_dte": max([_num(row.get("days_to_expiration")) for row in cycle_rows if _num(row.get("days_to_expiration")) is not None], default=None),
-        "open_ticker_count": len({str(row.get("ticker") or "").upper() for row in cycle_rows if row.get("ticker")}),
-        "open_contract_count": int(_sum([abs(_num(row.get("quantity")) or 0) for row in cycle_rows])),
-        "realized_cycle_pnl": realized_cycle_pnl,
-        "premium_component": premium_component,
-        "stock_unrealized_pnl": stock_unrealized_pnl,
-        "itm_put_unrealized_loss": itm_put_unrealized_loss,
-        "covered_call_upside_foregone": covered_call_upside_foregone,
-        "projected_pnl": projected_pnl,
-        "target_return": target_return,
-        "target_floor": target_floor,
-        "target_base": target_base,
-        "target_basis": "avg_capital" if target_base else None,
-        "target_pnl": target_pnl,
-        "remaining_to_target": max((target_pnl or 0) - projected_pnl, 0) if target_pnl is not None else None,
-        "projected_return_roac": projected_pnl / target_base if target_base else None,
-        "portfolio_put_exposure": portfolio_put_exposure,
-        "portfolio_itm_put_exposure": _put_exposure([row for row in portfolio_puts if _open_short_assignment_gap(row) < 0]),
-        "cycle_put_exposure": cycle_put_exposure,
-        "cycle_itm_put_exposure": _put_exposure([row for row in cycle_puts if _open_short_assignment_gap(row) < 0]),
-        "near_strike_put_exposure": _put_exposure(
-            [
-                row
-                for row in cycle_puts
-                if _open_short_assignment_gap(row) >= 0
-                and _num(row.get("moneyness")) is not None
-                and abs(_num(row.get("moneyness")) or 0) <= 0.05
-            ]
-        ),
-    }
+    return build_payload_cycle_projection(payload)
 
 
 def _combine_historical_matches(
@@ -944,40 +839,6 @@ def _cash_required_if_assigned(row: dict[str, Any]) -> Optional[float]:
     return strike * 100 * qty
 
 
-def _active_cycle_month_row(payload: dict[str, Any], year_month: Optional[tuple[int, int]]) -> dict[str, Any]:
-    if not year_month:
-        return {}
-    candidates = []
-    monthly = payload.get("monthly") or {}
-    candidates.extend(monthly.get("future_months") or [])
-    candidates.extend(monthly.get("months") or [])
-    for row in candidates:
-        month = _parse_date(row.get("month") or str(row.get("id") or "").replace("month:", ""))
-        if month and (month.year, month.month) == year_month:
-            return row
-    return {}
-
-
-def _avg_capital_from_target(monthly_target: dict[str, Any]) -> Optional[float]:
-    target_pnl = _num(monthly_target.get("target_pnl"))
-    target_return = _num(monthly_target.get("target_return"))
-    if target_pnl is None or not target_return:
-        return None
-    return target_pnl / target_return
-
-
-def _latest_monthly_capital(payload: dict[str, Any]) -> Optional[float]:
-    dated_rows = []
-    for row in (payload.get("monthly") or {}).get("months") or []:
-        month = _parse_date(row.get("month") or str(row.get("id") or "").replace("month:", ""))
-        capital = _first_num([row.get("avg_capital"), row.get("peak_capital")])
-        if month and capital is not None:
-            dated_rows.append((month, capital))
-    if not dated_rows:
-        return None
-    return max(dated_rows, key=lambda item: item[0])[1]
-
-
 def _risk_bucket(value: float) -> str:
     for label, lower, upper in RISK_BUCKETS:
         if (lower is None or value > lower) and (upper is None or value <= upper):
@@ -1043,12 +904,6 @@ def _top_tickers(rows: list[dict[str, Any]]) -> str:
     return ", ".join([ticker for ticker, _count in tickers.most_common(4) if ticker])
 
 
-def _as_of_date(payload: dict[str, Any]) -> date:
-    request = ((payload.get("dashboard") or {}).get("request") or {})
-    parsed = _parse_date(request.get("as_of"))
-    return parsed or date.today()
-
-
 def _parse_date(value: Any) -> Optional[date]:
     if isinstance(value, datetime):
         return value.date()
@@ -1060,12 +915,6 @@ def _parse_date(value: Any) -> Optional[date]:
         return datetime.fromisoformat(str(value)[:10]).date()
     except Exception:
         return None
-
-
-def _cycle_label(year_month: Optional[tuple[int, int]]) -> str:
-    if not year_month:
-        return "No active cycle"
-    return date(year_month[0], year_month[1], 1).strftime("%B %Y")
 
 
 def _standard_monthly_expiries(count: int) -> list[str]:

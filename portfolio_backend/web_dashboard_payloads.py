@@ -9,6 +9,7 @@ import pandas as pd
 
 import mobile_api
 from portfolio_backend.charts import build_benchmark_growth_chart_data, build_options_cycle_chart_data
+from portfolio_backend.cycle_projection import build_state_future_cycle_projections
 from portfolio_backend.mobile_api_service import (
     build_mobile_dashboard_payload,
     build_mobile_issues_payload,
@@ -197,6 +198,11 @@ def build_dashboard_data(
         target_return=monthly_target_return,
         monthly_range="since_inception",
     )
+    monthly["cycle_months"] = build_state_future_cycle_projections(
+        state,
+        target_return=monthly_target_return,
+        include_current=True,
+    )
     yearly = build_mobile_yearly_payload(context)
     issues = build_mobile_issues_payload(context)
 
@@ -296,7 +302,7 @@ def build_dashboard_data(
                 {
                     "case": "ZM monthly premium",
                     "status": "Matched semantics",
-                    "detail": "Incremental projection premium is separate from roll-adjusted open-chain premium.",
+                    "detail": "Active-cycle projections use canonical open premium and keep risk signals separate from P&L.",
                 },
             ],
         }
