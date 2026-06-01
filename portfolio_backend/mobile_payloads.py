@@ -376,13 +376,14 @@ def _open_expiring_incremental_premium(
     state,
     month_end: Optional[pd.Timestamp],
     expiring_options: Optional[pd.DataFrame] = None,
+    price_column: str = "roll_adjusted_open_price",
 ) -> Optional[float]:
     if month_end is None:
         return None
     options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
     if options.empty:
         return 0.0
-    return _sum_open_expiring_premium_from_frame(options, month_end, price_column="open_price")
+    return _sum_open_expiring_premium_from_frame(options, month_end, price_column=price_column)
 
 
 def _monthly_projection_values(
@@ -412,10 +413,12 @@ def _monthly_projection_values(
         if realized_month_pnl is None:
             realized_month_pnl = 0.0
 
+    open_expiring_price_column = "open_price" if realized_month_pnl else "roll_adjusted_open_price"
     open_expiring_incremental_premium = _open_expiring_incremental_premium(
         state,
         month_end,
         expiring_options=expiring_options,
+        price_column=open_expiring_price_column,
     )
 
     projected_month_pnl = None
@@ -495,6 +498,9 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
     current_pnl = _number(row.get("total_realized_pnl"))
     projection = _monthly_projection_values(state, row, month_end, target_return)
     target_pnl = avg_capital * target_return if avg_capital is not None else None
+    if target_pnl is None:
+        target_pnl = _number(projection.get("target_pnl"))
+    projected_remaining_pnl = _number(projection.get("projected_remaining_pnl"))
     remaining_pnl = None
     if target_pnl is not None and current_pnl is not None:
         remaining_pnl = max(target_pnl - current_pnl, 0.0)
@@ -521,7 +527,7 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
         "projected_month_pnl": json_safe(projection["projected_month_pnl"]),
         "projected_return_roac": json_safe(projection["projected_return_roac"]),
         "projected_return_ropc": json_safe(projection["projected_return_ropc"]),
-        "projected_remaining_pnl": json_safe(projection["projected_remaining_pnl"]),
+        "projected_remaining_pnl": json_safe(projected_remaining_pnl),
         "current_unrealized_pnl": json_safe(projection["current_unrealized_pnl"]),
         "includes_current_unrealized": bool(projection["includes_current_unrealized"]),
         "monthly_target_status": _monthly_target_status(
