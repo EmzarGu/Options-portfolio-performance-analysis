@@ -814,21 +814,9 @@ function activeCycleMonthlyRow(c){
     is_active_cycle_projection: true
   };
 }
-function latestMonthlyCapital(){
-  const dated = monthlyRows()
-    .map(row => ({month: fmtDate(row.month), capital: targetCapital(row)}))
-    .filter(row => row.month && numeric(row.capital) !== null)
-    .sort((a,b)=>String(a.month).localeCompare(String(b.month)));
-  return dated.length ? numeric(dated[dated.length - 1].capital) : null;
-}
-function futureOpenPremium(row){
-  const premium = numeric(row.open_expiring_incremental_premium);
-  return premium ?? 0;
-}
 function futureCycleRows(){
   const active = decisionActiveCycle();
   const activeMonth = active.cycle ? fmtDate(`${active.cycle}-01`).slice(0,7) : null;
-  const targetBase = latestMonthlyCapital();
   const sourceRows = (data.monthly.cycle_months && data.monthly.cycle_months.length) ? data.monthly.cycle_months : (data.monthly.future_months || []);
   return sourceRows.map(row => {
     const month = fmtDate(row.month);
@@ -863,20 +851,18 @@ function futureCycleRows(){
         projected_return_roac: active.projected_return_roac,
       };
     }
-    const premium = futureOpenPremium(row);
-    const targetPnl = targetBase ? targetBase * targetReturn() : null;
     return {
       month: row.month,
       open_ticker_count: row.open_ticker_count ?? row.open_option_count,
       open_option_count: row.open_option_count,
-      realized_cycle_pnl: 0,
-      open_premium_collected: premium,
+      realized_cycle_pnl: null,
+      open_premium_collected: null,
       stock_unrealized_pnl: null,
       itm_put_unrealized_loss: null,
-      projected_cycle_pnl: premium,
-      target_pnl: targetPnl,
-      remaining_to_target: targetPnl === null ? null : Math.max(targetPnl - premium, 0),
-      projected_return_roac: targetBase ? premium / targetBase : null,
+      projected_cycle_pnl: null,
+      target_pnl: null,
+      remaining_to_target: null,
+      projected_return_roac: null,
     };
   });
 }

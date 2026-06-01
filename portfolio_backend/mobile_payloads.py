@@ -413,6 +413,47 @@ def _monthly_projection_values(
         if realized_month_pnl is None:
             realized_month_pnl = 0.0
 
+    if has_open_cycle_exposure and month_end is not None:
+        as_of_month = None if pd.isna(as_of_ts) else (as_of_ts.year, as_of_ts.month)
+        cycle_month = (month_end.year, month_end.month)
+        canonical_cycle = build_state_cycle_projection(
+            state,
+            year_month=cycle_month,
+            target_return=target_return,
+            include_stock_unrealized=cycle_month == as_of_month,
+        ).to_dict()
+        avg_capital = avg_capital if avg_capital is not None else _number(canonical_cycle.get("target_base"))
+        peak_capital = peak_capital if peak_capital is not None else avg_capital
+        projected_month_pnl = _number(canonical_cycle.get("projected_cycle_pnl"))
+        projected_return_roac = _number(canonical_cycle.get("projected_return_roac"))
+        projected_return_ropc = None
+        if projected_month_pnl is not None and peak_capital not in (None, 0):
+            projected_return_ropc = projected_month_pnl / peak_capital
+        elif peak_capital in (None, 0):
+            projected_return_ropc = projected_return_roac
+        open_expiring_incremental_premium = _number(canonical_cycle.get("open_premium_collected"))
+        current_unrealized_pnl = None
+        includes_current_unrealized = False
+        if is_current_month and not bool(getattr(state, "unrealized_blocked", False)):
+            current_unrealized_pnl = _number(canonical_cycle.get("stock_unrealized_pnl")) or 0.0
+            includes_current_unrealized = True
+        return {
+            "avg_capital": avg_capital,
+            "peak_capital": peak_capital,
+            "realized_month_pnl": _number(canonical_cycle.get("realized_cycle_pnl")),
+            "open_expiring_incremental_premium": open_expiring_incremental_premium,
+            "includes_open_premium": bool((open_expiring_incremental_premium or 0.0) > 0.0),
+            "projection_basis": "canonical_cycle_projection",
+            "projected_month_pnl": projected_month_pnl,
+            "projected_return_roac": projected_return_roac,
+            "projected_return_ropc": projected_return_ropc,
+            "target_pnl": _number(canonical_cycle.get("target_pnl")),
+            "projected_remaining_pnl": _number(canonical_cycle.get("remaining_to_target")),
+            "current_unrealized_pnl": current_unrealized_pnl,
+            "includes_current_unrealized": includes_current_unrealized,
+            "cycle_projection": canonical_cycle,
+        }
+
     open_expiring_price_column = "open_price" if realized_month_pnl else "roll_adjusted_open_price"
     open_expiring_incremental_premium = _open_expiring_incremental_premium(
         state,
@@ -441,31 +482,10 @@ def _monthly_projection_values(
         projected_remaining_pnl = max(target_pnl - projected_month_pnl, 0.0)
     includes_open_premium = bool((open_expiring_incremental_premium or 0.0) > 0.0)
 
-    canonical_cycle = None
-    if has_open_cycle_exposure and month_end is not None:
-        as_of_month = None if pd.isna(as_of_ts) else (as_of_ts.year, as_of_ts.month)
-        cycle_month = (month_end.year, month_end.month)
-        canonical_cycle = build_state_cycle_projection(
-            state,
-            year_month=cycle_month,
-            target_return=target_return,
-            include_stock_unrealized=cycle_month == as_of_month,
-        ).to_dict()
-        projected_month_pnl = _number(canonical_cycle.get("projected_cycle_pnl"))
-        projected_return_roac = _number(canonical_cycle.get("projected_return_roac"))
-        projected_return_ropc = projected_return_roac if peak_capital in (None, 0) else projected_month_pnl / peak_capital
-        target_pnl = _number(canonical_cycle.get("target_pnl"))
-        projected_remaining_pnl = _number(canonical_cycle.get("remaining_to_target"))
-        if avg_capital is None:
-            avg_capital = _number(canonical_cycle.get("target_base"))
-        if peak_capital is None:
-            peak_capital = avg_capital
-
     current_unrealized_pnl = None
     includes_current_unrealized = False
     if is_current_month and not bool(getattr(state, "unrealized_blocked", False)):
         current_unrealized_pnl = _number(getattr(state, "stock_unreal", None)) or 0.0
-        includes_current_unrealized = canonical_cycle is not None
 
     return {
         "avg_capital": avg_capital,
@@ -474,9 +494,7 @@ def _monthly_projection_values(
         "open_expiring_incremental_premium": open_expiring_incremental_premium,
         "includes_open_premium": includes_open_premium,
         "projection_basis": (
-            "canonical_cycle_projection"
-            if canonical_cycle is not None
-            else "realized_plus_open_premium"
+            "realized_plus_open_premium"
             if includes_open_premium
             else "realized_only"
         ),
@@ -487,7 +505,7 @@ def _monthly_projection_values(
         "projected_remaining_pnl": projected_remaining_pnl,
         "current_unrealized_pnl": current_unrealized_pnl,
         "includes_current_unrealized": includes_current_unrealized,
-        "cycle_projection": canonical_cycle,
+        "cycle_projection": None,
     }
 
 
@@ -497,9 +515,9 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
     current_return = _number(row.get("roac"))
     current_pnl = _number(row.get("total_realized_pnl"))
     projection = _monthly_projection_values(state, row, month_end, target_return)
-    target_pnl = avg_capital * target_return if avg_capital is not None else None
+    target_pnl = _number(projection.get("target_pnl"))
     if target_pnl is None:
-        target_pnl = _number(projection.get("target_pnl"))
+        target_pnl = avg_capital * target_return if avg_capital is not None else None
     projected_remaining_pnl = _number(projection.get("projected_remaining_pnl"))
     remaining_pnl = None
     if target_pnl is not None and current_pnl is not None:
@@ -597,7 +615,9 @@ def _mobile_month_row(
     total_realized_pnl = _number(row.get("total_realized_pnl"))
     if state is not None and total_realized_pnl is None:
         total_realized_pnl = projection.get("realized_month_pnl")
-    target_pnl = avg_capital * target_return if avg_capital is not None else None
+    target_pnl = _number(projection.get("target_pnl")) if state is not None else None
+    if target_pnl is None:
+        target_pnl = avg_capital * target_return if avg_capital is not None else None
     remaining_pnl = None
     if target_pnl is not None and total_realized_pnl is not None:
         remaining_pnl = max(target_pnl - total_realized_pnl, 0.0)
