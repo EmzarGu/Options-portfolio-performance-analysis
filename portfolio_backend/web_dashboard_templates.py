@@ -814,9 +814,23 @@ function activeCycleMonthlyRow(c){
     is_active_cycle_projection: true
   };
 }
+function latestMonthlyCapital(){
+  const dated = monthlyRows()
+    .map(row => ({month: fmtDate(row.month), capital: targetCapital(row)}))
+    .filter(row => row.month && numeric(row.capital) !== null)
+    .sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+  return dated.length ? numeric(dated[dated.length - 1].capital) : null;
+}
+function futureOpenPremium(row){
+  const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium);
+  const openPremium = numeric(row.open_expiring_roll_adjusted_premium);
+  if ((premium === null || premium === 0) && openPremium !== null && openPremium !== 0) return openPremium;
+  return premium ?? 0;
+}
 function futureCycleRows(){
   const active = decisionActiveCycle();
   const activeMonth = active.cycle ? fmtDate(`${active.cycle}-01`).slice(0,7) : null;
+  const targetBase = latestMonthlyCapital();
   return (data.monthly.future_months || []).map(row => {
     const month = fmtDate(row.month);
     if (activeMonth && month.slice(0,7) === activeMonth) {
@@ -834,7 +848,8 @@ function futureCycleRows(){
         projected_return_roac: active.projected_return_roac,
       };
     }
-    const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium) || 0;
+    const premium = futureOpenPremium(row);
+    const targetPnl = targetBase ? targetBase * targetReturn() : null;
     return {
       month: row.month,
       open_ticker_count: row.open_ticker_count ?? row.open_option_count,
@@ -844,9 +859,9 @@ function futureCycleRows(){
       stock_unrealized_pnl: null,
       itm_put_unrealized_loss: null,
       projected_cycle_pnl: premium,
-      target_pnl: null,
-      remaining_to_target: null,
-      projected_return_roac: null,
+      target_pnl: targetPnl,
+      remaining_to_target: targetPnl === null ? null : Math.max(targetPnl - premium, 0),
+      projected_return_roac: targetBase ? premium / targetBase : null,
     };
   });
 }
