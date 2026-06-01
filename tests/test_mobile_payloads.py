@@ -1095,7 +1095,12 @@ def test_mobile_tickers_matches_contract_fixture():
 def test_monthly_performance_rows_emit_mobile_contract_shape():
     rows = build_monthly_performance_rows(_mobile_state(), target_return=0.015, monthly_range="ytd")
 
-    assert rows == [
+    assert rows[0]["cycle_projection"] is None
+    assert rows[1]["cycle_projection"]["cycle"] == "2026-05"
+    assert rows[1]["cycle_projection"]["projected_cycle_pnl"] == 925.0
+    rows_without_cycle = [{k: v for k, v in row.items() if k != "cycle_projection"} for row in rows]
+
+    assert rows_without_cycle == [
         {
             "id": "month:2026-04-30",
             "month": "2026-04-30",
@@ -1235,7 +1240,10 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "months",
         "future_months",
     }
-    assert monthly["current_month"] == {
+    assert monthly["current_month"]["cycle_projection"]["cycle"] == "2026-05"
+    assert monthly["current_month"]["cycle_projection"]["projected_cycle_pnl"] == 925.0
+    current_without_cycle = {k: v for k, v in monthly["current_month"].items() if k != "cycle_projection"}
+    assert current_without_cycle == {
         "id": "month:2026-05-31",
         "month": "2026-05-31",
         "return_roac": 0.01,
