@@ -60,6 +60,21 @@ _BAND_RISK_ORDER = {
     None: 5,
 }
 
+READ_RELOAD_ENDPOINTS = [
+    "/v1/mobile/dashboard",
+    "/v1/mobile/positions",
+    "/v1/mobile/open-option-shorts",
+    "/v1/mobile/tickers",
+    "/v1/mobile/performance/monthly",
+    "/v1/mobile/performance/yearly",
+    "/v1/mobile/issues",
+]
+
+IMPORT_RELOAD_ENDPOINTS = [
+    "/v1/mobile/issues",
+    *READ_RELOAD_ENDPOINTS[:-1],
+]
+
 
 def build_mobile_request(
     as_of: date | datetime | pd.Timestamp | str,
@@ -128,6 +143,31 @@ def build_data_freshness(
             "missing_tickers": json_safe(missing_tickers),
         },
         "source_sheets": source_sheets,
+    }
+
+
+def _mobile_response_envelope(
+    state,
+    request: Dict[str, Any],
+    *,
+    available_sheets: Optional[Iterable[str]] = None,
+    source_metadata: Optional[Dict[str, Any]] = None,
+    pipeline_built_at: Optional[Any] = None,
+    prices_updated_at: Optional[Any] = None,
+) -> Dict[str, Any]:
+    selected_sheets = _request_value(request, "selected_sheets", [])
+    include_unrealized = bool(_request_value(request, "include_unrealized", False))
+    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
+    return {
+        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
+        "data_freshness": build_data_freshness(
+            state,
+            selected_sheets,
+            available_sheets=available_sheets,
+            source_metadata=source_metadata,
+            pipeline_built_at=pipeline_built_at,
+            prices_updated_at=prices_updated_at,
+        ),
     }
 
 
@@ -255,6 +295,24 @@ def _current_month_row(monthly_cycles: pd.DataFrame, as_of: Any) -> tuple[Option
     return month_end, monthly.loc[month_end].to_dict()
 
 
+def _latest_monthly_capital_values(state) -> tuple[Optional[float], Optional[float]]:
+    monthly = getattr(state, "monthly_cycles", pd.DataFrame())
+    if monthly is None or monthly.empty:
+        return None, None
+    out = monthly.copy()
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out.loc[out.index.notna()].sort_index()
+    as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
+    if not pd.isna(as_of_ts):
+        out = out.loc[out.index <= as_of_ts.to_period("M").to_timestamp("M")]
+    for _, row in reversed(list(out.iterrows())):
+        avg_capital = _number(row.get("avg_capital"))
+        peak_capital = _number(row.get("peak_capital"))
+        if avg_capital is not None or peak_capital is not None:
+            return avg_capital, peak_capital
+    return None, None
+
+
 def _monthly_target_status(current_return: Optional[float], target_return: float, month_end: Optional[pd.Timestamp], as_of: Any) -> str:
     if current_return is None or month_end is None:
         return "unavailable"
@@ -265,7 +323,7 @@ def _monthly_target_status(current_return: Optional[float], target_return: float
 
 
 def _sum_open_expiring_premium_from_frame(
-    open_options: pd.DataFrame,
+    expiring_options: pd.DataFrame,
     month_end: pd.Timestamp,
     *,
     price_column: str,
@@ -273,16 +331,10 @@ def _sum_open_expiring_premium_from_frame(
     required_columns = {"expiration", price_column, "qty"}
     if price_column == "roll_adjusted_open_price":
         required_columns = {"expiration", "qty"}
-    if not required_columns.issubset(open_options.columns):
+    if not required_columns.issubset(expiring_options.columns):
         return 0.0
 
-    options = open_options.copy()
-    options["expiration"] = pd.to_datetime(options["expiration"], errors="coerce")
-    options = options.loc[options["expiration"].notna()]
-    if options.empty:
-        return 0.0
-
-    expiring = options.loc[options["expiration"].dt.to_period("M") == month_end.to_period("M")]
+    expiring = expiring_options
     if expiring.empty:
         return 0.0
 
@@ -300,16 +352,40 @@ def _sum_open_expiring_premium_from_frame(
     return float(premium.sum()) if not premium.empty else 0.0
 
 
-def _open_expiring_incremental_premium(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
+def _open_options_expiring_in_month(state, month_end: Optional[pd.Timestamp]) -> pd.DataFrame:
     if month_end is None:
-        return None
+        return pd.DataFrame()
     open_options = getattr(state, "open_options", pd.DataFrame())
     if open_options is None or open_options.empty:
+        return pd.DataFrame()
+    if "expiration" not in open_options.columns:
+        return pd.DataFrame()
+    options = open_options.copy()
+    options["expiration"] = pd.to_datetime(options["expiration"], errors="coerce")
+    options = options.loc[options["expiration"].notna()]
+    if options.empty:
+        return pd.DataFrame()
+    return options.loc[options["expiration"].dt.to_period("M") == month_end.to_period("M")]
+
+
+def _open_expiring_incremental_premium(
+    state,
+    month_end: Optional[pd.Timestamp],
+    expiring_options: Optional[pd.DataFrame] = None,
+) -> Optional[float]:
+    if month_end is None:
+        return None
+    options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
+    if options.empty:
         return 0.0
-    return _sum_open_expiring_premium_from_frame(open_options, month_end, price_column="open_price")
+    return _sum_open_expiring_premium_from_frame(options, month_end, price_column="open_price")
 
 
-def _open_expiring_roll_adjusted_premium(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
+def _open_expiring_roll_adjusted_premium(
+    state,
+    month_end: Optional[pd.Timestamp],
+    expiring_options: Optional[pd.DataFrame] = None,
+) -> Optional[float]:
     if month_end is None:
         return None
     lots = getattr(state, "lots", None)
@@ -332,33 +408,28 @@ def _open_expiring_roll_adjusted_premium(state, month_end: Optional[pd.Timestamp
         if found:
             return float(total)
 
-    open_options = getattr(state, "open_options", pd.DataFrame())
-    if open_options is None or open_options.empty:
+    options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
+    if options.empty:
         return 0.0
-    price_column = "roll_adjusted_open_price" if "roll_adjusted_open_price" in open_options.columns else "open_price"
-    return _sum_open_expiring_premium_from_frame(open_options, month_end, price_column=price_column)
+    price_column = "roll_adjusted_open_price" if "roll_adjusted_open_price" in options.columns else "open_price"
+    return _sum_open_expiring_premium_from_frame(options, month_end, price_column=price_column)
 
 
-def _open_expiring_intrinsic_value_gap(state, month_end: Optional[pd.Timestamp]) -> Optional[float]:
+def _open_expiring_intrinsic_value_gap(
+    state,
+    month_end: Optional[pd.Timestamp],
+    expiring_options: Optional[pd.DataFrame] = None,
+) -> Optional[float]:
     if month_end is None:
         return None
-    open_options = getattr(state, "open_options", pd.DataFrame())
-    if open_options is None or open_options.empty:
+    options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
+    if options.empty:
         return 0.0
     required = {"ticker", "type", "strike", "qty", "expiration"}
-    if not required.issubset(open_options.columns):
+    if not required.issubset(options.columns):
         return 0.0
 
     stock_prices = getattr(state, "stock_prices", {}) or {}
-    options = open_options.copy()
-    options["expiration"] = pd.to_datetime(options["expiration"], errors="coerce")
-    options = options[
-        options["expiration"].notna()
-        & (options["expiration"].dt.to_period("M") == month_end.to_period("M"))
-    ]
-    if options.empty:
-        return 0.0
-
     total = 0.0
     for _, row in options.iterrows():
         ticker = str(row.get("ticker") or "").upper().strip()
@@ -385,9 +456,39 @@ def _monthly_projection_values(
     avg_capital = _number(row.get("avg_capital"))
     peak_capital = _number(row.get("peak_capital"))
     realized_month_pnl = _number(row.get("total_realized_pnl"))
-    open_expiring_incremental_premium = _open_expiring_incremental_premium(state, month_end)
-    open_expiring_roll_adjusted_premium = _open_expiring_roll_adjusted_premium(state, month_end)
-    open_expiring_intrinsic_value_gap = _open_expiring_intrinsic_value_gap(state, month_end)
+    expiring_options = _open_options_expiring_in_month(state, month_end)
+    as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
+    is_current_month = (
+        month_end is not None
+        and not pd.isna(as_of_ts)
+        and month_end.to_period("M") == as_of_ts.to_period("M")
+    )
+    has_open_cycle_exposure = not expiring_options.empty
+    uses_active_cycle_fallback = bool(is_current_month and has_open_cycle_exposure and not row)
+    if uses_active_cycle_fallback:
+        latest_avg_capital, latest_peak_capital = _latest_monthly_capital_values(state)
+        if avg_capital is None:
+            avg_capital = latest_avg_capital
+        if peak_capital is None:
+            peak_capital = latest_peak_capital
+        if realized_month_pnl is None:
+            realized_month_pnl = 0.0
+
+    open_expiring_incremental_premium = _open_expiring_incremental_premium(
+        state,
+        month_end,
+        expiring_options=expiring_options,
+    )
+    open_expiring_roll_adjusted_premium = _open_expiring_roll_adjusted_premium(
+        state,
+        month_end,
+        expiring_options=expiring_options,
+    )
+    open_expiring_intrinsic_value_gap = _open_expiring_intrinsic_value_gap(
+        state,
+        month_end,
+        expiring_options=expiring_options,
+    )
     open_expiring_option_premium = open_expiring_incremental_premium
     open_expiring_option_unrealized_pnl = None
     if open_expiring_incremental_premium is not None and open_expiring_intrinsic_value_gap is not None:
@@ -398,6 +499,8 @@ def _monthly_projection_values(
     projected_month_pnl = None
     if realized_month_pnl is not None and open_expiring_incremental_premium is not None:
         projected_month_pnl = realized_month_pnl + open_expiring_incremental_premium
+        if uses_active_cycle_fallback and not bool(getattr(state, "unrealized_blocked", False)):
+            projected_month_pnl += _number(getattr(state, "stock_unreal", None)) or 0.0
 
     projected_return_roac = None
     if projected_month_pnl is not None and avg_capital not in (None, 0):
@@ -421,12 +524,6 @@ def _monthly_projection_values(
     risk_adjusted_monthly_target_status = "unavailable"
     risk_adjusted_projection_basis = "unavailable"
     includes_current_unrealized = False
-    as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
-    is_current_month = (
-        month_end is not None
-        and not pd.isna(as_of_ts)
-        and month_end.to_period("M") == as_of_ts.to_period("M")
-    )
     if is_current_month and not bool(getattr(state, "unrealized_blocked", False)):
         current_unrealized_pnl = open_expiring_option_unrealized_pnl
         if realized_month_pnl is not None and current_unrealized_pnl is not None:
@@ -445,8 +542,27 @@ def _monthly_projection_values(
                 month_end,
                 getattr(state, "as_of", None),
             )
+        if uses_active_cycle_fallback and projected_month_pnl is not None:
+            current_unrealized_pnl = _number(getattr(state, "stock_unreal", None)) or 0.0
+            risk_adjusted_projected_month_pnl = projected_month_pnl
+            includes_current_unrealized = True
+            risk_adjusted_projection_basis = "web_active_cycle_projected_pnl"
+            if avg_capital not in (None, 0):
+                risk_adjusted_projected_return_roac = risk_adjusted_projected_month_pnl / avg_capital
+            if peak_capital not in (None, 0):
+                risk_adjusted_projected_return_ropc = risk_adjusted_projected_month_pnl / peak_capital
+            if target_pnl is not None:
+                risk_adjusted_projected_remaining_pnl = max(target_pnl - risk_adjusted_projected_month_pnl, 0.0)
+            risk_adjusted_monthly_target_status = _monthly_target_status(
+                risk_adjusted_projected_return_roac,
+                target_return,
+                month_end,
+                getattr(state, "as_of", None),
+            )
 
     return {
+        "avg_capital": avg_capital,
+        "peak_capital": peak_capital,
         "realized_month_pnl": realized_month_pnl,
         "open_expiring_option_premium": open_expiring_option_premium,
         "open_expiring_incremental_premium": open_expiring_incremental_premium,
@@ -575,8 +691,15 @@ def _mobile_month_row(
     include_target_detail: bool = False,
 ) -> Dict[str, Any]:
     avg_capital = _number(row.get("avg_capital"))
-    total_realized_pnl = _number(row.get("total_realized_pnl"))
     projection = _monthly_projection_values(state, row, month_end, target_return) if state is not None else {}
+    if state is not None:
+        avg_capital = avg_capital if avg_capital is not None else projection.get("avg_capital")
+    peak_capital = _number(row.get("peak_capital"))
+    if state is not None:
+        peak_capital = peak_capital if peak_capital is not None else projection.get("peak_capital")
+    total_realized_pnl = _number(row.get("total_realized_pnl"))
+    if state is not None and total_realized_pnl is None:
+        total_realized_pnl = projection.get("realized_month_pnl")
     target_pnl = avg_capital * target_return if avg_capital is not None else None
     remaining_pnl = None
     if target_pnl is not None and total_realized_pnl is not None:
@@ -586,6 +709,11 @@ def _mobile_month_row(
     days_remaining = None
     if not pd.isna(as_of_ts):
         days_remaining = max(int((month_end.normalize() - as_of_ts.normalize()).days), 0)
+    return_roac = _number(row.get("roac"))
+    return_ropc = _number(row.get("ropc"))
+    if state is not None and not row:
+        return_roac = return_roac if return_roac is not None else projection.get("projected_return_roac")
+        return_ropc = return_ropc if return_ropc is not None else projection.get("projected_return_ropc")
 
     out = {
         "id": f"month:{json_safe(month_end)}",
@@ -595,11 +723,11 @@ def _mobile_month_row(
         "dividends": json_safe(_number(row.get("dividends"))),
         "total_realized_pnl": json_safe(total_realized_pnl),
         "avg_capital": json_safe(avg_capital),
-        "peak_capital": json_safe(_number(row.get("peak_capital"))),
-        "return_roac": json_safe(_number(row.get("roac"))),
-        "return_ropc": json_safe(_number(row.get("ropc"))),
+        "peak_capital": json_safe(peak_capital),
+        "return_roac": json_safe(return_roac),
+        "return_ropc": json_safe(return_ropc),
         "target_return": json_safe(float(target_return)),
-        "status": _month_status(row, month_end, target_return, as_of),
+        "status": _monthly_target_status(return_roac, target_return, month_end, as_of),
     }
     if state is not None:
         out["realized_month_pnl"] = json_safe(projection["realized_month_pnl"])
@@ -827,14 +955,11 @@ def build_mobile_monthly_performance(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
     include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": build_data_freshness(
+        **_mobile_response_envelope(
             state,
-            selected_sheets,
+            request,
             available_sheets=available_sheets,
             source_metadata=source_metadata,
             pipeline_built_at=pipeline_built_at,
@@ -920,14 +1045,11 @@ def build_mobile_yearly_performance(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
     include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": build_data_freshness(
+        **_mobile_response_envelope(
             state,
-            selected_sheets,
+            request,
             available_sheets=available_sheets,
             source_metadata=source_metadata,
             pipeline_built_at=pipeline_built_at,
@@ -1015,13 +1137,10 @@ def build_mobile_dashboard(
     prices_updated_at: Optional[Any] = None,
     open_option_preview_limit: int = 5,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
     include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
-    mobile_request = build_mobile_request(as_of, include_unrealized, selected_sheets)
-    freshness = build_data_freshness(
+    envelope = _mobile_response_envelope(
         state,
-        selected_sheets,
+        request,
         available_sheets=available_sheets,
         source_metadata=source_metadata,
         pipeline_built_at=pipeline_built_at,
@@ -1033,8 +1152,7 @@ def build_mobile_dashboard(
     ]
 
     return {
-        "request": mobile_request,
-        "data_freshness": freshness,
+        **envelope,
         "snapshot": build_mobile_snapshot(state, include_unrealized),
         "monthly_target": build_monthly_target(state, target_return=target_return),
         "open_option_short_preview": preview,
@@ -1131,14 +1249,10 @@ def build_mobile_positions(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
-    include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": build_data_freshness(
+        **_mobile_response_envelope(
             state,
-            selected_sheets,
+            request,
             available_sheets=available_sheets,
             source_metadata=source_metadata,
             pipeline_built_at=pipeline_built_at,
@@ -1160,14 +1274,10 @@ def build_mobile_open_option_shorts(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
-    include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": build_data_freshness(
+        **_mobile_response_envelope(
             state,
-            selected_sheets,
+            request,
             available_sheets=available_sheets,
             source_metadata=source_metadata,
             pipeline_built_at=pipeline_built_at,
@@ -1513,14 +1623,10 @@ def build_mobile_tickers(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
-    include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": build_data_freshness(
+        **_mobile_response_envelope(
             state,
-            selected_sheets,
+            request,
             available_sheets=available_sheets,
             source_metadata=source_metadata,
             pipeline_built_at=pipeline_built_at,
@@ -1741,17 +1847,13 @@ def build_mobile_issues(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
-    include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
     issue_rows = build_mobile_issue_rows(state, source_metadata)
     actionable_rows = [row for row in issue_rows if row.get("severity") in {"warning", "error"}]
     audit_rows = [row for row in issue_rows if row.get("severity") == "info"]
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": build_data_freshness(
+        **_mobile_response_envelope(
             state,
-            selected_sheets,
+            request,
             available_sheets=available_sheets,
             source_metadata=source_metadata,
             pipeline_built_at=pipeline_built_at,
@@ -1775,23 +1877,20 @@ def build_mobile_refresh(
     pipeline_built_at: Optional[Any] = None,
     prices_updated_at: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    selected_sheets = _request_value(request, "selected_sheets", [])
-    include_unrealized = bool(_request_value(request, "include_unrealized", False))
-    as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
-    freshness = build_data_freshness(
+    envelope = _mobile_response_envelope(
         state,
-        selected_sheets,
+        request,
         available_sheets=available_sheets,
         source_metadata=source_metadata,
         pipeline_built_at=pipeline_built_at,
         prices_updated_at=prices_updated_at,
     )
+    freshness = envelope["data_freshness"]
     missing_tickers = freshness["price_coverage"]["missing_tickers"]
     missing_sheets = [sheet["name"] for sheet in freshness["source_sheets"] if sheet["status"] == "missing"]
     status = "partial" if missing_tickers or missing_sheets else "refreshed"
     return {
-        "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
-        "data_freshness": freshness,
+        **envelope,
         "refresh": {
             "status": status,
             "pipeline_refreshed": True,
@@ -1799,15 +1898,7 @@ def build_mobile_refresh(
             "cache_bust": json_safe(cache_bust),
             "missing_price_count": len(missing_tickers),
             "missing_sheet_count": len(missing_sheets),
-            "reload_endpoints": [
-                "/v1/mobile/dashboard",
-                "/v1/mobile/positions",
-                "/v1/mobile/open-option-shorts",
-                "/v1/mobile/tickers",
-                "/v1/mobile/performance/monthly",
-                "/v1/mobile/performance/yearly",
-                "/v1/mobile/issues",
-            ],
+            "reload_endpoints": list(READ_RELOAD_ENDPOINTS),
         },
     }
 

@@ -1241,6 +1241,31 @@ def test_future_monthly_performance_rows_emit_open_expiry_months():
     ]
 
 
+def test_current_month_performance_uses_active_cycle_when_month_row_missing():
+    state = _mobile_state()
+    state.as_of = pd.Timestamp("2026-06-01")
+
+    current = build_mobile_monthly_performance(
+        state,
+        {"as_of": state.as_of, "include_unrealized": True},
+        target_return=0.02,
+        monthly_range="ytd",
+    )["current_month"]
+
+    assert current["month"] == "2026-06-30"
+    assert current["avg_capital"] == 10000.0
+    assert current["target_pnl"] == 200.0
+    assert current["open_expiring_incremental_premium"] == 200.0
+    assert current["projected_month_pnl"] == 400.0
+    assert current["projected_return_roac"] == 0.04
+    assert current["risk_adjusted_projected_return_roac"] == 0.04
+    assert current["projected_remaining_pnl"] == 0.0
+    assert current["risk_adjusted_projected_remaining_pnl"] == 0.0
+    assert current["monthly_target_status"] == "beat"
+    assert current["risk_adjusted_monthly_target_status"] == "beat"
+    assert current["return_roac"] == 0.04
+
+
 def test_mobile_monthly_performance_composes_contract_payload():
     monthly = build_mobile_monthly_performance(
         _mobile_state_with_future_september(),

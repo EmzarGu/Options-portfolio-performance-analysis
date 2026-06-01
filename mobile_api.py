@@ -37,7 +37,7 @@ from portfolio_backend.mobile_api_service import (
     build_mobile_tickers_payload,
     build_mobile_yearly_payload,
 )
-from portfolio_backend.mobile_payloads import build_mobile_config
+from portfolio_backend.mobile_payloads import IMPORT_RELOAD_ENDPOINTS, READ_RELOAD_ENDPOINTS, build_mobile_config
 from portfolio_backend.ibkr.mobile_service import build_ibkr_mobile_payload_context
 from portfolio_backend.ibkr.repository import load_flex_report_from_env
 from portfolio_backend.pipeline import (
@@ -65,24 +65,8 @@ DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
 PUBLIC_PATHS = {"/v1/mobile/health"}
-PRICE_ONLY_RELOAD_ENDPOINTS = [
-    "/v1/mobile/dashboard",
-    "/v1/mobile/positions",
-    "/v1/mobile/open-option-shorts",
-    "/v1/mobile/tickers",
-    "/v1/mobile/performance/monthly",
-    "/v1/mobile/performance/yearly",
-    "/v1/mobile/issues",
-]
-FULL_RELOAD_ENDPOINTS = [
-    "/v1/mobile/dashboard",
-    "/v1/mobile/positions",
-    "/v1/mobile/open-option-shorts",
-    "/v1/mobile/tickers",
-    "/v1/mobile/performance/monthly",
-    "/v1/mobile/performance/yearly",
-    "/v1/mobile/issues",
-]
+PRICE_ONLY_RELOAD_ENDPOINTS = READ_RELOAD_ENDPOINTS
+FULL_RELOAD_ENDPOINTS = READ_RELOAD_ENDPOINTS
 
 _context_cache_lock = threading.Lock()
 _context_cache: "OrderedDict[Tuple[str, str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
@@ -373,15 +357,6 @@ def _context_cache_key(request: MobilePayloadRequest) -> Tuple[str, str, str, bo
         tuple(str(sheet) for sheet in request.selected_sheets),
         int(request.cache_bust),
     )
-
-
-def _cached_context_for_request(request: MobilePayloadRequest) -> Any:
-    key = _context_cache_key(request)
-    with _context_cache_lock:
-        cached = _context_cache.get(key)
-        if cached is not None:
-            _context_cache.move_to_end(key)
-        return cached
 
 
 def _remember_context(key: Tuple[str, str, str, bool, Tuple[str, ...], int], context: Any) -> None:
@@ -741,14 +716,10 @@ def _load_pipeline_snapshot_context(
     metadata = _source_metadata_for_marker(source_marker)
     metadata["pipeline_snapshot_id"] = snapshot.snapshot_id
     metadata["pipeline_snapshot_created_at"] = snapshot.metadata.get("created_at")
-    return MobilePayloadContext(
-        state=snapshot.state,
-        request={
-            "as_of": request.as_of,
-            "include_unrealized": request.include_unrealized,
-            "selected_sheets": request.selected_sheets,
-        },
-        available_sheets=[str(sheet) for sheet in available] if available is not None else None,
+    return _mobile_context_from_state(
+        snapshot.state,
+        request=request,
+        available=available,
         source_metadata=metadata,
         base_state=snapshot.state,
     )
@@ -821,16 +792,33 @@ def _load_refreshed_context_snapshot(
         timing_recorder("refreshed_context_snapshot_hit", 1)
     metadata = {**_source_metadata_for_marker(source_marker), **dict(snapshot.metadata or {})}
     metadata["refreshed_context_snapshot_id"] = snapshot.snapshot_id
+    return _mobile_context_from_state(
+        snapshot.state,
+        request=request,
+        available=available,
+        source_metadata=metadata,
+        base_state=None,
+    )
+
+
+def _mobile_context_from_state(
+    state: Any,
+    *,
+    request: MobilePayloadRequest,
+    available: Optional[List[str]],
+    source_metadata: Dict[str, Any],
+    base_state: Any,
+) -> MobilePayloadContext:
     return MobilePayloadContext(
-        state=snapshot.state,
+        state=state,
         request={
             "as_of": request.as_of,
             "include_unrealized": request.include_unrealized,
             "selected_sheets": request.selected_sheets,
         },
         available_sheets=[str(sheet) for sheet in available] if available is not None else None,
-        source_metadata=metadata,
-        base_state=None,
+        source_metadata=source_metadata,
+        base_state=base_state,
     )
 
 
@@ -879,14 +867,10 @@ def _refresh_prices_from_cached_base(
     if timing_recorder is not None:
         timing_recorder("unrealized_adjustment_ms", _elapsed_ms(started_at))
 
-    return MobilePayloadContext(
-        state=state,
-        request={
-            "as_of": request.as_of,
-            "include_unrealized": request.include_unrealized,
-            "selected_sheets": request.selected_sheets,
-        },
-        available_sheets=[str(sheet) for sheet in available] if available is not None else None,
+    return _mobile_context_from_state(
+        state,
+        request=request,
+        available=available,
         source_metadata=metadata,
         base_state=base_state,
     )
@@ -982,6 +966,21 @@ def _context(
             timing_recorder=timing_recorder,
         )
     return context
+
+
+def _read_route_context(
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    selected_sheets: Optional[List[str]],
+    cache_bust: Optional[int],
+):
+    return _context(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+    )
 
 
 def _smart_refresh_context(
@@ -1250,15 +1249,7 @@ def trigger_mobile_ibkr_import() -> Dict[str, Any]:
         ) from exc
     return {
         "import": import_start.as_dict(),
-        "reload_endpoints": [
-            "/v1/mobile/issues",
-            "/v1/mobile/dashboard",
-            "/v1/mobile/positions",
-            "/v1/mobile/open-option-shorts",
-            "/v1/mobile/tickers",
-            "/v1/mobile/performance/monthly",
-            "/v1/mobile/performance/yearly",
-        ],
+        "reload_endpoints": list(IMPORT_RELOAD_ENDPOINTS),
     }
 
 
@@ -1270,7 +1261,7 @@ def get_mobile_dashboard(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_dashboard_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
@@ -1287,7 +1278,7 @@ def get_mobile_positions(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_positions_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
@@ -1324,7 +1315,7 @@ def get_mobile_open_option_shorts(
             },
         )
     return build_mobile_open_option_shorts_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
@@ -1345,7 +1336,7 @@ def get_mobile_tickers(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_tickers_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
@@ -1375,7 +1366,7 @@ def get_mobile_monthly_performance(
             },
         )
     return build_mobile_monthly_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
@@ -1394,7 +1385,7 @@ def get_mobile_yearly_performance(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_yearly_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
@@ -1411,7 +1402,7 @@ def get_mobile_issues(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_issues_payload(
-        _context(
+        _read_route_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,

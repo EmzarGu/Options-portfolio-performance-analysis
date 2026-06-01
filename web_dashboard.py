@@ -63,6 +63,28 @@ _option_history_cache_lock = threading.Lock()
 _option_history_cache: tuple[float, list[dict[str, Any]]] | None = None
 
 
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        return max(minimum, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cached_list(
+    cache: tuple[float, list[dict[str, Any]]] | None,
+    *,
+    ttl_seconds: int,
+    now: Optional[float] = None,
+) -> Optional[list[dict[str, Any]]]:
+    if ttl_seconds <= 0 or cache is None:
+        return None
+    checked_at, rows = cache
+    if (time() if now is None else now) - checked_at <= ttl_seconds:
+        return rows
+    return None
+
+
 @app.middleware("http")
 async def no_store_browser_cache(request: Request, call_next):
     response = await call_next(request)
@@ -355,11 +377,7 @@ def _dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> 
 
 
 def _dashboard_data_cache_seconds() -> int:
-    raw = os.getenv("WEB_DASHBOARD_DATA_CACHE_SECONDS", str(DEFAULT_DASHBOARD_DATA_CACHE_SECONDS))
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_DASHBOARD_DATA_CACHE_SECONDS
+    return _env_int("WEB_DASHBOARD_DATA_CACHE_SECONDS", DEFAULT_DASHBOARD_DATA_CACHE_SECONDS)
 
 
 def _dashboard_cache_key(
@@ -416,11 +434,7 @@ def _get_cached_dashboard_data(
 
 
 def _probability_history_cache_seconds() -> int:
-    raw = os.getenv("WEB_PROBABILITY_HISTORY_CACHE_SECONDS", "300")
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return 300
+    return _env_int("WEB_PROBABILITY_HISTORY_CACHE_SECONDS", 300)
 
 
 def _load_probability_trade_matches() -> list[dict[str, Any]]:
@@ -428,8 +442,9 @@ def _load_probability_trade_matches() -> list[dict[str, Any]]:
     ttl_seconds = _probability_history_cache_seconds()
     now = time()
     with _probability_history_cache_lock:
-        if ttl_seconds > 0 and _probability_history_cache and now - _probability_history_cache[0] <= ttl_seconds:
-            return _probability_history_cache[1]
+        cached = _cached_list(_probability_history_cache, ttl_seconds=ttl_seconds, now=now)
+        if cached is not None:
+            return cached
 
     try:
         client = firestore_client()
@@ -463,8 +478,9 @@ def _load_historical_option_enrichments() -> list[dict[str, Any]]:
     ttl_seconds = _probability_history_cache_seconds()
     now = time()
     with _option_history_cache_lock:
-        if ttl_seconds > 0 and _option_history_cache and now - _option_history_cache[0] <= ttl_seconds:
-            return _option_history_cache[1]
+        cached = _cached_list(_option_history_cache, ttl_seconds=ttl_seconds, now=now)
+        if cached is not None:
+            return cached
 
     try:
         store = FirestoreOptionMarketStore()
