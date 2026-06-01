@@ -175,6 +175,35 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
     assert cycle["open_ticker_count"] == 2
 
 
+def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row():
+    payload = _base_payload()
+    payload["dashboard"]["request"] = {"as_of": "2026-06-01"}
+    payload["dashboard"]["monthly_target"] = {"target_return": 0.015}
+    payload["positions"]["open_option_shorts"] = [
+        {
+            "ticker": "BEN",
+            "option_type": "Put",
+            "strike": 29.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 17,
+            "quantity": -1,
+            "current_price": 31.0,
+            "display_premium_collected": 200.0,
+        },
+    ]
+    payload["monthly"]["months"] = [
+        {"month": "2026-04-30", "avg_capital": 250000.0},
+        {"month": "2026-05-31", "avg_capital": 300000.0},
+    ]
+
+    cycle = build_decision_lab_data(payload)["active_cycle"]
+
+    assert cycle["cycle"] == "2026-06"
+    assert cycle["target_base"] == pytest.approx(300000.0)
+    assert cycle["target_pnl"] == pytest.approx(4500.0)
+    assert cycle["projected_return_roac"] == pytest.approx(200.0 / 300000.0)
+
+
 def test_active_cycle_includes_dashboard_stock_unrealized_component():
     payload = _base_payload()
     payload["dashboard"]["snapshot"] = {"current_stock_unrealized_pnl": 150.0}

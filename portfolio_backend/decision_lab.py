@@ -541,6 +541,7 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         [
             cycle_month_row.get("avg_capital") if cycle_month_row else None,
             _avg_capital_from_target(monthly_target),
+            _latest_monthly_capital(payload),
         ]
     )
     if target_base:
@@ -963,6 +964,18 @@ def _avg_capital_from_target(monthly_target: dict[str, Any]) -> Optional[float]:
     if target_pnl is None or not target_return:
         return None
     return target_pnl / target_return
+
+
+def _latest_monthly_capital(payload: dict[str, Any]) -> Optional[float]:
+    dated_rows = []
+    for row in (payload.get("monthly") or {}).get("months") or []:
+        month = _parse_date(row.get("month") or str(row.get("id") or "").replace("month:", ""))
+        capital = _first_num([row.get("avg_capital"), row.get("peak_capital")])
+        if month and capital is not None:
+            dated_rows.append((month, capital))
+    if not dated_rows:
+        return None
+    return max(dated_rows, key=lambda item: item[0])[1]
 
 
 def _risk_bucket(value: float) -> str:
