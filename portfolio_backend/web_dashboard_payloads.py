@@ -180,7 +180,9 @@ def build_dashboard_data(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     target_return: Optional[float] = None,
+    target_floor: Optional[float] = None,
     default_target_return: float = 0.015,
+    default_target_floor: float = 0.01,
 ) -> Dict[str, Any]:
     # The web UI can switch realized/unrealized presentation without a server
     # round trip, so build the full unrealized-capable context once and include
@@ -188,13 +190,22 @@ def build_dashboard_data(
     context, _ = get_web_context(as_of=as_of, include_unrealized=True)
     state = context.state
     monthly_target_return = default_target_return if target_return is None else target_return
-    dashboard = build_mobile_dashboard_payload(context, target_return=monthly_target_return)
+    monthly_target_floor = min(
+        monthly_target_return,
+        default_target_floor if target_floor is None else target_floor,
+    )
+    dashboard = build_mobile_dashboard_payload(
+        context,
+        target_return=monthly_target_return,
+        target_floor=monthly_target_floor,
+    )
     positions = build_mobile_positions_payload(context)
     open_shorts = build_mobile_open_option_shorts_payload(context, sort="moneyness_risk", limit=None)
     tickers = build_mobile_tickers_payload(context, include_history=False)
     monthly = build_mobile_monthly_payload(
         context,
         target_return=monthly_target_return,
+        target_floor=monthly_target_floor,
         monthly_range="since_inception",
     )
     yearly = build_mobile_yearly_payload(context)
@@ -218,6 +229,7 @@ def build_dashboard_data(
             "web": {
                 "include_unrealized": bool(include_unrealized),
                 "target_return": float(monthly_target_return),
+                "target_floor": float(monthly_target_floor),
             },
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "source": {
@@ -302,7 +314,8 @@ def build_dashboard_data(
         }
     )
 
-def dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> Dict[str, Any]:
+def dashboard_shell_data(*, include_unrealized: bool, target_return: float, target_floor: float = 0.01) -> Dict[str, Any]:
+    target_floor = min(float(target_floor), float(target_return))
     return {
         "loading": True,
         "app": {
@@ -312,6 +325,7 @@ def dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> D
         "web": {
             "include_unrealized": bool(include_unrealized),
             "target_return": float(target_return),
+            "target_floor": float(target_floor),
         },
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "source": {
@@ -331,7 +345,13 @@ def dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> D
         "positions": {"inventory": [], "open_option_shorts": []},
         "open_shorts": {"items": []},
         "tickers": {"items": []},
-        "monthly": {"target_return": float(target_return), "current_month": {}, "months": [], "future_months": []},
+        "monthly": {
+            "target_return": float(target_return),
+            "target_floor": float(target_floor),
+            "current_month": {},
+            "months": [],
+            "future_months": [],
+        },
         "yearly": {"years": []},
         "views": {"snapshots": {"with_unrealized": {}, "realized_only": {}}, "yearly": {"with_unrealized": [], "realized_only": []}},
         "issues": {

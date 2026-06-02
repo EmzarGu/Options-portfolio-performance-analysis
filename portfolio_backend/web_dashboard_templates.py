@@ -131,18 +131,13 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 <script>
 let data = JSON.parse(document.getElementById("dashboard-data").textContent);
 const queryParams = new URLSearchParams(window.location.search);
-function queryNumber(name, fallback){
-  const raw = queryParams.get(name);
-  const value = raw === null ? null : Number(raw);
-  return Number.isFinite(value) ? value : fallback;
-}
 let dashboardLoaded = data.loading !== true;
 const appState = {
   active: "dashboard",
   range: "YTD",
   includeUnrealized: data.web?.include_unrealized !== false,
   targetReturn: Number(data.web?.target_return ?? data.monthly?.target_return ?? 0.015),
-  targetFloor: queryNumber("target_floor", 0.01),
+  targetFloor: Number(data.web?.target_floor ?? data.monthly?.target_floor ?? 0.01),
   openRisk: "all",
   openType: "all",
   openSearch: "",
@@ -249,8 +244,10 @@ function updateUrlState(){
   const url = new URL(window.location.href);
   url.searchParams.set("section", appState.active);
   url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
-  url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
-  url.searchParams.set("target_floor", Number(appState.targetFloor || 0).toFixed(6));
+  url.searchParams.delete("target_return");
+  url.searchParams.delete("target_return_pct");
+  url.searchParams.delete("target_floor");
+  url.searchParams.delete("target_floor_pct");
   url.searchParams.delete("target_good");
   url.searchParams.delete("refreshed");
   window.history.replaceState(null, "", `${url.pathname}${url.search}`);
@@ -258,8 +255,6 @@ function updateUrlState(){
 function apiDashboardUrl(){
   const url = new URL("/api/dashboard", window.location.origin);
   url.searchParams.set("include_unrealized", appState.includeUnrealized ? "1" : "0");
-  url.searchParams.set("target_return", Number(appState.targetReturn || 0).toFixed(6));
-  url.searchParams.set("target_floor", Number(appState.targetFloor || 0).toFixed(6));
   return url;
 }
 function loadingPanel(message="Loading portfolio data...", detail="The dashboard shell is ready while Cloud Run builds or reads the latest IBKR snapshot.", error=""){
@@ -284,6 +279,7 @@ async function loadDashboardData(){
     dashboardLoaded = true;
     appState.includeUnrealized = data.web?.include_unrealized !== false;
     appState.targetReturn = Number(data.web?.target_return ?? appState.targetReturn ?? 0.015);
+    appState.targetFloor = Number(data.web?.target_floor ?? appState.targetFloor ?? 0.01);
     render();
   } catch (err) {
     dashboardLoaded = false;
@@ -1417,7 +1413,6 @@ function bindControls(){
   if (refreshForm) {
     refreshForm.action = (
       `/refresh?include_unrealized=${appState.includeUnrealized ? "1" : "0"}`
-      + `&target_return=${encodeURIComponent(Number(appState.targetReturn || 0).toFixed(6))}`
       + `&section=${encodeURIComponent(appState.active)}`
     );
     if (!refreshForm.dataset.bound) {
@@ -1467,16 +1462,44 @@ function bindControls(){
   const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
   const expectancyYear = $("expectancyYear"); if (expectancyYear) expectancyYear.addEventListener("change", (e) => { appState.expectancyYear = e.target.value; render(); });
   const targetSettingsForm = $("targetSettingsForm");
-  if (targetSettingsForm) targetSettingsForm.addEventListener("submit", (e) => {
+  if (targetSettingsForm) targetSettingsForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = new FormData(targetSettingsForm);
     const nextTarget = Number(form.get("target_return_pct")) / 100;
     const nextFloor = Number(form.get("target_floor_pct")) / 100;
-    if (Number.isFinite(nextTarget)) appState.targetReturn = Math.max(nextTarget, 0);
-    if (Number.isFinite(nextFloor)) appState.targetFloor = Math.max(nextFloor, 0);
-    if (appState.targetReturn < appState.targetFloor) appState.targetReturn = appState.targetFloor;
-    updateUrlState();
-    render();
+    if (!Number.isFinite(nextTarget) || !Number.isFinite(nextFloor)) return;
+    const button = targetSettingsForm.querySelector("button[type='submit']");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Saving...";
+    }
+    try {
+      const response = await fetch("/api/settings/monthly-target-band", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json", "Accept": "application/json"},
+        body: JSON.stringify({
+          target_return: Math.max(nextTarget, 0),
+          target_floor: Math.max(nextFloor, 0)
+        })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.slice(0, 300) || `HTTP ${response.status}`);
+      }
+      const saved = await response.json();
+      appState.targetReturn = Number(saved.target_return ?? nextTarget);
+      appState.targetFloor = Number(saved.target_floor ?? nextFloor);
+      updateUrlState();
+      await loadDashboardData();
+    } catch (err) {
+      alert(`Could not save target band: ${(err && err.message) || err}`);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Apply";
+      }
+    }
   });
   const optionFetch = $("fetchOptionData");
   if (optionFetch && !optionFetch.dataset.bound) {

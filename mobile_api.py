@@ -21,6 +21,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when dep
 
 import streamlit_app as dashboard_app
 import pandas as pd
+from portfolio_backend.app_settings import load_monthly_target_band, save_monthly_target_band
 from portfolio_backend.audit_store import RefreshAuditRecord, get_default_audit_store
 from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
 from portfolio_backend.mobile_api_service import (
@@ -125,6 +126,20 @@ def _supports_keyword(func, keyword: str) -> bool:
         parameter.name == keyword or parameter.kind == Parameter.VAR_KEYWORD
         for parameter in parameters
     )
+
+
+def _target_band_for_request(
+    *,
+    target_return: Optional[float] = None,
+    target_floor: Optional[float] = None,
+) -> Dict[str, Any]:
+    band = load_monthly_target_band()
+    if target_return is not None:
+        band["target_return"] = max(min(float(target_return), 1.0), 0.0)
+    if target_floor is not None:
+        band["target_floor"] = max(min(float(target_floor), 1.0), 0.0)
+    band["target_floor"] = min(float(band["target_floor"]), float(band["target_return"]))
+    return band
 
 
 def _timing_recorder(request: Request):
@@ -1188,6 +1203,7 @@ def get_mobile_config() -> Dict[str, Any]:
     prefs = dashboard_app.load_prefs()
     if _data_source() == DATA_SOURCE_IBKR:
         prefs = {**prefs, "selected_sheets": ["IBKR Flex"]}
+    target_band = load_monthly_target_band()
     return build_mobile_config(
         available,
         prefs,
@@ -1196,6 +1212,44 @@ def get_mobile_config() -> Dict[str, Any]:
         source_kind="ibkr_flex" if _data_source() == DATA_SOURCE_IBKR else "google_sheet",
         source_name="IBKR Flex" if _data_source() == DATA_SOURCE_IBKR else "Google Sheets",
         supports_selected_sheets=_data_source() != DATA_SOURCE_IBKR,
+        monthly_target_band=target_band,
+    )
+
+
+@app.get("/v1/mobile/settings/monthly-target-band")
+def get_mobile_monthly_target_band() -> Dict[str, Any]:
+    return load_monthly_target_band()
+
+
+@app.post("/v1/mobile/settings/monthly-target-band")
+async def update_mobile_monthly_target_band(request: Request) -> Dict[str, Any]:
+    body = await request.json()
+    try:
+        target_return = float(body.get("target_return"))
+        target_floor = float(body.get("target_floor"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_monthly_target_band",
+                "message": "target_floor and target_return must be rates between 0 and 1.",
+                "details": {},
+            },
+        ) from exc
+    if not 0 <= target_return <= 1 or not 0 <= target_floor <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_monthly_target_band",
+                "message": "target_floor and target_return must be rates between 0 and 1.",
+                "details": {"target_floor": target_floor, "target_return": target_return},
+            },
+        )
+    return save_monthly_target_band(
+        target_floor=target_floor,
+        target_return=target_return,
+        updated_by="mobile",
+        source="mobile",
     )
 
 
@@ -1267,9 +1321,11 @@ def get_mobile_dashboard(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    target_return: float = 0.015,
+    target_return: Optional[float] = None,
+    target_floor: Optional[float] = None,
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
+    target_band = _target_band_for_request(target_return=target_return, target_floor=target_floor)
     return build_mobile_dashboard_payload(
         _context(
             as_of=as_of,
@@ -1277,7 +1333,8 @@ def get_mobile_dashboard(
             selected_sheets=selected_sheets,
             cache_bust=cache_bust,
         ),
-        target_return=target_return,
+        target_return=target_band["target_return"],
+        target_floor=target_band["target_floor"],
     )
 
 
@@ -1363,7 +1420,8 @@ def get_mobile_monthly_performance(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    target_return: float = 0.015,
+    target_return: Optional[float] = None,
+    target_floor: Optional[float] = None,
     range: str = "ytd",
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -1376,6 +1434,7 @@ def get_mobile_monthly_performance(
                 "details": {"allowed": sorted(MONTHLY_RANGES), "received": range},
             },
         )
+    target_band = _target_band_for_request(target_return=target_return, target_floor=target_floor)
     return build_mobile_monthly_payload(
         _context(
             as_of=as_of,
@@ -1383,7 +1442,8 @@ def get_mobile_monthly_performance(
             selected_sheets=selected_sheets,
             cache_bust=cache_bust,
         ),
-        target_return=target_return,
+        target_return=target_band["target_return"],
+        target_floor=target_band["target_floor"],
         monthly_range=range,
     )
 

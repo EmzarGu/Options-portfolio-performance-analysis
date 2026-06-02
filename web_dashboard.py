@@ -23,6 +23,11 @@ from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
 from portfolio_backend.decision_lab import build_decision_lab_data
 from portfolio_backend.decision_lab_templates import DECISION_LAB_HTML
 from portfolio_backend.gcp import firestore_client
+from portfolio_backend.app_settings import (
+    default_monthly_target_band,
+    load_monthly_target_band,
+    save_monthly_target_band,
+)
 from portfolio_backend.mobile_api_service import build_mobile_refresh_payload
 from portfolio_backend.option_market.cutemarkets import CuteMarketsClient
 from portfolio_backend.option_market.decision_data import decision_option_loader
@@ -45,7 +50,6 @@ logger = logging.getLogger("uvicorn.error")
 
 COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
-TARGET_RETURN_COOKIE_NAME = "options_roi_web_target_return"
 DEFAULT_SESSION_DAYS = 90
 DEFAULT_DASHBOARD_DATA_CACHE_SECONDS = 0
 NO_STORE_HEADERS = {
@@ -136,14 +140,11 @@ def _session_max_age_seconds() -> int:
 
 
 def _web_monthly_target_return_default() -> float:
-    raw = os.getenv("WEB_MONTHLY_TARGET_RETURN", "").strip()
-    if not raw:
-        return 0.015
-    try:
-        value = float(raw)
-    except ValueError:
-        return 0.015
-    return min(max(value, 0.0), 1.0)
+    return float(default_monthly_target_band()["target_return"])
+
+
+def _web_monthly_target_floor_default() -> float:
+    return float(default_monthly_target_band()["target_floor"])
 
 
 def _coerce_target_return(value: Optional[str], *, percent: bool = False) -> Optional[float]:
@@ -156,32 +157,16 @@ def _coerce_target_return(value: Optional[str], *, percent: bool = False) -> Opt
     return min(max(target, 0.0), 1.0)
 
 
-def _target_return_from_query(request: Request) -> float:
+def _monthly_target_band_from_request(request: Request) -> Dict[str, Any]:
+    band = load_monthly_target_band()
     pct = _coerce_target_return(request.query_params.get("target_return_pct"), percent=True)
     if pct is not None:
-        return pct
-    raw = _coerce_target_return(request.query_params.get("target_return"))
-    if raw is not None:
-        return raw
-    cookie_value = _coerce_target_return(request.cookies.get(TARGET_RETURN_COOKIE_NAME))
-    if cookie_value is not None:
-        return cookie_value
-    return _web_monthly_target_return_default()
-
-
-def _target_return_was_submitted(request: Request) -> bool:
-    return "target_return_pct" in request.query_params or "target_return" in request.query_params
-
-
-def _set_target_return_cookie(response: Response, target_return: float) -> None:
-    response.set_cookie(
-        TARGET_RETURN_COOKIE_NAME,
-        f"{target_return:.6f}",
-        max_age=_session_max_age_seconds(),
-        httponly=True,
-        secure=True,
-        samesite="lax",
-    )
+        band["target_return"] = pct
+    floor_pct = _coerce_target_return(request.query_params.get("target_floor_pct"), percent=True)
+    if floor_pct is not None:
+        band["target_floor"] = floor_pct
+    band["target_floor"] = min(float(band["target_floor"]), float(band["target_return"]))
+    return band
 
 
 def _b64_json(data: Dict[str, Any]) -> str:
@@ -341,17 +326,24 @@ def _build_dashboard_data(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     target_return: Optional[float] = None,
+    target_floor: Optional[float] = None,
 ) -> Dict[str, Any]:
     return build_web_dashboard_data(
         as_of=as_of,
         include_unrealized=include_unrealized,
         target_return=target_return,
+        target_floor=target_floor,
         default_target_return=_web_monthly_target_return_default(),
+        default_target_floor=_web_monthly_target_floor_default(),
     )
 
 
-def _dashboard_shell_data(*, include_unrealized: bool, target_return: float) -> Dict[str, Any]:
-    return build_web_dashboard_shell_data(include_unrealized=include_unrealized, target_return=target_return)
+def _dashboard_shell_data(*, include_unrealized: bool, target_return: float, target_floor: float) -> Dict[str, Any]:
+    return build_web_dashboard_shell_data(
+        include_unrealized=include_unrealized,
+        target_return=target_return,
+        target_floor=target_floor,
+    )
 
 
 def _dashboard_data_cache_seconds() -> int:
@@ -367,9 +359,11 @@ def _dashboard_cache_key(
     as_of: Optional[date],
     include_unrealized: bool,
     target_return: Optional[float],
+    target_floor: Optional[float],
 ) -> tuple:
     rounded_target = round(float(target_return if target_return is not None else _web_monthly_target_return_default()), 8)
-    return (as_of.isoformat() if as_of else "", bool(include_unrealized), rounded_target)
+    rounded_floor = round(float(target_floor if target_floor is not None else _web_monthly_target_floor_default()), 8)
+    return (as_of.isoformat() if as_of else "", bool(include_unrealized), rounded_floor, rounded_target)
 
 
 def _clear_dashboard_data_cache() -> None:
@@ -383,9 +377,15 @@ def _get_cached_dashboard_data(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     target_return: Optional[float] = None,
+    target_floor: Optional[float] = None,
 ) -> Dict[str, Any]:
     ttl_seconds = _dashboard_data_cache_seconds()
-    key = _dashboard_cache_key(as_of=as_of, include_unrealized=include_unrealized, target_return=target_return)
+    key = _dashboard_cache_key(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        target_return=target_return,
+        target_floor=target_floor,
+    )
     now = time()
     with _dashboard_data_cache_lock:
         cached = _dashboard_data_cache.get(key)
@@ -404,6 +404,7 @@ def _get_cached_dashboard_data(
             as_of=as_of,
             include_unrealized=include_unrealized,
             target_return=target_return,
+            target_floor=target_floor,
         )
         if ttl_seconds > 0:
             with _dashboard_data_cache_lock:
@@ -654,7 +655,6 @@ def refresh(request: Request) -> Response:
         timings[phase] = round(float(elapsed_ms), 2)
 
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-    target_return = _target_return_from_query(request)
     section = request.query_params.get("section") or "dashboard"
     if section not in {
         "dashboard",
@@ -688,7 +688,7 @@ def refresh(request: Request) -> Response:
     return RedirectResponse(
         url=(
             f"/?include_unrealized={1 if include_unrealized else 0}"
-            f"&target_return={target_return:.6f}&section={section}&refreshed={cache_bust}"
+            f"&section={section}&refreshed={cache_bust}"
         ),
         status_code=303,
     )
@@ -717,9 +717,13 @@ def dashboard_json(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-    target_return = _target_return_from_query(request)
+    target_band = _monthly_target_band_from_request(request)
     try:
-        payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
+        payload = _get_cached_dashboard_data(
+            include_unrealized=include_unrealized,
+            target_return=target_band["target_return"],
+            target_floor=target_band["target_floor"],
+        )
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
     return JSONResponse(_with_decision_lab(payload))
@@ -730,9 +734,13 @@ def decision_lab_json(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-    target_return = _target_return_from_query(request)
+    target_band = _monthly_target_band_from_request(request)
     try:
-        payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
+        payload = _get_cached_dashboard_data(
+            include_unrealized=include_unrealized,
+            target_return=target_band["target_return"],
+            target_floor=target_band["target_floor"],
+        )
         return JSONResponse(_build_decision_lab_payload(payload, force_refresh=False))
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -743,9 +751,13 @@ def decision_lab_options_refresh(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-    target_return = _target_return_from_query(request)
+    target_band = _monthly_target_band_from_request(request)
     try:
-        payload = _get_cached_dashboard_data(include_unrealized=include_unrealized, target_return=target_return)
+        payload = _get_cached_dashboard_data(
+            include_unrealized=include_unrealized,
+            target_return=target_band["target_return"],
+            target_floor=target_band["target_floor"],
+        )
         _clear_dashboard_data_cache()
         return JSONResponse(_build_decision_lab_payload(payload, force_refresh=True))
     except Exception as exc:
@@ -765,16 +777,48 @@ def dashboard_page(request: Request) -> Response:
     if not _is_authenticated(request):
         return _redirect_to_login()
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
-    target_return = _target_return_from_query(request)
-    payload = _dashboard_shell_data(include_unrealized=include_unrealized, target_return=target_return)
+    target_band = _monthly_target_band_from_request(request)
+    payload = _dashboard_shell_data(
+        include_unrealized=include_unrealized,
+        target_return=target_band["target_return"],
+        target_floor=target_band["target_floor"],
+    )
     data_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).replace("</", "<\\/")
     user = html.escape(_authenticated_user(request) or "")
     response = HTMLResponse(
         DASHBOARD_HTML.replace("__DASHBOARD_DATA__", data_json).replace("__AUTH_USER__", user)
     )
-    if _target_return_was_submitted(request):
-        _set_target_return_cookie(response, target_return)
     return response
+
+
+@app.get("/api/settings/monthly-target-band")
+def monthly_target_band_json(request: Request) -> JSONResponse:
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return JSONResponse(load_monthly_target_band())
+
+
+@app.post("/api/settings/monthly-target-band")
+async def update_monthly_target_band_json(request: Request) -> JSONResponse:
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+        target_return = _coerce_target_return(body.get("target_return"))
+        target_floor = _coerce_target_return(body.get("target_floor"))
+        if target_return is None or target_floor is None:
+            return JSONResponse({"error": "target_floor and target_return must be rates between 0 and 1."}, status_code=400)
+        band = save_monthly_target_band(
+            target_floor=target_floor,
+            target_return=target_return,
+            updated_by=_authenticated_user(request),
+            source="web",
+        )
+        _clear_dashboard_data_cache()
+        return JSONResponse(band)
+    except Exception as exc:
+        logger.warning("monthly_target_band_save_failed error=%s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 def _configuration_error_html() -> str:

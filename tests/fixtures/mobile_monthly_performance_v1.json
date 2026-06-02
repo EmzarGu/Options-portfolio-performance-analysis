@@ -143,5 +143,6 @@
   },
   "return_metric": "return_roac",
   "target_basis": "avg_capital",
+  "target_floor": null,
   "target_return": 0.015
 }

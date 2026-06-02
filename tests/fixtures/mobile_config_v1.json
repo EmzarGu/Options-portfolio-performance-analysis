@@ -24,5 +24,6 @@
     "supports_data_rebuild": true,
     "supports_selected_sheets": true,
     "supports_as_of": true
-  }
+  },
+  "monthly_target_band": {}
 }

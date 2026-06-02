@@ -648,13 +648,18 @@ def build_future_cycle_projections(
     return rows
 
 
-def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, Any]:
+def build_monthly_target(
+    state,
+    *,
+    target_return: float = 0.015,
+    target_floor: Optional[float] = None,
+) -> Dict[str, Any]:
     month_end, row = _current_month_row(getattr(state, "monthly_cycles", pd.DataFrame()), getattr(state, "as_of", None))
     avg_capital = _number(row.get("avg_capital"))
     current_return = _number(row.get("roac"))
     current_pnl = _number(row.get("total_realized_pnl"))
     projection = _monthly_projection_values(state, row, month_end, target_return)
-    active_cycle = build_active_cycle_projection(state, target_return=target_return)
+    active_cycle = build_active_cycle_projection(state, target_return=target_return, target_floor=target_floor)
     target_pnl = avg_capital * target_return if avg_capital is not None else None
     remaining_pnl = None
     if target_pnl is not None and current_pnl is not None:
@@ -876,9 +881,14 @@ def build_future_monthly_performance_rows(
     state,
     *,
     target_return: float = 0.015,
+    target_floor: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     rows = []
-    for projection in build_future_cycle_projections(state, target_return=target_return):
+    for projection in build_future_cycle_projections(
+        state,
+        target_return=target_return,
+        target_floor=target_floor,
+    ):
         rows.append(
             {
                 "id": f"month:{projection.get('month')}",
@@ -944,7 +954,6 @@ def build_current_month_performance(
         include_target_detail=True,
         active_cycle=active_cycle,
     )
-    active_cycle = build_active_cycle_projection(state, target_return=target_return)
     return {
         "id": month_row["id"],
         "month": month_row["month"],
@@ -978,6 +987,7 @@ def build_mobile_monthly_performance(
     request: Dict[str, Any],
     *,
     target_return: float = 0.015,
+    target_floor: Optional[float] = None,
     monthly_range: str = "ytd",
     available_sheets: Optional[Iterable[str]] = None,
     source_metadata: Optional[Dict[str, Any]] = None,
@@ -987,7 +997,11 @@ def build_mobile_monthly_performance(
     selected_sheets = _request_value(request, "selected_sheets", [])
     include_unrealized = bool(_request_value(request, "include_unrealized", False))
     as_of = _request_value(request, "as_of", getattr(state, "as_of", None))
-    active_cycle = build_active_cycle_projection(state, target_return=target_return)
+    active_cycle = build_active_cycle_projection(
+        state,
+        target_return=target_return,
+        target_floor=target_floor,
+    )
     return {
         "request": build_mobile_request(as_of, include_unrealized, selected_sheets),
         "data_freshness": build_data_freshness(
@@ -999,6 +1013,7 @@ def build_mobile_monthly_performance(
             prices_updated_at=prices_updated_at,
         ),
         "target_return": json_safe(float(target_return)),
+        "target_floor": json_safe(float(target_floor)) if target_floor is not None else None,
         "target_basis": "avg_capital",
         "return_metric": "return_roac",
         "active_cycle": active_cycle,
@@ -1009,7 +1024,11 @@ def build_mobile_monthly_performance(
             monthly_range=monthly_range,
             active_cycle=active_cycle,
         ),
-        "future_months": build_future_monthly_performance_rows(state, target_return=target_return),
+        "future_months": build_future_monthly_performance_rows(
+            state,
+            target_return=target_return,
+            target_floor=target_floor,
+        ),
     }
 
 
@@ -1169,6 +1188,7 @@ def build_mobile_dashboard(
     request: Dict[str, Any],
     *,
     target_return: float = 0.015,
+    target_floor: Optional[float] = None,
     available_sheets: Optional[Iterable[str]] = None,
     source_metadata: Optional[Dict[str, Any]] = None,
     pipeline_built_at: Optional[Any] = None,
@@ -1196,7 +1216,15 @@ def build_mobile_dashboard(
         "request": mobile_request,
         "data_freshness": freshness,
         "snapshot": build_mobile_snapshot(state, include_unrealized),
-        "monthly_target": build_monthly_target(state, target_return=target_return),
+        "monthly_target": build_monthly_target(
+            state,
+            target_return=target_return,
+            target_floor=target_floor,
+        ),
+        "monthly_target_band": {
+            "target_floor": json_safe(float(target_floor)) if target_floor is not None else None,
+            "target_return": json_safe(float(target_return)),
+        },
         "open_option_short_preview": preview,
         "issue_summary": build_issue_summary(state, source_metadata),
     }
@@ -1932,6 +1960,7 @@ def build_mobile_config(
     source_kind: str = "local_excel",
     source_name: Optional[str] = None,
     supports_selected_sheets: bool = True,
+    monthly_target_band: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     prefs = prefs or {}
     source_metadata = source_metadata or {}
@@ -1959,6 +1988,7 @@ def build_mobile_config(
             "supports_selected_sheets": bool(supports_selected_sheets),
             "supports_as_of": True,
         },
+        "monthly_target_band": monthly_target_band or {},
     }
 
 

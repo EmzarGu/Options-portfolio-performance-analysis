@@ -758,6 +758,7 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "data_freshness",
         "snapshot",
         "monthly_target",
+        "monthly_target_band",
         "open_option_short_preview",
         "issue_summary",
     }
@@ -1384,6 +1385,7 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "request",
         "data_freshness",
         "target_return",
+        "target_floor",
         "target_basis",
         "return_metric",
         "active_cycle",
@@ -1913,6 +1915,7 @@ def test_mobile_config_composes_contract_payload():
             "supports_selected_sheets": True,
             "supports_as_of": True,
         },
+        "monthly_target_band": {},
     }
 
 

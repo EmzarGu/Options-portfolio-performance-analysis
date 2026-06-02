@@ -92,6 +92,11 @@ Purpose: first screen payload. It should be fast enough for app launch and conta
 
 Query parameters: common parameters.
 
+Monthly target band:
+
+- If `target_return` and `target_floor` query parameters are omitted, the backend loads the shared monthly target band from server settings.
+- Explicit query parameters are temporary request overrides only; they do not update the shared setting.
+
 Response:
 
 Premium fields in `items` use explicit accounting names:
@@ -165,6 +170,10 @@ Premium fields in `items` use explicit accounting names:
     "projected_remaining_pnl": 0.0,
     "monthly_target_status": "beat",
     "days_remaining": 18
+  },
+  "monthly_target_band": {
+    "target_floor": 0.015,
+    "target_return": 0.02
   },
   "open_option_short_preview": [
     {
@@ -617,7 +626,8 @@ Query parameters:
 | Name | Type | Required | Rule |
 | --- | --- | --- | --- |
 | common parameters | | | |
-| `target_return` | number | no | Default `0.015`. |
+| `target_return` | number | no | Temporary request override. If omitted, backend uses the shared monthly target band. |
+| `target_floor` | number | no | Temporary request override. If omitted, backend uses the shared monthly target band. |
 | `range` | string | no | Default `ytd`. Allowed: `3m`, `6m`, `ytd`, `1y`, `since_inception`. |
 
 Response:
@@ -646,6 +656,7 @@ Response:
     ]
   },
   "target_return": 0.015,
+  "target_floor": 0.01,
   "target_basis": "avg_capital",
   "return_metric": "return_roac",
   "current_month": {
@@ -1006,6 +1017,13 @@ Response:
     "supports_data_rebuild": true,
     "supports_selected_sheets": true,
     "supports_as_of": true
+  },
+  "monthly_target_band": {
+    "target_floor": 0.015,
+    "target_return": 0.02,
+    "source": "firestore",
+    "updated_at": "2026-06-02T20:35:00+00:00",
+    "updated_by": "user@example.com"
   }
 }
 ```
@@ -1014,6 +1032,44 @@ Nullability:
 
 - Source timestamps may be `null`.
 - `missing_default_sheets` is `[]` when all defaults are available.
+- `monthly_target_band.updated_at` and `updated_by` may be `null` when defaults are used.
+
+## Endpoint 8a: Monthly Target Band Settings
+
+`GET /v1/mobile/settings/monthly-target-band`
+
+Purpose: read the shared monthly target band used by both mobile and web when no request override is supplied.
+
+Response:
+
+```json
+{
+  "target_floor": 0.015,
+  "target_return": 0.02,
+  "source": "firestore",
+  "updated_at": "2026-06-02T20:35:00+00:00",
+  "updated_by": "mobile"
+}
+```
+
+`POST /v1/mobile/settings/monthly-target-band`
+
+Purpose: update the same shared monthly target band used by mobile and web.
+
+Request JSON:
+
+```json
+{
+  "target_floor": 0.015,
+  "target_return": 0.02
+}
+```
+
+Rules:
+
+- Values are rates, not percentages: `0.015` means 1.5%.
+- Both values must be between 0 and 1.
+- If `target_floor` is above `target_return`, the backend clamps the floor to the target return.
 
 Backend source today:
 

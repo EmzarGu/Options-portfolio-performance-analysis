@@ -20,7 +20,7 @@ def _fake_dashboard_data():
         "app": {"revision": "options-roi-web-test", "restart_ts": ""},
         "generated_at": "2026-05-10T12:00:00+00:00",
         "source": {"label": "IBKR Flex", "kind": "ibkr_flex", "row_count": 1, "sheet_counts": []},
-        "web": {"include_unrealized": True, "target_return": 0.015},
+        "web": {"include_unrealized": True, "target_floor": 0.01, "target_return": 0.015},
         "dashboard": {
             "request": {"as_of": "2026-05-10", "include_unrealized": True, "selected_sheets": ["IBKR Flex"]},
             "data_freshness": {
@@ -213,24 +213,61 @@ def test_web_dashboard_monthly_table_uses_projected_roac_band_colors():
 
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(
+        web_dashboard,
+        "load_monthly_target_band",
+        lambda: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
     client = TestClient(web_dashboard.app)
 
     response = client.get("/?target_return_pct=2.25")
 
     assert response.status_code == 200
     assert _embedded_dashboard_data(response.text)["web"]["target_return"] == 0.0225
-    assert f"{web_dashboard.TARGET_RETURN_COOKIE_NAME}=0.022500" in response.headers["set-cookie"]
+    assert "set-cookie" not in response.headers
 
 
-def test_web_dashboard_reads_target_return_from_cookie(monkeypatch):
+def test_web_dashboard_reads_target_band_from_settings(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(
+        web_dashboard,
+        "load_monthly_target_band",
+        lambda: {"target_floor": 0.015, "target_return": 0.02, "source": "test"},
+    )
     client = TestClient(web_dashboard.app)
-    client.cookies.set(web_dashboard.TARGET_RETURN_COOKIE_NAME, "0.03")
 
     response = client.get("/")
 
     assert response.status_code == 200
-    assert _embedded_dashboard_data(response.text)["web"]["target_return"] == 0.03
+    embedded = _embedded_dashboard_data(response.text)
+    assert embedded["web"]["target_floor"] == 0.015
+    assert embedded["web"]["target_return"] == 0.02
+
+
+def test_web_dashboard_updates_shared_target_band(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    saved = {}
+
+    def fake_save(**kwargs):
+        saved.update(kwargs)
+        return {
+            "target_floor": kwargs["target_floor"],
+            "target_return": kwargs["target_return"],
+            "source": kwargs["source"],
+        }
+
+    monkeypatch.setattr(web_dashboard, "save_monthly_target_band", fake_save)
+    client = TestClient(web_dashboard.app)
+
+    response = client.post(
+        "/api/settings/monthly-target-band",
+        json={"target_floor": 0.015, "target_return": 0.02},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["target_floor"] == 0.015
+    assert response.json()["target_return"] == 0.02
+    assert saved["source"] == "web"
 
 
 def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
@@ -243,8 +280,14 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
         calls.append(kwargs)
         payload = _fake_dashboard_data()
         payload["web"]["target_return"] = kwargs["target_return"]
+        payload["web"]["target_floor"] = kwargs["target_floor"]
         return payload
 
+    monkeypatch.setattr(
+        web_dashboard,
+        "load_monthly_target_band",
+        lambda: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
     monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
     monkeypatch.setattr(web_dashboard, "_build_decision_lab_payload", lambda payload, force_refresh=False: _fake_decision_lab_data())
     client = TestClient(web_dashboard.app)
@@ -256,7 +299,7 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
     assert second.status_code == 200
     assert first.json()["web"]["target_return"] == 0.0225
     assert first.json()["decision_lab"]["active_cycle"]["cycle_label"] == "June 2026"
-    assert calls == [{"as_of": None, "include_unrealized": True, "target_return": 0.0225}]
+    assert calls == [{"as_of": None, "include_unrealized": True, "target_return": 0.0225, "target_floor": 0.01}]
     web_dashboard._clear_dashboard_data_cache()
 
 

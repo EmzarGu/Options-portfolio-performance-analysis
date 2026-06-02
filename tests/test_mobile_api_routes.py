@@ -46,7 +46,7 @@ def test_ibkr_import_issue_resolved_only_by_later_success_covering_same_date():
 @pytest.fixture
 def api_harness(monkeypatch):
     mobile_api._clear_context_cache()
-    calls = SimpleNamespace(contexts=[], builders={}, dashboard_target_return=None)
+    calls = SimpleNamespace(contexts=[], builders={}, dashboard_target_return=None, dashboard_target_floor=None)
 
     monkeypatch.setattr(mobile_api.dashboard_app, "SHEET_ID", "sheet-id")
     monkeypatch.setattr(mobile_api.dashboard_app, "SHEETS", ["Options 2024", "Options 2025", "Options 2026"])
@@ -61,6 +61,11 @@ def api_harness(monkeypatch):
         lambda: {"selected_sheets": ["Options 2025"], "include_unrealized": True},
     )
     monkeypatch.setattr(mobile_api, "_dependencies", lambda: SimpleNamespace(name="deps"))
+    monkeypatch.setattr(
+        mobile_api,
+        "load_monthly_target_band",
+        lambda: {"target_floor": 0.0125, "target_return": 0.0175, "source": "test"},
+    )
 
     def build_context(request, dependencies, *, available_sheets=None):
         context = SimpleNamespace(
@@ -71,14 +76,16 @@ def api_harness(monkeypatch):
         calls.contexts.append(context)
         return context
 
-    def build_dashboard(context, *, target_return=0.015):
+    def build_dashboard(context, *, target_return=0.015, target_floor=None):
         calls.builders["dashboard"] = context
         calls.dashboard_target_return = target_return
+        calls.dashboard_target_floor = target_floor
         return {
             "request": _request_payload(context),
             "data_freshness": {},
             "snapshot": {},
             "monthly_target": {"target_return": target_return},
+            "monthly_target_band": {"target_floor": target_floor, "target_return": target_return},
             "open_option_short_preview": [],
             "issue_summary": {},
         }
@@ -109,16 +116,18 @@ def api_harness(monkeypatch):
             "items": [],
         }
 
-    def build_monthly(context, *, target_return=0.015, monthly_range="ytd"):
+    def build_monthly(context, *, target_return=0.015, target_floor=None, monthly_range="ytd"):
         calls.builders["monthly"] = {
             "context": context,
             "target_return": target_return,
+            "target_floor": target_floor,
             "monthly_range": monthly_range,
         }
         return {
             "request": _request_payload(context),
             "data_freshness": {},
             "target_return": target_return,
+            "target_floor": target_floor,
             "target_basis": "average_capital",
             "return_metric": "roac",
             "current_month": {},
@@ -167,6 +176,7 @@ def api_harness(monkeypatch):
         source_kind="local_excel",
         source_name=None,
         supports_selected_sheets=True,
+        monthly_target_band=None,
     ):
         calls.builders["config"] = {
             "available_sheets": available_sheets,
@@ -176,11 +186,13 @@ def api_harness(monkeypatch):
             "source_kind": source_kind,
             "source_name": source_name,
             "supports_selected_sheets": supports_selected_sheets,
+            "monthly_target_band": monthly_target_band,
         }
         return {
             "available_sheets": available_sheets,
             "default_selected_sheets": prefs["selected_sheets"],
             "defaults": {"include_unrealized": prefs["include_unrealized"]},
+            "monthly_target_band": monthly_target_band or {},
             "capabilities": {},
         }
 
@@ -261,6 +273,7 @@ def test_config_route_dispatches_available_sheets_and_defaults(api_harness):
         "available_sheets",
         "default_selected_sheets",
         "defaults",
+        "monthly_target_band",
         "capabilities",
     }
     assert api_harness.calls.builders["config"] == {
@@ -271,6 +284,7 @@ def test_config_route_dispatches_available_sheets_and_defaults(api_harness):
         "source_kind": "google_sheet",
         "source_name": "Google Sheets",
         "supports_selected_sheets": True,
+        "monthly_target_band": {"target_floor": 0.0125, "target_return": 0.0175, "source": "test"},
     }
 
 
@@ -533,6 +547,7 @@ def test_ibkr_config_reports_single_source_partition(api_harness, monkeypatch):
         "source_kind": "ibkr_flex",
         "source_name": "IBKR Flex",
         "supports_selected_sheets": False,
+        "monthly_target_band": {"target_floor": 0.0125, "target_return": 0.0175, "source": "test"},
     }
 
 
@@ -618,6 +633,7 @@ def test_dashboard_route_parses_common_query_and_repeated_selected_sheets(api_ha
         "data_freshness",
         "snapshot",
         "monthly_target",
+        "monthly_target_band",
         "open_option_short_preview",
         "issue_summary",
     }
@@ -818,6 +834,17 @@ def test_dashboard_route_parses_target_return(api_harness):
     assert response.status_code == 200
     assert response.json()["monthly_target"]["target_return"] == pytest.approx(0.02)
     assert api_harness.calls.dashboard_target_return == pytest.approx(0.02)
+    assert api_harness.calls.dashboard_target_floor == pytest.approx(0.0125)
+
+
+def test_dashboard_route_uses_shared_target_band_when_query_omitted(api_harness):
+    response = api_harness.client.get("/v1/mobile/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["monthly_target_band"]["target_floor"] == pytest.approx(0.0125)
+    assert response.json()["monthly_target_band"]["target_return"] == pytest.approx(0.0175)
+    assert api_harness.calls.dashboard_target_floor == pytest.approx(0.0125)
+    assert api_harness.calls.dashboard_target_return == pytest.approx(0.0175)
 
 
 def test_tickers_route_parses_detail_query(api_harness):
@@ -831,13 +858,14 @@ def test_tickers_route_parses_detail_query(api_harness):
 
 
 def test_monthly_route_parses_target_and_range(api_harness):
-    response = api_harness.client.get("/v1/mobile/performance/monthly?target_return=0.02&range=3m")
+    response = api_harness.client.get("/v1/mobile/performance/monthly?target_return=0.02&target_floor=0.015&range=3m")
 
     assert response.status_code == 200
     assert set(response.json()) == {
         "request",
         "data_freshness",
         "target_return",
+        "target_floor",
         "target_basis",
         "return_metric",
         "current_month",
@@ -846,7 +874,32 @@ def test_monthly_route_parses_target_and_range(api_harness):
     }
     builder_call = api_harness.calls.builders["monthly"]
     assert builder_call["target_return"] == pytest.approx(0.02)
+    assert builder_call["target_floor"] == pytest.approx(0.015)
     assert builder_call["monthly_range"] == "3m"
+
+
+def test_mobile_settings_target_band_can_be_updated(api_harness, monkeypatch):
+    saved = {}
+
+    def fake_save(**kwargs):
+        saved.update(kwargs)
+        return {
+            "target_floor": kwargs["target_floor"],
+            "target_return": kwargs["target_return"],
+            "source": kwargs["source"],
+        }
+
+    monkeypatch.setattr(mobile_api, "save_monthly_target_band", fake_save)
+
+    response = api_harness.client.post(
+        "/v1/mobile/settings/monthly-target-band",
+        json={"target_floor": 0.015, "target_return": 0.02},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["target_floor"] == pytest.approx(0.015)
+    assert response.json()["target_return"] == pytest.approx(0.02)
+    assert saved["source"] == "mobile"
 
 
 @pytest.mark.parametrize(

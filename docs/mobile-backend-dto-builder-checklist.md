@@ -28,11 +28,12 @@ Use this as the backend implementation checklist after the Streamlit refactor st
 
 ### Dashboard
 
-Builder: `build_mobile_dashboard(state, request, target_return=0.015)`
+Builder: `build_mobile_dashboard(state, request, target_return=0.015, target_floor=None)`
 
 Sources:
 - `snapshot`: `state.yearly`, `state.yearly_with_unreal`, `state.total_unreal`, `state.option_unreal`, `state.stock_unreal`, `state.unrealized_blocked`, `state.capital_history_affected_years`.
 - `monthly_target`: current month row from `state.monthly_cycles`, denominator from `avg_capital`, current return from RoAC, target P&L from `target_return * avg_capital`.
+- `monthly_target_band`: shared lower/upper monthly target settings loaded by the route layer and passed through to the DTO.
 - `open_option_short_preview`: first 3-5 rows from `build_open_option_short_rows`, sorted by moneyness risk, then projected to the smaller dashboard preview DTO.
 - `issue_summary`: derived from typed issue rows plus price/parse counts.
 
@@ -82,7 +83,7 @@ Avoid leaking Streamlit table columns or display labels. Return ticker summaries
 
 ### Monthly Performance
 
-Builder: `build_mobile_monthly_performance(state, request, target_return=0.015, range="ytd")`
+Builder: `build_mobile_monthly_performance(state, request, target_return=0.015, target_floor=None, range="ytd")`
 
 Sources:
 - `months`: `state.monthly_cycles`.
@@ -92,6 +93,7 @@ Sources:
 Rules:
 - `target_basis` defaults to `avg_capital`.
 - `return_metric` defaults to `return_roac`.
+- `target_return` and `target_floor` come from shared settings unless explicitly overridden by request query parameters.
 - `target_pnl` and `remaining_pnl` are null if `avg_capital` is unavailable.
 - Status values: `beat`, `miss`, `below_target`, `on_track`, `unavailable`.
 

@@ -60,6 +60,10 @@
     "target_pnl": 150.0,
     "target_return": 0.015
   },
+  "monthly_target_band": {
+    "target_floor": null,
+    "target_return": 0.015
+  },
   "open_option_short_preview": [
     {
       "covered_status": "cash_secured",

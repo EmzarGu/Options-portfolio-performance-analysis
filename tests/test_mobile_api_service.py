@@ -111,6 +111,7 @@ def test_mobile_payload_wrappers_emit_expected_top_level_shapes(monkeypatch):
         "data_freshness",
         "snapshot",
         "monthly_target",
+        "monthly_target_band",
         "open_option_short_preview",
         "issue_summary",
     }
@@ -130,6 +131,7 @@ def test_mobile_payload_wrappers_emit_expected_top_level_shapes(monkeypatch):
         "request",
         "data_freshness",
         "target_return",
+        "target_floor",
         "target_basis",
         "return_metric",
         "active_cycle",

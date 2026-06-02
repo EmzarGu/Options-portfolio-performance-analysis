@@ -137,11 +137,13 @@ def build_mobile_dashboard_payload(
     context: MobilePayloadContext,
     *,
     target_return: float = 0.015,
+    target_floor: Optional[float] = None,
 ) -> Dict[str, Any]:
     return build_mobile_dashboard(
         context.state,
         context.request,
         target_return=target_return,
+        target_floor=target_floor,
         available_sheets=context.available_sheets,
         source_metadata=context.source_metadata,
     )
@@ -192,12 +194,14 @@ def build_mobile_monthly_payload(
     context: MobilePayloadContext,
     *,
     target_return: float = 0.015,
+    target_floor: Optional[float] = None,
     monthly_range: str = "ytd",
 ) -> Dict[str, Any]:
     return build_mobile_monthly_performance(
         context.state,
         context.request,
         target_return=target_return,
+        target_floor=target_floor,
         monthly_range=monthly_range,
         available_sheets=context.available_sheets,
         source_metadata=context.source_metadata,
