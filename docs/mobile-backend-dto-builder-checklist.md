@@ -37,7 +37,7 @@ Sources:
 - `issue_summary`: derived from typed issue rows plus price/parse counts.
 
 Do not reuse `serialize_snapshot` directly as the response shape; it is close but not contract-compatible.
-Do not return the full open-short row shape in dashboard previews; omit fields that only belong to `/open-option-shorts`, such as `notional_at_strike`, `premium_collected`, and `missing_price`.
+Do not return the full open-short row shape in dashboard previews; omit fields that only belong to `/open-option-shorts`, such as `notional_at_strike`, `accounting_open_premium`, `strategy_premium_collected`, and `missing_price`.
 
 ### Open Option Shorts
 
@@ -45,7 +45,7 @@ Builder: `build_open_option_short_rows(state, sort="moneyness_risk", limit=None)
 
 Sources:
 - Start from `state.open_options` enriched by `build_open_option_shorts_frame(state.open_options, state.stock_prices or {})`.
-- Required additions: stable `id`, `moneyness`, `moneyness_band`, `notional_at_strike`, `premium_collected`, `missing_price`, `risk_label`.
+- Required additions: stable `id`, `moneyness`, `moneyness_band`, `notional_at_strike`, `accounting_open_premium`, `realized_premium_already_booked`, `strategy_premium_collected`, `missing_price`, `risk_label`.
 - Moneyness formula:
   - put: `(strike - current_price) / strike`
   - call: `(current_price - strike) / strike`

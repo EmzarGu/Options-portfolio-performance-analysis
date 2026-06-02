@@ -736,7 +736,7 @@ function openShortProjectedPnl(row){
   const strike = numeric(row.strike);
   const current = numeric(row.current_price);
   const qty = Math.abs(numeric(row.quantity) || 0);
-  const premium = numeric(row.display_premium_collected ?? row.roll_adjusted_premium_collected ?? row.premium_collected) || 0;
+  const premium = numeric(row.accounting_open_premium) || 0;
   if (strike === null || current === null || !qty) return premium;
   const type = String(row.option_type || "").toLowerCase();
   const intrinsic = type.includes("call")
@@ -754,7 +754,8 @@ function openShortColumns(){
     {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
     {key:"moneyness",label:"Moneyness",format:fmtPct,num:true,className:moneynessCls},
     {key:"quantity",label:"Qty",num:true},
-    {key:"display_premium_collected",label:"Premium",value:r=>numeric(r.display_premium_collected ?? r.roll_adjusted_premium_collected ?? r.premium_collected) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"accounting_open_premium",label:"Open premium",value:r=>numeric(r.accounting_open_premium) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"strategy_premium_collected",label:"Strategy premium",value:r=>numeric(r.strategy_premium_collected) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
     {key:"projected_pnl",label:"Projected P&L",value:openShortProjectedPnl,format:v=>fmtMoney(v,2),num:true,className:cls},
     {key:"covered_status",label:"Backing",format:labelize}
   ];
@@ -778,8 +779,8 @@ function riskCards(rows, limit=null){
   if (!top.length) return `<div class="panel muted">No open shorts match the filters.</div>`;
   return `<div class="risk-grid">${top.map(r => {
     const tone = riskTone(r);
-    const premium = numeric(r.display_premium_collected ?? r.roll_adjusted_premium_collected ?? r.premium_collected) || 0;
-    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${safe(riskPill(r))}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Premium ${safe(fmtMoney(premium,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
+    const premium = numeric(r.strategy_premium_collected) || 0;
+    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${safe(riskPill(r))}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Strategy premium ${safe(fmtMoney(premium,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
   }).join("")}</div>`;
 }
 function monthlyRows(){
@@ -835,7 +836,7 @@ function futureCycleRows(){
         open_ticker_count: active.open_ticker_count ?? row.open_ticker_count ?? row.open_option_count,
         open_option_count: active.open_contract_count ?? row.open_option_count,
         realized_cycle_pnl: active.realized_cycle_pnl,
-        open_premium_collected: active.open_premium_collected ?? active.premium_component,
+        open_premium_collected: active.open_premium_collected,
         stock_unrealized_pnl: active.stock_unrealized_pnl,
         itm_call_stock_pnl: active.itm_call_stock_pnl,
         itm_put_unrealized_loss: active.itm_put_unrealized_loss,
@@ -884,7 +885,7 @@ function decisionActiveCycle(){
 function activeCycleWaterfall(c){
   const parts = [
     ["Realized cycle P&L", c.realized_cycle_pnl],
-    ["Open premium collected", c.open_premium_collected ?? c.premium_component],
+    ["Open premium collected", c.open_premium_collected],
     ["ITM call stock P&L", c.itm_call_stock_pnl],
     ["ITM put assignment P&L", c.itm_put_unrealized_loss],
     ["Projected cycle P&L", c.projected_pnl ?? c.projected_cycle_pnl],

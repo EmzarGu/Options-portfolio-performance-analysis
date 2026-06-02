@@ -97,7 +97,7 @@ def _fake_decision_lab_data():
             "open_ticker_count": 2,
             "open_contract_count": 2,
             "realized_cycle_pnl": 0.0,
-            "premium_component": 100.0,
+            "open_premium_collected": 100.0,
             "itm_put_unrealized_loss": 0.0,
             "projected_pnl": 100.0,
             "target_pnl": 200.0,

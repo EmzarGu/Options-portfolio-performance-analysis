@@ -456,7 +456,9 @@ def _current_state(
                 "expiry": row.get("expiration"),
                 "dte": _num(row.get("days_to_expiration")),
                 "quantity": _num(row.get("quantity")),
-                "premium": _open_short_premium(row),
+                "accounting_open_premium": _open_short_accounting_premium(row),
+                "realized_premium_already_booked": _open_short_booked_premium(row),
+                "strategy_premium_collected": _open_short_strategy_premium(row),
             }
         )
     return {
@@ -485,7 +487,6 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         out = dict(canonical)
         target_return = _num(out.get("target_return")) or _num((payload.get("web") or {}).get("target_return")) or 0.02
         target_floor = _num((payload.get("web") or {}).get("target_floor")) or _num(out.get("target_floor")) or 0.01
-        out["premium_component"] = _num(out.get("open_premium_collected")) or 0.0
         out["projected_pnl"] = _num(out.get("projected_cycle_pnl"))
         out["target_return"] = target_return
         out["target_floor"] = target_floor
@@ -520,14 +521,14 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
     cycle_puts = [row for row in cycle_rows if _option_type(row).startswith("put")]
     portfolio_put_exposure = _put_exposure(portfolio_puts)
     cycle_put_exposure = _put_exposure(cycle_puts)
-    premium_component = _first_num(
+    open_premium_collected = _first_num(
         [
             cycle_month_row.get("open_expiring_incremental_premium") if cycle_month_row else None,
             cycle_month_row.get("open_expiring_option_premium") if cycle_month_row else None,
         ]
     )
-    if premium_component is None:
-        premium_component = _sum([_open_short_premium(row) for row in cycle_rows])
+    if open_premium_collected is None:
+        open_premium_collected = _sum([_open_short_accounting_premium(row) for row in cycle_rows])
     realized_cycle_pnl = _first_num(
         [
             cycle_month_row.get("realized_month_pnl") if cycle_month_row else None,
@@ -544,7 +545,7 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
     itm_call_stock_pnl = _itm_call_assignment_stock_pnl(cycle_rows, _inventory_rows(payload))
     projected_pnl = _num(cycle_month_row.get("projected_month_pnl")) if cycle_month_row else None
     if projected_pnl is None:
-        projected_pnl = realized_cycle_pnl + premium_component
+        projected_pnl = realized_cycle_pnl + open_premium_collected
     projected_pnl = projected_pnl + itm_put_unrealized_loss + itm_call_stock_pnl
     covered_call_upside_foregone = _sum(
         [
@@ -575,7 +576,7 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         "open_ticker_count": len({str(row.get("ticker") or "").upper() for row in cycle_rows if row.get("ticker")}),
         "open_contract_count": int(_sum([abs(_num(row.get("quantity")) or 0) for row in cycle_rows])),
         "realized_cycle_pnl": realized_cycle_pnl,
-        "premium_component": premium_component,
+        "open_premium_collected": open_premium_collected,
         "stock_unrealized_pnl": stock_unrealized_pnl,
         "itm_call_stock_pnl": itm_call_stock_pnl,
         "itm_put_unrealized_loss": itm_put_unrealized_loss,
@@ -903,13 +904,33 @@ def _option_type(row: dict[str, Any]) -> str:
     return str(row.get("option_type") or row.get("put_call") or "").lower()
 
 
-def _open_short_premium(row: dict[str, Any]) -> float:
-    premium = _num(row.get("display_premium_collected"))
-    if premium is None:
-        premium = _num(row.get("roll_adjusted_premium_collected"))
-    if premium is None:
-        premium = _num(row.get("premium_collected"))
-    return premium or 0
+def _open_short_accounting_premium(row: dict[str, Any]) -> float:
+    premium = _num(row.get("accounting_open_premium"))
+    if premium is not None:
+        return premium
+    open_price = _num(row.get("open_price"))
+    quantity = abs(_num(row.get("quantity")) or _num(row.get("qty")) or 0)
+    if open_price is None or not quantity:
+        return 0.0
+    return open_price * quantity * 100
+
+
+def _open_short_strategy_premium(row: dict[str, Any]) -> float:
+    premium = _num(row.get("strategy_premium_collected"))
+    if premium is not None:
+        return premium
+    strategy_open_price = _num(row.get("strategy_open_price"))
+    quantity = abs(_num(row.get("quantity")) or _num(row.get("qty")) or 0)
+    if strategy_open_price is not None and quantity:
+        return strategy_open_price * quantity * 100
+    return _open_short_accounting_premium(row)
+
+
+def _open_short_booked_premium(row: dict[str, Any]) -> float:
+    premium = _num(row.get("realized_premium_already_booked"))
+    if premium is not None:
+        return premium
+    return _open_short_strategy_premium(row) - _open_short_accounting_premium(row)
 
 
 def _open_short_assignment_gap(row: dict[str, Any]) -> float:

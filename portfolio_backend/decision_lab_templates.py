@@ -94,7 +94,7 @@ function cycleBlock(data){
   const c = data.active_cycle || {};
   const parts = [
     ["Realized cycle P&L", c.realized_cycle_pnl],
-    ["Open premium collected", c.premium_component],
+    ["Open premium collected", c.open_premium_collected],
     ["ITM call stock P&L", c.itm_call_stock_pnl],
     ["ITM put assignment P&L", c.itm_put_unrealized_loss],
     ["Projected cycle P&L", c.projected_pnl],

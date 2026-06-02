@@ -94,6 +94,12 @@ Query parameters: common parameters.
 
 Response:
 
+Premium fields in `items` use explicit accounting names:
+
+- `accounting_open_premium`: open option premium not already recognized in realized P&L. This is the only open-short premium value that may feed projected P&L.
+- `realized_premium_already_booked`: strategy premium already recognized in realized P&L, usually from prior roll accounting.
+- `strategy_premium_collected`: total strategy premium context for the open lot: `accounting_open_premium + realized_premium_already_booked`.
+
 ```json
 {
   "request": {
@@ -294,11 +300,11 @@ Response:
       "days_to_expiration": 21,
       "opened": "2026-04-19",
       "open_price": 6.05,
-      "roll_adjusted_open_price": 6.05,
+      "strategy_open_price": 6.05,
       "notional_at_strike": 51000.0,
-      "premium_collected": 605.0,
-      "roll_adjusted_premium_collected": 605.0,
-      "display_premium_collected": 605.0,
+      "accounting_open_premium": 605.0,
+      "realized_premium_already_booked": 0.0,
+      "strategy_premium_collected": 605.0,
       "covered_status": "covered",
       "risk_label": "In the money",
       "missing_price": false
@@ -316,11 +322,11 @@ Response:
       "days_to_expiration": 7,
       "opened": "2026-04-12",
       "open_price": 1.72,
-      "roll_adjusted_open_price": 1.72,
+      "strategy_open_price": 1.72,
       "notional_at_strike": 26000.0,
-      "premium_collected": 344.0,
-      "roll_adjusted_premium_collected": 344.0,
-      "display_premium_collected": 344.0,
+      "accounting_open_premium": 344.0,
+      "realized_premium_already_booked": 0.0,
+      "strategy_premium_collected": 344.0,
       "covered_status": "cash_secured",
       "risk_label": "Expires this week",
       "missing_price": false
@@ -453,7 +459,9 @@ Response:
       "opened": "2026-04-18",
       "open_price": 5.8,
       "notional_at_strike": 18000.0,
-      "premium_collected": 580.0,
+      "accounting_open_premium": 580.0,
+      "realized_premium_already_booked": 0.0,
+      "strategy_premium_collected": 580.0,
       "covered_status": "cash_secured",
       "risk_label": "Near strike",
       "missing_price": false

@@ -421,9 +421,12 @@ def test_open_option_short_rows_emit_mobile_contract_shape():
     assert put_rows[0]["quantity"] == 1
     assert put_rows[0]["days_to_expiration"] == 14
     assert put_rows[0]["notional_at_strike"] == pytest.approx(10000.0)
-    assert put_rows[0]["premium_collected"] == pytest.approx(200.0)
-    assert put_rows[0]["roll_adjusted_premium_collected"] == pytest.approx(200.0)
-    assert put_rows[0]["display_premium_collected"] == pytest.approx(200.0)
+    assert put_rows[0]["accounting_open_premium"] == pytest.approx(200.0)
+    assert put_rows[0]["realized_premium_already_booked"] == pytest.approx(0.0)
+    assert put_rows[0]["strategy_premium_collected"] == pytest.approx(200.0)
+    assert "premium_collected" not in put_rows[0]
+    assert "roll_adjusted_premium_collected" not in put_rows[0]
+    assert "display_premium_collected" not in put_rows[0]
     assert put_rows[0]["covered_status"] == "cash_secured"
     assert put_rows[0]["missing_price"] is False
 
@@ -444,6 +447,35 @@ def test_open_option_short_rows_emit_mobile_contract_shape():
     assert clear["moneyness_band"] == "clear"
     assert clear["quantity"] == 2
     assert clear["notional_at_strike"] == pytest.approx(20000.0)
+
+
+def test_open_option_short_rows_split_accounting_and_strategy_premium():
+    state = _mobile_state()
+    state.open_options = pd.DataFrame(
+        [
+            {
+                "ticker": "ROLL",
+                "type": "Call",
+                "strike": 100.0,
+                "qty": 1,
+                "expiration": pd.Timestamp("2026-06-19"),
+                "trans_date": pd.Timestamp("2026-05-01"),
+                "open_price": 0.0,
+                "roll_adjusted_open_price": 8.27,
+            }
+        ]
+    )
+    state.stock_prices = {"ROLL": 110.0}
+    state.inv_df = pd.DataFrame()
+
+    row = build_open_option_short_rows(state)[0]
+
+    assert row["accounting_open_premium"] == pytest.approx(0.0)
+    assert row["realized_premium_already_booked"] == pytest.approx(827.0)
+    assert row["strategy_premium_collected"] == pytest.approx(827.0)
+    assert "premium_collected" not in row
+    assert "roll_adjusted_premium_collected" not in row
+    assert "display_premium_collected" not in row
 
 
 def test_open_option_short_rows_support_sort_and_limit():
@@ -490,9 +522,12 @@ def test_mobile_open_option_shorts_composes_contract_payload():
     ]
     assert [row["ticker"] for row in payload["items"]] == ["PUTT", "PUTT", "CALL"]
     assert "notional_at_strike" in payload["items"][0]
-    assert "premium_collected" in payload["items"][0]
-    assert "roll_adjusted_premium_collected" in payload["items"][0]
-    assert "display_premium_collected" in payload["items"][0]
+    assert "accounting_open_premium" in payload["items"][0]
+    assert "realized_premium_already_booked" in payload["items"][0]
+    assert "strategy_premium_collected" in payload["items"][0]
+    assert "premium_collected" not in payload["items"][0]
+    assert "roll_adjusted_premium_collected" not in payload["items"][0]
+    assert "display_premium_collected" not in payload["items"][0]
     assert "missing_price" in payload["items"][0]
 
 

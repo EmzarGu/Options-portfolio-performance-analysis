@@ -392,11 +392,11 @@ def _covered_call_baseline(
     expiry = str(open_option.get("expiry") or "")[:10]
     cost = _num(state.get("cost_basis"))
     close_cost = _option_close_cost(current_contract)
-    premium_collected = _num(open_option.get("premium")) or 0
+    strategy_premium = _num(open_option.get("strategy_premium_collected")) or 0
     contract_qty = _option_contract_count(open_option, state)
     if current_strike is None or cost is None:
         return None
-    exit_pnl = (current_strike - cost) * 100 * contract_qty + premium_collected
+    exit_pnl = (current_strike - cost) * 100 * contract_qty + strategy_premium
     capped_upside = _capped_upside(current_strike, _num(state.get("current_price")), contract_qty)
     delta = abs(_num(current_contract.get("delta")) or 0) if current_contract and current_contract.get("delta") is not None else None
     outcomes = _covered_call_lifecycle_outcomes(
@@ -420,7 +420,7 @@ def _covered_call_baseline(
         "strike": current_strike,
         "expiry": expiry,
         "dte": _days_until(expiry) if expiry else open_option.get("dte"),
-        "premium": premium_collected,
+        "premium": strategy_premium,
         "delta": delta,
         "iv": _num(current_contract.get("volatility")) if current_contract and current_contract.get("volatility") is not None else None,
         "liquidity": _contract_liquidity(current_contract) if current_contract else "current",
@@ -473,7 +473,7 @@ def _covered_call_roll_candidate(
         return None
     net_credit = (new_credit - close_cost) * 100 * contract_qty
     extra_upside = max(new_strike - current_strike, 0) * 100 * contract_qty
-    baseline_exit = (current_strike - cost) * 100 * contract_qty + (_num(open_option.get("premium")) or 0)
+    baseline_exit = (current_strike - cost) * 100 * contract_qty + (_num(open_option.get("strategy_premium_collected")) or 0)
     exit_pnl = baseline_exit + extra_upside + net_credit
     incremental_exit = exit_pnl - baseline_exit
     dte_added = max((_days_until(new_expiry) or 0) - (_days_until(current_expiry) or 0), 0)
@@ -564,7 +564,7 @@ def _short_put_baseline(
     open_option = (state.get("open_options") or [{}])[0]
     strike = _num(open_option.get("strike"))
     expiry = str(open_option.get("expiry") or "")[:10]
-    premium_collected = _num(open_option.get("premium")) or 0
+    strategy_premium = _num(open_option.get("strategy_premium_collected")) or 0
     contract_qty = _option_contract_count(open_option, state)
     current_price = _num(state.get("current_price")) or _num(current_contract.get("underlying_price")) if current_contract else _num(state.get("current_price"))
     delta = abs(_num(current_contract.get("delta")) or 0) if current_contract and current_contract.get("delta") is not None else None
@@ -588,14 +588,14 @@ def _short_put_baseline(
         "strike": strike,
         "expiry": expiry,
         "dte": _days_until(expiry) if expiry else open_option.get("dte"),
-        "premium": premium_collected,
+        "premium": strategy_premium,
         "delta": delta,
         "iv": _num(current_contract.get("volatility")) if current_contract and current_contract.get("volatility") is not None else None,
         "liquidity": _contract_liquidity(current_contract) if current_contract else "current",
         "tradeability": "current",
         "score": 65.0,
         "explanation": "Keep current short put.",
-        "exit_pnl": premium_collected,
+        "exit_pnl": strategy_premium,
         "upside_left": None,
         "upside_foregone": 0,
         "roll_close_cost": _option_close_cost(current_contract) * 100 * contract_qty if _option_close_cost(current_contract) is not None else None,

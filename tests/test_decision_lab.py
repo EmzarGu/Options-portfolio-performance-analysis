@@ -70,7 +70,8 @@ def test_capped_holding_and_call_create_one_ticker_situation():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 46.15,
-            "display_premium_collected": 121.0,
+            "accounting_open_premium": 121.0,
+            "strategy_premium_collected": 121.0,
         }
     ]
     payload["tickers"]["items"] = [{"ticker": "YETI", "total_pnl": 250.0, "realized_options_pnl": 395.0, "unrealized_pnl": 250.0}]
@@ -103,7 +104,8 @@ def test_active_cycle_promotes_next_open_expiry_and_splits_exposure():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 31.0,
-            "display_premium_collected": 230.0,
+            "accounting_open_premium": 230.0,
+            "strategy_premium_collected": 230.0,
         },
         {
             "ticker": "ATI",
@@ -113,7 +115,8 @@ def test_active_cycle_promotes_next_open_expiry_and_splits_exposure():
             "days_to_expiration": 53,
             "quantity": -1,
             "current_price": 140.0,
-            "display_premium_collected": 286.0,
+            "accounting_open_premium": 286.0,
+            "strategy_premium_collected": 286.0,
         },
     ]
 
@@ -137,7 +140,8 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 110.0,
-            "display_premium_collected": 100.0,
+            "accounting_open_premium": 100.0,
+            "strategy_premium_collected": 100.0,
         },
         {
             "ticker": "BEN",
@@ -147,7 +151,8 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 31.0,
-            "display_premium_collected": 200.0,
+            "accounting_open_premium": 200.0,
+            "strategy_premium_collected": 200.0,
         },
     ]
     payload["monthly"]["future_months"] = [
@@ -163,7 +168,7 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
 
     assert cycle["projected_pnl"] == pytest.approx(300.0)
     assert "open_option_net" not in cycle
-    assert cycle["premium_component"] == pytest.approx(300.0)
+    assert cycle["open_premium_collected"] == pytest.approx(300.0)
     assert cycle["itm_put_unrealized_loss"] == pytest.approx(0.0)
     assert cycle["covered_call_upside_foregone"] == pytest.approx(-500.0)
     assert cycle["target_base"] == pytest.approx(300000.0)
@@ -186,7 +191,8 @@ def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row(
             "days_to_expiration": 17,
             "quantity": -1,
             "current_price": 31.0,
-            "display_premium_collected": 200.0,
+            "accounting_open_premium": 200.0,
+            "strategy_premium_collected": 200.0,
         },
     ]
     payload["monthly"]["months"] = [
@@ -215,13 +221,14 @@ def test_active_cycle_excludes_broad_stock_unrealized_from_projected_pnl():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 31.0,
-            "display_premium_collected": 200.0,
+            "accounting_open_premium": 200.0,
+            "strategy_premium_collected": 200.0,
         },
     ]
 
     cycle = build_decision_lab_data(payload)["active_cycle"]
 
-    assert cycle["premium_component"] == pytest.approx(200.0)
+    assert cycle["open_premium_collected"] == pytest.approx(200.0)
     assert cycle["stock_unrealized_pnl"] == pytest.approx(150.0)
     assert cycle["projected_pnl"] == pytest.approx(200.0)
 
@@ -242,7 +249,8 @@ def test_active_cycle_adds_only_itm_option_assignment_components_to_projected_pn
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 80.0,
-            "display_premium_collected": 200.0,
+            "accounting_open_premium": 200.0,
+            "strategy_premium_collected": 200.0,
         },
         {
             "ticker": "CALL",
@@ -252,7 +260,8 @@ def test_active_cycle_adds_only_itm_option_assignment_components_to_projected_pn
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 60.0,
-            "display_premium_collected": 100.0,
+            "accounting_open_premium": 100.0,
+            "strategy_premium_collected": 100.0,
         },
         {
             "ticker": "OTMC",
@@ -262,13 +271,14 @@ def test_active_cycle_adds_only_itm_option_assignment_components_to_projected_pn
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 60.0,
-            "display_premium_collected": 50.0,
+            "accounting_open_premium": 50.0,
+            "strategy_premium_collected": 50.0,
         },
     ]
 
     cycle = build_decision_lab_data(payload)["active_cycle"]
 
-    assert cycle["premium_component"] == pytest.approx(350.0)
+    assert cycle["open_premium_collected"] == pytest.approx(350.0)
     assert cycle["itm_put_unrealized_loss"] == pytest.approx(-2000.0)
     assert cycle["itm_call_stock_pnl"] == pytest.approx(500.0)
     assert cycle["projected_pnl"] == pytest.approx(-1150.0)
@@ -481,7 +491,8 @@ def test_covered_call_rolls_are_scored_as_packages_not_new_leg_only():
             "days_to_expiration": 23,
             "quantity": -1,
             "current_price": 115.0,
-            "display_premium_collected": 38.0,
+            "accounting_open_premium": 38.0,
+            "strategy_premium_collected": 38.0,
         }
     ]
     payload["tickers"]["items"] = [{"ticker": "CROX", "total_pnl": 7049.0, "realized_options_pnl": 5049.0, "unrealized_pnl": 2000.0}]
@@ -527,7 +538,8 @@ def test_recovery_call_rolls_compare_expected_value_not_only_higher_strikes():
             "days_to_expiration": 22,
             "quantity": -1,
             "current_price": 110.0,
-            "display_premium_collected": 288.0,
+            "accounting_open_premium": 288.0,
+            "strategy_premium_collected": 288.0,
         }
     ]
     payload["tickers"]["items"] = [{"ticker": "FUTU", "total_pnl": -5269.0, "realized_options_pnl": 218.0, "unrealized_pnl": -3745.0}]
@@ -565,7 +577,8 @@ def test_covered_call_candidate_economics_scale_with_contract_count():
             "days_to_expiration": 23,
             "quantity": -2,
             "current_price": 108.25,
-            "display_premium_collected": 147.0,
+            "accounting_open_premium": 147.0,
+            "strategy_premium_collected": 147.0,
         }
     ]
     payload["tickers"]["items"] = [{"ticker": "CCJ", "total_pnl": 2566.0, "realized_options_pnl": 1916.0, "unrealized_pnl": 650.0}]
@@ -605,7 +618,8 @@ def test_far_otm_short_put_can_generate_roll_up_candidate():
             "quantity": -1,
             "current_price": 140.0,
             "moneyness": -0.40,
-            "display_premium_collected": 90.0,
+            "accounting_open_premium": 90.0,
+            "strategy_premium_collected": 90.0,
         }
     ]
     payload["tickers"]["items"] = [{"ticker": "QCOM", "total_pnl": 90.0, "realized_options_pnl": 0.0, "unrealized_pnl": 0.0}]
@@ -641,7 +655,8 @@ def test_near_strike_short_put_rolls_down_not_up():
             "quantity": -4,
             "current_price": 80.75,
             "moneyness": 0.04,
-            "display_premium_collected": 516.0,
+            "accounting_open_premium": 516.0,
+            "strategy_premium_collected": 516.0,
         }
     ]
     payload["tickers"]["items"] = [{"ticker": "IBKR", "total_pnl": 3577.0, "realized_options_pnl": 2161.0, "unrealized_pnl": 516.0}]

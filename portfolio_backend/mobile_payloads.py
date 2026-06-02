@@ -2131,9 +2131,9 @@ def build_open_option_short_rows(state, *, sort: str = "moneyness_risk", limit: 
         expiration = _date_string(row.get("expiration"))
         opened = _date_string(row.get("trans_date"))
         open_price = _number(row.get("open_price"))
-        roll_adjusted_open_price = _number(row.get("roll_adjusted_open_price"))
-        if roll_adjusted_open_price is None:
-            roll_adjusted_open_price = open_price
+        strategy_open_price = _number(row.get("roll_adjusted_open_price"))
+        if strategy_open_price is None:
+            strategy_open_price = open_price
         current_price = _number(row.get("current_price"))
         moneyness = _number(row.get("moneyness_pct"))
         missing_price = current_price is None
@@ -2143,15 +2143,15 @@ def build_open_option_short_rows(state, *, sort: str = "moneyness_risk", limit: 
         notional_at_strike = None
         if strike is not None and quantity is not None:
             notional_at_strike = abs(quantity) * strike * CONTRACT_MULTIPLIER
-        premium_collected = None
+        accounting_open_premium = None
         if open_price is not None and quantity is not None:
-            premium_collected = abs(quantity) * open_price * CONTRACT_MULTIPLIER
-        roll_adjusted_premium_collected = None
-        if roll_adjusted_open_price is not None and quantity is not None:
-            roll_adjusted_premium_collected = abs(quantity) * roll_adjusted_open_price * CONTRACT_MULTIPLIER
-        display_premium_collected = roll_adjusted_premium_collected
-        if display_premium_collected is None:
-            display_premium_collected = premium_collected
+            accounting_open_premium = abs(quantity) * open_price * CONTRACT_MULTIPLIER
+        strategy_premium_collected = None
+        if strategy_open_price is not None and quantity is not None:
+            strategy_premium_collected = abs(quantity) * strategy_open_price * CONTRACT_MULTIPLIER
+        realized_premium_already_booked = None
+        if accounting_open_premium is not None and strategy_premium_collected is not None:
+            realized_premium_already_booked = strategy_premium_collected - accounting_open_premium
 
         rows.append(
             {
@@ -2167,11 +2167,11 @@ def build_open_option_short_rows(state, *, sort: str = "moneyness_risk", limit: 
                 "days_to_expiration": json_safe(_days_to_expiration(row.get("expiration"), as_of)),
                 "opened": opened,
                 "open_price": json_safe(open_price),
-                "roll_adjusted_open_price": json_safe(roll_adjusted_open_price),
+                "strategy_open_price": json_safe(strategy_open_price),
                 "notional_at_strike": json_safe(notional_at_strike),
-                "premium_collected": json_safe(premium_collected),
-                "roll_adjusted_premium_collected": json_safe(roll_adjusted_premium_collected),
-                "display_premium_collected": json_safe(display_premium_collected),
+                "accounting_open_premium": json_safe(accounting_open_premium),
+                "realized_premium_already_booked": json_safe(realized_premium_already_booked),
+                "strategy_premium_collected": json_safe(strategy_premium_collected),
                 "covered_status": _covered_status(row, inventory),
                 "risk_label": risk_label_for_moneyness(moneyness, missing_price),
                 "missing_price": missing_price,
