@@ -73,13 +73,6 @@ through the corresponding `*_STORE` environment variable.
 - Active-cycle projection metrics are centralized in
   `portfolio_backend/cycle_projection.py`; web, Decision Lab, and mobile payloads
   should consume that canonical output instead of recalculating cycle P&L.
-- Open-option premium math is centralized in
-  `portfolio_backend/option_accounting.py`; consumers should use it rather than
-  summing raw option columns directly.
-- Current unrealized option premium uses the same effective open-premium basis
-  as cycle projections. Rolled replacement premiums remain open premium until
-  their own close/expiration/assignment event, while the old leg close realizes
-  only the closed leg.
 - Dashboard routes should avoid importing Streamlit-only helpers unless they are
   already isolated behind service/dependency functions.
 
