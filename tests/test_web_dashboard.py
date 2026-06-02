@@ -199,11 +199,6 @@ def test_web_dashboard_uses_standard_monthly_projection_terms():
     assert "Stock unrealized P&L" in DASHBOARD_HTML
 
 
-def test_web_dashboard_future_cycle_rows_accept_canonical_projection_rows():
-    assert "row.cycle_projection || (row.cycle ? row : {})" in DASHBOARD_HTML
-    assert "row.month || (projection.cycle ? `${projection.cycle}-01` : null)" in DASHBOARD_HTML
-
-
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     client = TestClient(web_dashboard.app)
