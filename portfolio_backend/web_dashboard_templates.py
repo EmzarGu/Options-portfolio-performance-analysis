@@ -819,11 +819,12 @@ function futureCycleRows(){
   const activeMonth = active.cycle ? fmtDate(`${active.cycle}-01`).slice(0,7) : null;
   const sourceRows = (data.monthly.cycle_months && data.monthly.cycle_months.length) ? data.monthly.cycle_months : (data.monthly.future_months || []);
   return sourceRows.map(row => {
-    const month = fmtDate(row.month);
-    const projection = row.cycle_projection || {};
+    const projection = row.cycle_projection || (row.cycle ? row : {});
+    const monthSource = row.month || (projection.cycle ? `${projection.cycle}-01` : null);
+    const month = fmtDate(monthSource);
     if (projection.cycle) {
       return {
-        month: row.month,
+        month: monthSource,
         open_ticker_count: projection.open_ticker_count ?? row.open_ticker_count ?? row.open_option_count,
         open_option_count: projection.open_contract_count ?? row.open_option_count,
         realized_cycle_pnl: projection.realized_cycle_pnl,

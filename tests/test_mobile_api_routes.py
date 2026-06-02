@@ -549,6 +549,7 @@ def test_ibkr_routes_build_from_persisted_local_json_store(tmp_path, monkeypatch
     monkeypatch.setenv("IBKR_REPORT_SOURCE", "local_json")
     monkeypatch.setenv("IBKR_IMPORT_JSON_DIR", str(tmp_path / "firestore_sim"))
     monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "1503002")
+    monkeypatch.setattr(mobile_api, "_refresh_source_marker", lambda timing_recorder=None: None)
     monkeypatch.setattr(mobile_api.dashboard_app, "load_prefs", lambda: {"selected_sheets": ["Options 2026"], "include_unrealized": True})
 
     def fetch_price_history(tickers, start, end):
