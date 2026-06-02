@@ -222,8 +222,7 @@ def _build_projection(
         ]
     )
     if premium is None:
-        use_effective_premium = not (cycle_month_row and realized_cycle_pnl)
-        premium = sum(_open_option_premium(row, effective=use_effective_premium) for row in cycle_rows)
+        premium = sum(_open_option_premium(row) for row in cycle_rows)
 
     projected_hint = number(cycle_month_row.get("projected_month_pnl")) if cycle_month_row else None
     if projected_hint is None:
@@ -370,19 +369,11 @@ def _option_type(row: dict[str, Any]) -> str:
     return str(row.get("option_type") or row.get("type") or row.get("put_call") or "").lower()
 
 
-def _open_option_premium(row: dict[str, Any], *, effective: bool = True) -> float:
-    explicit_values = []
-    if effective:
-        explicit_values.extend([row.get("display_premium_collected"), row.get("roll_adjusted_premium_collected")])
-    explicit_values.append(row.get("premium_collected"))
-    explicit = _first_number(explicit_values)
+def _open_option_premium(row: dict[str, Any]) -> float:
+    explicit = _first_number([row.get("premium_collected")])
     if explicit is not None:
         return explicit
-    price_values = []
-    if effective:
-        price_values.append(row.get("roll_adjusted_open_price"))
-    price_values.extend([row.get("open_price"), row.get("trade_price")])
-    price = _first_number(price_values)
+    price = _first_number([row.get("open_price"), row.get("trade_price")])
     qty = abs(number(row.get("quantity") if row.get("quantity") is not None else row.get("qty")) or 0.0)
     return (price or 0.0) * qty * CONTRACT_MULTIPLIER
 

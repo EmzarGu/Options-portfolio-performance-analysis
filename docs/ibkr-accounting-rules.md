@@ -211,6 +211,11 @@ Recommended defaults:
     quantity is included. Manual stock sells with no assignment-derived
     inventory are treated as unrelated portfolio activity and excluded from the
     wheel dashboard.
+14. Monthly/current-cycle projections use only real unrecognized open premium:
+    `premium_collected`, `open_price`, or equivalent raw trade price.
+    Roll-adjusted display values are audit/reconciliation context for rolled
+    open lots and must not be counted as fresh open premium, projected P&L,
+    current unrealized P&L, or future cycle P&L.
 
 ## Open Decisions
 

@@ -376,7 +376,7 @@ def _open_expiring_incremental_premium(
     state,
     month_end: Optional[pd.Timestamp],
     expiring_options: Optional[pd.DataFrame] = None,
-    price_column: str = "roll_adjusted_open_price",
+    price_column: str = "open_price",
 ) -> Optional[float]:
     if month_end is None:
         return None
@@ -454,12 +454,11 @@ def _monthly_projection_values(
             "cycle_projection": canonical_cycle,
         }
 
-    open_expiring_price_column = "open_price" if realized_month_pnl else "roll_adjusted_open_price"
     open_expiring_incremental_premium = _open_expiring_incremental_premium(
         state,
         month_end,
         expiring_options=expiring_options,
-        price_column=open_expiring_price_column,
+        price_column="open_price",
     )
 
     projected_month_pnl = None

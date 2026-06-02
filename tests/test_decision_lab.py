@@ -147,6 +147,7 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 31.0,
+            "premium_collected": 200.0,
             "display_premium_collected": 200.0,
         },
     ]
@@ -245,6 +246,7 @@ def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row(
             "days_to_expiration": 17,
             "quantity": -1,
             "current_price": 31.0,
+            "premium_collected": 200.0,
             "display_premium_collected": 200.0,
         },
     ]
@@ -274,6 +276,7 @@ def test_active_cycle_includes_dashboard_stock_unrealized_component():
             "days_to_expiration": 24,
             "quantity": -1,
             "current_price": 31.0,
+            "premium_collected": 200.0,
             "display_premium_collected": 200.0,
         },
     ]
