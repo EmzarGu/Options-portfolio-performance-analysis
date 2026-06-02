@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 
@@ -21,6 +21,7 @@ MIN_RECOVERY_CALL_DELTA = 0.12
 MAX_RECOVERY_CALL_DELTA = 0.45
 MAX_RECOVERY_CALL_STRIKE_ABOVE_BASIS = 0.15
 MAX_COVERED_CALL_DELTA = 0.65
+MAX_INDICATIVE_PRICE_AGE_DAYS = 7
 
 
 def recommendation_candidates(ticker_situations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -145,7 +146,7 @@ def _real_contract_candidates(
             for row in rows
             if _num(row.get("strike")) is not None
             and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
-            and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts)
+            and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts, status)
         ]
         roll_candidates = [
             _covered_call_roll_candidate(row, current_contract, group, status)
@@ -164,7 +165,7 @@ def _real_contract_candidates(
             and current_strike is not None
             and (_num(row.get("strike")) or 0) < current_strike
             and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
-            and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts)
+            and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts, status)
         ]
         candidates.extend(
             row
@@ -183,7 +184,7 @@ def _real_contract_candidates(
             and current_strike is not None
             and (_num(row.get("strike")) or 0) > current_strike
             and (not current_expiry or str(row.get("expiry") or "")[:10] == current_expiry)
-            and _contract_is_actionable(row, group, "Roll put up", rejection_counts)
+            and _contract_is_actionable(row, group, "Roll put up", rejection_counts, status)
         ]
         candidates.extend(
             row
@@ -193,7 +194,7 @@ def _real_contract_candidates(
     else:
         action = "Sell covered call" if put_call == "CALL" else "Roll down/out"
         filtered = _entry_contract_pool(rows, group, put_call)
-        actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts)]
+        actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status)]
         candidates = [_candidate_from_live_contract(action, row, group, status) for row in actionable]
         candidates = sorted(candidates, key=lambda row: row["score"], reverse=True)
 
@@ -469,7 +470,16 @@ def _covered_call_roll_candidate(
     contract_qty = _option_contract_count(open_option, state)
     if current_strike is None or cost is None or close_cost is None or new_credit is None or new_strike is None:
         return None
+    if not _contract_price_usable_for_roll(current_contract, status) or not _contract_price_usable_for_roll(new_contract, status):
+        return None
     if abs(new_strike - current_strike) < 0.001 and new_expiry <= current_expiry:
+        return None
+    if _same_expiry(new_expiry, current_expiry) and _call_price_monotonicity_violated(
+        current_strike=current_strike,
+        current_price=close_cost,
+        new_strike=new_strike,
+        new_price=new_credit,
+    ):
         return None
     net_credit = (new_credit - close_cost) * 100 * contract_qty
     extra_upside = max(new_strike - current_strike, 0) * 100 * contract_qty
@@ -634,6 +644,8 @@ def _short_put_roll_candidate(
     contract_qty = _option_contract_count(open_option, state)
     if current_strike is None or close_cost is None or new_credit is None or new_strike is None or current_price is None:
         return None
+    if not _contract_price_usable_for_roll(current_contract, status) or not _contract_price_usable_for_roll(new_contract, status):
+        return None
     net_credit = (new_credit - close_cost) * 100 * contract_qty
     if net_credit < MIN_PUT_ROLL_UP_CREDIT:
         return None
@@ -718,6 +730,17 @@ def _short_put_risk_reduction_candidate(
         return None
     if new_strike >= current_strike:
         return None
+    if not _contract_price_usable_for_roll(current_contract, status) or not _contract_price_usable_for_roll(new_contract, status):
+        return None
+    current_expiry = str(open_option.get("expiry") or "")[:10]
+    new_expiry = str(new_contract.get("expiry") or "")[:10]
+    if _same_expiry(new_expiry, current_expiry) and _put_price_monotonicity_violated(
+        current_strike=current_strike,
+        current_price=close_cost,
+        new_strike=new_strike,
+        new_price=new_credit,
+    ):
+        return None
     delta = abs(_num(new_contract.get("delta")) or 0) if new_contract.get("delta") is not None else None
     current_delta = abs(_num(current_contract.get("delta")) or 0) if current_contract and current_contract.get("delta") is not None else None
     if delta is None:
@@ -798,11 +821,112 @@ def _price_source(contract: Optional[dict[str, Any]]) -> str:
     return str(raw.get("price_source") or ("quote_bid_ask_mid" if contract.get("bid") is not None and contract.get("ask") is not None else "provider_mark"))
 
 
+def _same_expiry(left: Any, right: Any) -> bool:
+    return bool(str(left or "")[:10] and str(left or "")[:10] == str(right or "")[:10])
+
+
+def _contract_price_usable_for_roll(contract: Optional[dict[str, Any]], status: dict[str, Any]) -> bool:
+    if not contract:
+        return False
+    bid = _num(contract.get("bid"))
+    ask = _num(contract.get("ask"))
+    if bid is not None and ask is not None and bid > 0 and ask > 0 and ask >= bid:
+        return True
+    return _indicative_price_is_fresh(contract, status)
+
+
+def _indicative_price_is_fresh(contract: dict[str, Any], status: dict[str, Any]) -> bool:
+    raw = contract.get("raw") if isinstance(contract.get("raw"), dict) else {}
+    price_source = str(raw.get("price_source") or "").lower()
+    if price_source not in {"day_close", "day_vwap"}:
+        return True
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    day = source.get("day") if isinstance(source.get("day"), dict) else {}
+    updated_at = _timestamp_date(day.get("last_updated"))
+    if updated_at is None:
+        return False
+    reference_date = _reference_fetch_date(status) or date.today()
+    return updated_at >= reference_date - timedelta(days=MAX_INDICATIVE_PRICE_AGE_DAYS)
+
+
+def _reference_fetch_date(status: dict[str, Any]) -> Optional[date]:
+    value = status.get("last_fetched_at") or status.get("fetched_at")
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except ValueError:
+            return None
+
+
+def _timestamp_date(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        numeric = float(text)
+    except ValueError:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    if numeric > 10_000_000_000_000:
+        seconds = numeric / 1_000_000_000
+    elif numeric > 10_000_000_000:
+        seconds = numeric / 1_000
+    else:
+        seconds = numeric
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).date()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _call_price_monotonicity_violated(
+    *,
+    current_strike: float,
+    current_price: float,
+    new_strike: float,
+    new_price: float,
+) -> bool:
+    tolerance = 0.01
+    if new_strike > current_strike and new_price > current_price + tolerance:
+        return True
+    if new_strike < current_strike and new_price < current_price - tolerance:
+        return True
+    return False
+
+
+def _put_price_monotonicity_violated(
+    *,
+    current_strike: float,
+    current_price: float,
+    new_strike: float,
+    new_price: float,
+) -> bool:
+    tolerance = 0.01
+    if new_strike < current_strike and new_price > current_price + tolerance:
+        return True
+    if new_strike > current_strike and new_price < current_price - tolerance:
+        return True
+    return False
+
+
 def _contract_is_actionable(
     contract: dict[str, Any],
     group: dict[str, Any],
     action: str,
     rejection_counts: Counter[str],
+    status: dict[str, Any],
 ) -> bool:
     bid = _num(contract.get("bid"))
     ask = _num(contract.get("ask"))
@@ -828,6 +952,9 @@ def _contract_is_actionable(
     else:
         if mark is None or mark <= 0:
             rejection_counts["missing price"] += 1
+            return False
+        if not _indicative_price_is_fresh(contract, status):
+            rejection_counts["stale indicative price"] += 1
             return False
         oi = _num(contract.get("open_interest")) or 0
         volume = _num(contract.get("volume")) or 0

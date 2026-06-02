@@ -396,7 +396,7 @@ def test_unquoted_option_contracts_do_not_create_recommendations():
                 "delta": 0.08,
                 "open_interest": 500,
                 "volume": 20,
-                "raw": {"price_source": "day_close"},
+                "raw": {"price_source": "fmv"},
             }
         ],
     }
@@ -432,7 +432,7 @@ def test_unquoted_delayed_contracts_can_create_indicative_recommendations():
                 "delta": 0.24,
                 "open_interest": 100,
                 "volume": 20,
-                "raw": {"price_source": "day_close"},
+                "raw": {"price_source": "fmv"},
             }
         ],
     }
@@ -463,9 +463,9 @@ def test_recovery_covered_call_prefers_near_basis_not_far_otm_strikes():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-05-27T12:00:00+00:00"},
         "contracts": [
-            {"provider": "cutemarkets", "ticker": "NLR", "expiry": "2026-06-18", "put_call": "CALL", "strike": 150.0, "mark": 1.55, "underlying_price": 132.0, "delta": 0.24, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "NLR", "expiry": "2026-06-18", "put_call": "CALL", "strike": 185.0, "mark": 1.49, "underlying_price": 132.0, "delta": 0.09, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "NLR", "expiry": "2026-06-18", "put_call": "CALL", "strike": 195.0, "mark": 4.50, "underlying_price": 132.0, "delta": 0.09, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
+            {"provider": "cutemarkets", "ticker": "NLR", "expiry": "2026-06-18", "put_call": "CALL", "strike": 150.0, "mark": 1.55, "underlying_price": 132.0, "delta": 0.24, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "NLR", "expiry": "2026-06-18", "put_call": "CALL", "strike": 185.0, "mark": 1.49, "underlying_price": 132.0, "delta": 0.09, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "NLR", "expiry": "2026-06-18", "put_call": "CALL", "strike": 195.0, "mark": 4.50, "underlying_price": 132.0, "delta": 0.09, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -499,9 +499,9 @@ def test_covered_call_rolls_are_scored_as_packages_not_new_leg_only():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-05-25T12:00:00+00:00"},
         "contracts": [
-            {"provider": "cutemarkets", "ticker": "CROX", "expiry": "2026-06-18", "put_call": "CALL", "strike": 105.0, "mark": 13.0, "underlying_price": 115.0, "delta": 0.8, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "CROX", "expiry": "2026-06-18", "put_call": "CALL", "strike": 125.0, "mark": 2.0, "underlying_price": 115.0, "delta": 0.25, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "CROX", "expiry": "2026-07-10", "put_call": "CALL", "strike": 105.0, "mark": 15.0, "underlying_price": 115.0, "delta": 0.72, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
+            {"provider": "cutemarkets", "ticker": "CROX", "expiry": "2026-06-18", "put_call": "CALL", "strike": 105.0, "mark": 13.0, "underlying_price": 115.0, "delta": 0.8, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "CROX", "expiry": "2026-06-18", "put_call": "CALL", "strike": 125.0, "mark": 2.0, "underlying_price": 115.0, "delta": 0.25, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "CROX", "expiry": "2026-07-10", "put_call": "CALL", "strike": 105.0, "mark": 15.0, "underlying_price": 115.0, "delta": 0.72, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -546,10 +546,10 @@ def test_recovery_call_rolls_compare_expected_value_not_only_higher_strikes():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-05-27T12:00:00+00:00"},
         "contracts": [
-            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-06-18", "put_call": "CALL", "strike": 147.45, "mark": 0.62, "underlying_price": 110.0, "delta": 0.073, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-06-18", "put_call": "CALL", "strike": 125.0, "mark": 2.60, "underlying_price": 110.0, "delta": 0.26, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-06-18", "put_call": "CALL", "strike": 130.0, "mark": 1.90, "underlying_price": 110.0, "delta": 0.195, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-07-17", "put_call": "CALL", "strike": 160.0, "mark": 1.00, "underlying_price": 110.0, "delta": 0.084, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
+            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-06-18", "put_call": "CALL", "strike": 147.45, "mark": 0.62, "underlying_price": 110.0, "delta": 0.073, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-06-18", "put_call": "CALL", "strike": 125.0, "mark": 2.60, "underlying_price": 110.0, "delta": 0.26, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-06-18", "put_call": "CALL", "strike": 130.0, "mark": 1.90, "underlying_price": 110.0, "delta": 0.195, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "FUTU", "expiry": "2026-07-17", "put_call": "CALL", "strike": 160.0, "mark": 1.00, "underlying_price": 110.0, "delta": 0.084, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -585,8 +585,8 @@ def test_covered_call_candidate_economics_scale_with_contract_count():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-05-25T12:00:00+00:00"},
         "contracts": [
-            {"provider": "cutemarkets", "ticker": "CCJ", "expiry": "2026-06-18", "put_call": "CALL", "strike": 120.0, "mark": 2.18, "underlying_price": 108.25, "delta": 0.26, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "CCJ", "expiry": "2026-07-17", "put_call": "CALL", "strike": 130.0, "mark": 2.6, "underlying_price": 108.25, "delta": 0.23, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
+            {"provider": "cutemarkets", "ticker": "CCJ", "expiry": "2026-06-18", "put_call": "CALL", "strike": 120.0, "mark": 2.18, "underlying_price": 108.25, "delta": 0.26, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "CCJ", "expiry": "2026-07-17", "put_call": "CALL", "strike": 130.0, "mark": 2.6, "underlying_price": 108.25, "delta": 0.23, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -626,8 +626,8 @@ def test_far_otm_short_put_can_generate_roll_up_candidate():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-05-25T12:00:00+00:00"},
         "contracts": [
-            {"provider": "cutemarkets", "ticker": "QCOM", "expiry": "2026-06-18", "put_call": "PUT", "strike": 100.0, "mark": 0.2, "underlying_price": 140.0, "delta": -0.03, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "QCOM", "expiry": "2026-06-18", "put_call": "PUT", "strike": 120.0, "mark": 1.35, "underlying_price": 140.0, "delta": -0.22, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
+            {"provider": "cutemarkets", "ticker": "QCOM", "expiry": "2026-06-18", "put_call": "PUT", "strike": 100.0, "mark": 0.2, "underlying_price": 140.0, "delta": -0.03, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "QCOM", "expiry": "2026-06-18", "put_call": "PUT", "strike": 120.0, "mark": 1.35, "underlying_price": 140.0, "delta": -0.22, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -663,10 +663,10 @@ def test_near_strike_short_put_rolls_down_not_up():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-05-27T12:00:00+00:00"},
         "contracts": [
-            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 77.5, "mark": 1.2, "underlying_price": 80.75, "delta": -0.32, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 95.0, "mark": 12.2, "underlying_price": 80.75, "delta": -0.88, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 100.0, "mark": 14.8, "underlying_price": 80.75, "delta": -0.90, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
-            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-07-17", "put_call": "PUT", "strike": 72.5, "mark": 0.95, "underlying_price": 80.75, "delta": -0.21, "open_interest": 100, "volume": 20, "raw": {"price_source": "day_close"}},
+            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 77.5, "mark": 1.2, "underlying_price": 80.75, "delta": -0.32, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 95.0, "mark": 12.2, "underlying_price": 80.75, "delta": -0.88, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 100.0, "mark": 14.8, "underlying_price": 80.75, "delta": -0.90, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-07-17", "put_call": "PUT", "strike": 72.5, "mark": 0.95, "underlying_price": 80.75, "delta": -0.21, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -679,6 +679,97 @@ def test_near_strike_short_put_rolls_down_not_up():
     assert all(row["strike"] <= 77.5 for row in group["candidates"])
     assert roll["strike"] == pytest.approx(72.5)
     assert roll["assignment_risk_reduction"] == pytest.approx(2000.0)
+
+
+def test_short_put_roll_down_rejects_stale_indicative_day_close():
+    payload = _base_payload()
+    payload["positions"]["open_option_shorts"] = [
+        {
+            "ticker": "PLD",
+            "option_type": "Put",
+            "strike": 135.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 16,
+            "quantity": -2,
+            "current_price": 139.04,
+            "moneyness": 0.03,
+            "accounting_open_premium": 296.0,
+            "strategy_premium_collected": 296.0,
+        }
+    ]
+    payload["tickers"]["items"] = [{"ticker": "PLD", "total_pnl": 296.0, "realized_options_pnl": 0.0, "unrealized_pnl": 296.0}]
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-06-02T12:00:00+00:00"},
+        "contracts": [
+            {
+                "provider": "cutemarkets",
+                "ticker": "PLD",
+                "expiry": "2026-06-18",
+                "put_call": "PUT",
+                "strike": 135.0,
+                "mark": 1.75,
+                "underlying_price": 139.04,
+                "delta": -0.30,
+                "open_interest": 100,
+                "volume": 20,
+                "raw": {"price_source": "fmv"},
+            },
+            {
+                "provider": "cutemarkets",
+                "ticker": "PLD",
+                "expiry": "2026-06-18",
+                "put_call": "PUT",
+                "strike": 85.0,
+                "mark": 2.12,
+                "underlying_price": 139.04,
+                "delta": -0.03,
+                "open_interest": 32,
+                "volume": 1,
+                "raw": {
+                    "price_source": "day_close",
+                    "source": {"day": {"last_updated": 1756843200000000000}},
+                },
+            },
+        ],
+    }
+
+    data = build_decision_lab_data(payload, option_market_data=option_market_data)
+    group = next(row for row in data["recommendation_candidates"] if row["ticker"] == "PLD")
+
+    assert [row["action"] for row in group["candidates"]] == ["Keep current put"]
+    assert all(row["strike"] != pytest.approx(85.0) for row in group["candidates"])
+
+
+def test_short_put_roll_down_rejects_same_expiry_price_inversion():
+    payload = _base_payload()
+    payload["positions"]["open_option_shorts"] = [
+        {
+            "ticker": "PLD",
+            "option_type": "Put",
+            "strike": 135.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 16,
+            "quantity": -2,
+            "current_price": 139.04,
+            "moneyness": 0.03,
+            "accounting_open_premium": 296.0,
+            "strategy_premium_collected": 296.0,
+        }
+    ]
+    payload["tickers"]["items"] = [{"ticker": "PLD", "total_pnl": 296.0, "realized_options_pnl": 0.0, "unrealized_pnl": 296.0}]
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-06-02T12:00:00+00:00"},
+        "contracts": [
+            {"provider": "cutemarkets", "ticker": "PLD", "expiry": "2026-06-18", "put_call": "PUT", "strike": 135.0, "mark": 1.75, "underlying_price": 139.04, "delta": -0.30, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "PLD", "expiry": "2026-06-18", "put_call": "PUT", "strike": 85.0, "mark": 2.12, "underlying_price": 139.04, "delta": -0.03, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+        ],
+    }
+
+    data = build_decision_lab_data(payload, option_market_data=option_market_data)
+    group = next(row for row in data["recommendation_candidates"] if row["ticker"] == "PLD")
+
+    assert [row["action"] for row in group["candidates"]] == ["Keep current put"]
+    assert all(row["strike"] != pytest.approx(85.0) for row in group["candidates"])
 
 
 def test_strike_quality_splits_puts_and_calls_by_risk_bucket():
