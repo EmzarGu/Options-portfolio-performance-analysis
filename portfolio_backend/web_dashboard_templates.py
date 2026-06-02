@@ -1162,6 +1162,7 @@ function renderTickers(){
       {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
       {key:"options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
       {key:"stock_realized_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+      {key:"dividends",label:"Dividends",format:fmtMoney,num:true,className:cls},
       {key:"combined_realized",label:"Total realized",format:fmtMoney,num:true,className:cls}
     ], {title:"Per-year realized P&L", compact:true})}
   `;

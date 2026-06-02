@@ -284,7 +284,7 @@ def build_base_pipeline(
     record("pipeline_yearly_summary_ms", started_at)
 
     started_at = perf_counter()
-    per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts)
+    per_ticker = per_ticker_yearly_from_realized(realized_option_events, realized_sales, as_of_ts, div_df)
     per_ticker_totals = build_per_ticker_totals(per_ticker, per_ticker_unreal)
 
     cumulative_realized = float(monthly_summary["total_realized_pnl"].sum()) if not monthly_summary.empty else 0.0

@@ -102,6 +102,7 @@
       "ticker": "AAA",
       "options_pnl": 150.0,
       "stock_realized_pnl": 0.0,
+      "dividends": 0.0,
       "combined_realized": 150.0,
       "unrealized_pnl": 2200.0,
       "total_pnl": 2350.0

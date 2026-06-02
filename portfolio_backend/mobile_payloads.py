@@ -1348,7 +1348,7 @@ def _realized_by_ticker(state, year: Optional[int] = None) -> Dict[str, Dict[str
     if realized.empty or "ticker" not in realized.columns:
         return {}
 
-    cols = ["options_pnl", "stock_realized_pnl", "combined_realized"]
+    cols = ["options_pnl", "stock_realized_pnl", "dividends", "combined_realized"]
     for col in cols:
         if col not in realized.columns:
             realized[col] = 0.0
@@ -1358,59 +1358,11 @@ def _realized_by_ticker(state, year: Optional[int] = None) -> Dict[str, Dict[str
         str(row["ticker"]).upper().strip(): {
             "realized_options_pnl": float(row["options_pnl"]),
             "realized_stock_pnl": float(row["stock_realized_pnl"]),
+            "dividends": float(row["dividends"]),
             "combined_realized_pnl": float(row["combined_realized"]),
         }
         for row in grouped.to_dict(orient="records")
     }
-
-
-def _dividends_by_ticker(state, year: Optional[int] = None) -> Dict[str, float]:
-    div_df = getattr(state, "div_df", pd.DataFrame())
-    as_of = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
-    if div_df is None or div_df.empty or "ticker" not in div_df.columns or "cash" not in div_df.columns:
-        return {}
-
-    dividends = div_df.copy()
-    date_col = "pay_date" if "pay_date" in dividends.columns else "ex_date" if "ex_date" in dividends.columns else None
-    if date_col is not None:
-        dividends[date_col] = pd.to_datetime(dividends[date_col], errors="coerce")
-        dividends = dividends.loc[dividends[date_col].notna()]
-        if pd.notna(as_of):
-            dividends = dividends.loc[dividends[date_col] <= as_of]
-        if year is not None:
-            dividends = dividends.loc[dividends[date_col].dt.year == int(year)]
-
-    if dividends.empty:
-        return {}
-    dividends["ticker"] = dividends["ticker"].astype(str).str.upper().str.strip()
-    dividends["cash"] = pd.to_numeric(dividends["cash"], errors="coerce").fillna(0.0)
-    grouped = dividends.loc[dividends["ticker"].ne("")].groupby("ticker")["cash"].sum()
-    return {str(ticker): float(value) for ticker, value in grouped.items()}
-
-
-def _dividends_by_year_ticker(state, year: Optional[int] = None) -> Dict[tuple[int, str], float]:
-    div_df = getattr(state, "div_df", pd.DataFrame())
-    as_of = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
-    if div_df is None or div_df.empty or "ticker" not in div_df.columns or "cash" not in div_df.columns:
-        return {}
-
-    dividends = div_df.copy()
-    date_col = "pay_date" if "pay_date" in dividends.columns else "ex_date" if "ex_date" in dividends.columns else None
-    if date_col is None:
-        return {}
-    dividends[date_col] = pd.to_datetime(dividends[date_col], errors="coerce")
-    dividends = dividends.loc[dividends[date_col].notna()]
-    if pd.notna(as_of):
-        dividends = dividends.loc[dividends[date_col] <= as_of]
-    if year is not None:
-        dividends = dividends.loc[dividends[date_col].dt.year == int(year)]
-    if dividends.empty:
-        return {}
-    dividends["ticker"] = dividends["ticker"].astype(str).str.upper().str.strip()
-    dividends["year"] = dividends[date_col].dt.year.astype(int)
-    dividends["cash"] = pd.to_numeric(dividends["cash"], errors="coerce").fillna(0.0)
-    grouped = dividends.loc[dividends["ticker"].ne("")].groupby(["year", "ticker"])["cash"].sum()
-    return {(int(row_year), str(ticker)): float(value) for (row_year, ticker), value in grouped.items()}
 
 
 def _totals_by_ticker(state) -> Dict[str, Dict[str, float]]:
@@ -1425,6 +1377,7 @@ def _totals_by_ticker(state) -> Dict[str, Dict[str, float]]:
         records[ticker] = {
             "realized_options_pnl": _number(raw.get("options_pnl")) or 0.0,
             "realized_stock_pnl": _number(raw.get("stock_realized_pnl")) or 0.0,
+            "dividends": _number(raw.get("dividends")) or 0.0,
             "combined_realized_pnl": _number(raw.get("combined_realized")) or 0.0,
             "unrealized_pnl": _number(raw.get("unrealized_pnl")) or 0.0,
             "total_pnl": _number(raw.get("total_pnl")) or 0.0,
@@ -1486,7 +1439,7 @@ def _history_by_ticker(state, year: Optional[int] = None) -> Dict[str, List[Dict
     if realized.empty:
         return {}
 
-    cols = ["options_pnl", "stock_realized_pnl", "combined_realized"]
+    cols = ["options_pnl", "stock_realized_pnl", "dividends", "combined_realized"]
     for col in cols:
         if col not in realized.columns:
             realized[col] = 0.0
@@ -1494,14 +1447,13 @@ def _history_by_ticker(state, year: Optional[int] = None) -> Dict[str, List[Dict
     realized["year"] = pd.to_numeric(realized.get("year"), errors="coerce")
     realized = realized.loc[realized["year"].notna()]
     grouped = realized.groupby(["year", "ticker"], as_index=False)[cols].sum()
-    dividends_by_year_ticker = _dividends_by_year_ticker(state, year)
 
     history: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for row in grouped.sort_values(["ticker", "year"]).to_dict(orient="records"):
         ticker = str(row["ticker"]).upper().strip()
         row_year = int(row["year"])
-        dividends = dividends_by_year_ticker.get((row_year, ticker), 0.0)
-        combined_realized = float(row["combined_realized"]) + dividends
+        dividends = float(row["dividends"])
+        combined_realized = float(row["combined_realized"])
         history[ticker].append(
             {
                 "id": f"year:{row_year}:ticker:{ticker}",
@@ -1572,7 +1524,6 @@ def build_ticker_summary_rows(
 ) -> List[Dict[str, Any]]:
     totals_by_ticker = _totals_by_ticker(state)
     realized_by_ticker = _realized_by_ticker(state, year) if year is not None else {}
-    dividends_by_ticker = _dividends_by_ticker(state, year)
     unrealized_split_by_ticker = _unrealized_split_by_ticker(state)
     history_by_ticker = _history_by_ticker(state, year) if include_history else {}
     open_counts, inventory_shares = _ticker_counts(state)
@@ -1602,12 +1553,11 @@ def build_ticker_summary_rows(
         totals = totals_by_ticker.get(ticker, {})
         realized = realized_by_ticker.get(ticker, totals)
         unrealized_split = unrealized_split_by_ticker.get(ticker, {})
-        dividends = dividends_by_ticker.get(ticker, 0.0)
-        combined_realized_before_dividends = _number(realized.get("combined_realized_pnl")) or 0.0
-        combined_realized = combined_realized_before_dividends + dividends
+        dividends = _number(realized.get("dividends")) or 0.0
+        combined_realized = _number(realized.get("combined_realized_pnl")) or 0.0
         unrealized_pnl = None if unrealized_blocked else _number(totals.get("unrealized_pnl"))
         raw_total_pnl = None if unrealized_blocked else _number(totals.get("total_pnl"))
-        total_pnl = raw_total_pnl + dividends if raw_total_pnl is not None else None
+        total_pnl = raw_total_pnl if raw_total_pnl is not None else None
         if total_pnl is None and not unrealized_blocked and unrealized_pnl is not None:
             total_pnl = combined_realized + unrealized_pnl
         current_option_premium_unrealized = (

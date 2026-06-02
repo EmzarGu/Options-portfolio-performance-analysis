@@ -39,6 +39,7 @@ from portfolio_backend.performance import (
     calculate_performance_metrics,
     calculate_option_cycle_unrealized_components,
     calculate_unrealized_positions,
+    per_ticker_yearly_from_realized,
     period_returns,
 )
 from portfolio_backend.serializers import serialize_portfolio_state, serialize_snapshot
@@ -435,7 +436,8 @@ def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
     assert ytd_row["total_pnl_incl_unreal"] == pytest.approx(1600.0)
 
     per_ticker = state["per_ticker_totals"].set_index("ticker")
-    assert per_ticker.loc["AAA", "total_pnl"] == pytest.approx(2200.0)
+    assert per_ticker.loc["AAA", "dividends"] == pytest.approx(50.0)
+    assert per_ticker.loc["AAA", "total_pnl"] == pytest.approx(2250.0)
     assert per_ticker.loc["BBB", "total_pnl"] == pytest.approx(-700.0)
     assert per_ticker.loc["CCC", "total_pnl"] == pytest.approx(300.0)
 
@@ -712,6 +714,29 @@ def test_partial_close_preserves_remaining_open_lot_and_reserve_window():
     assert cap.loc[pd.Timestamp("2024-01-14"), "puts_reserve"] == reserve
 
 
+def test_per_ticker_yearly_realized_includes_dividends():
+    dividends = pd.DataFrame(
+        [
+            {
+                "ticker": "NLR",
+                "pay_date": pd.Timestamp("2026-03-15"),
+                "cash": 269.0,
+            }
+        ]
+    )
+    events = [
+        app.OptionPnLEvent(pd.Timestamp("2026-01-15"), "NLR", "Call", 150.0, 1, 165.0, 1.65, 0.0, "close"),
+    ]
+
+    yearly = per_ticker_yearly_from_realized(events, [], pd.Timestamp("2026-06-02"), dividends)
+
+    row = yearly.loc[(yearly["year"] == 2026) & (yearly["ticker"] == "NLR")].iloc[0]
+    assert row["options_pnl"] == 165.0
+    assert row["stock_realized_pnl"] == 0.0
+    assert row["dividends"] == 269.0
+    assert row["combined_realized"] == 434.0
+
+
 def test_build_per_ticker_totals_includes_unrealized_only_tickers():
     realized = pd.DataFrame(
         [
@@ -720,7 +745,8 @@ def test_build_per_ticker_totals_includes_unrealized_only_tickers():
                 "ticker": "REAL",
                 "options_pnl": 100.0,
                 "stock_realized_pnl": 0.0,
-                "combined_realized": 100.0,
+                "dividends": 25.0,
+                "combined_realized": 125.0,
             }
         ]
     )
@@ -731,12 +757,14 @@ def test_build_per_ticker_totals_includes_unrealized_only_tickers():
     assert list(totals["ticker"]) == ["OPEN", "REAL"]
     open_row = totals.loc[totals["ticker"] == "OPEN"].iloc[0]
     real_row = totals.loc[totals["ticker"] == "REAL"].iloc[0]
+    assert open_row["dividends"] == 0.0
     assert open_row["combined_realized"] == 0.0
     assert open_row["unrealized_pnl"] == 250.0
     assert open_row["total_pnl"] == 250.0
-    assert real_row["combined_realized"] == 100.0
+    assert real_row["dividends"] == 25.0
+    assert real_row["combined_realized"] == 125.0
     assert real_row["unrealized_pnl"] == -25.0
-    assert real_row["total_pnl"] == 75.0
+    assert real_row["total_pnl"] == 100.0
 
 
 def test_build_options_cycle_chart_data_uses_total_realized_pnl():

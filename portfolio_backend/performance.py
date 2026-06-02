@@ -342,6 +342,7 @@ def per_ticker_yearly_from_realized(
     realized_option_events: List[OptionPnLEvent],
     realized_sales: List[RealizedSale],
     as_of: pd.Timestamp,
+    dividends_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     opt_df = pd.DataFrame(
         [
@@ -365,15 +366,37 @@ def per_ticker_yearly_from_realized(
         stock_df = stock_df.groupby(["year", "ticker"])["stock_realized_pnl"].sum().reset_index()
     else:
         stock_df = pd.DataFrame(columns=["year", "ticker", "stock_realized_pnl"])
-    out = opt_df.merge(stock_df, on=["year", "ticker"], how="outer")
-    out = _fill_numeric_columns(out, ["options_pnl", "stock_realized_pnl"])
-    out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"]
+
+    div_df = pd.DataFrame(columns=["year", "ticker", "dividends"])
+    if dividends_df is not None and not dividends_df.empty and {"ticker", "cash"}.issubset(dividends_df.columns):
+        dividends = dividends_df.copy()
+        date_col = "pay_date" if "pay_date" in dividends.columns else "ex_date" if "ex_date" in dividends.columns else None
+        if date_col is not None:
+            dividends[date_col] = pd.to_datetime(dividends[date_col], errors="coerce")
+            dividends = dividends.loc[dividends[date_col].notna()]
+            dividends = dividends.loc[dividends[date_col] <= as_of]
+            if not dividends.empty:
+                dividends["ticker"] = dividends["ticker"].astype(str).str.upper().str.strip()
+                dividends["cash"] = pd.to_numeric(dividends["cash"], errors="coerce").fillna(0.0)
+                dividends["year"] = dividends[date_col].dt.year.astype(int)
+                div_df = (
+                    dividends.loc[dividends["ticker"].ne("")]
+                    .groupby(["year", "ticker"])["cash"]
+                    .sum()
+                    .rename("dividends")
+                    .reset_index()
+                )
+
+    out = opt_df.merge(stock_df, on=["year", "ticker"], how="outer").merge(div_df, on=["year", "ticker"], how="outer")
+    out = _fill_numeric_columns(out, ["options_pnl", "stock_realized_pnl", "dividends"])
+    out["combined_realized"] = out["options_pnl"] + out["stock_realized_pnl"] + out["dividends"]
     return out.sort_values(["year", "combined_realized"], ascending=[True, False])
 
 
 def build_per_ticker_totals(per_ticker_realized: pd.DataFrame, per_ticker_unreal: pd.Series) -> pd.DataFrame:
-    realized_cols = ["options_pnl", "stock_realized_pnl", "combined_realized"]
+    realized_cols = ["options_pnl", "stock_realized_pnl", "dividends", "combined_realized"]
     if per_ticker_realized is not None and not per_ticker_realized.empty:
+        per_ticker_realized = _fill_numeric_columns(per_ticker_realized.copy(), realized_cols)
         realized_totals = (
             per_ticker_realized.groupby("ticker")[realized_cols]
             .sum()
