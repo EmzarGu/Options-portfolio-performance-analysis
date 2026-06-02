@@ -87,3 +87,29 @@ def test_future_cycle_projection_uses_same_canonical_shape():
     assert rows[0]["projected_cycle_pnl"] == pytest.approx(950.0)
     assert rows[1]["projected_cycle_pnl"] == pytest.approx(150.0)
     assert rows[1]["stock_unrealized_pnl"] is None
+
+
+def test_cycle_projection_recomputes_open_cycle_from_option_lots_not_stale_monthly_hints():
+    state = _state()
+    state.monthly_cycles = pd.DataFrame(
+        [
+            {
+                "avg_capital": 10000.0,
+                "total_realized_pnl": 0.0,
+                "open_premium_collected": 1.0,
+                "open_expiring_incremental_premium": 1.0,
+                "projected_month_pnl": 2.0,
+            }
+        ],
+        index=[pd.Timestamp("2026-06-30")],
+    )
+
+    cycle = build_state_cycle_projection(
+        state,
+        year_month=(2026, 6),
+        target_return=0.02,
+        include_stock_unrealized=True,
+    ).to_dict()
+
+    assert cycle["open_premium_collected"] == pytest.approx(450.0)
+    assert cycle["projected_cycle_pnl"] == pytest.approx(950.0)

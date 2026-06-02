@@ -1038,7 +1038,7 @@ def test_build_open_options_frame_groups_same_contract_lots():
     assert row["expiration"] == pd.Timestamp("2026-06-18")
     assert row["trans_date"] == pd.Timestamp("2026-04-24 14:36:57")
     assert row["open_price"] == pytest.approx((13.159191298 + 13.082717946) / 2)
-    assert row["roll_adjusted_open_price"] == pytest.approx(13.0)
+    assert row["roll_adjusted_open_price"] == pytest.approx((13.159191298 + 13.082717946) / 2)
 
 
 def test_filter_df_to_range_applies_ytd_window():
@@ -1241,6 +1241,27 @@ def test_dashboard_unrealized_option_only_characterization():
         pd.Timestamp("2025-03-15"),
     )
     assert yearly_with_unreal.loc[0, "total_pnl_incl_unreal"] == pytest.approx(250.0)
+
+
+def test_dashboard_unrealized_uses_effective_open_option_premium():
+    open_call = OptionLot(
+        ticker="ROLL",
+        otype="Call",
+        strike=100.0,
+        qty=1,
+        open_date=pd.Timestamp("2025-03-01"),
+        expiration=pd.Timestamp("2025-04-18"),
+        open_price=0.0,
+        roll_adjusted_open_price=3.25,
+        comment="",
+        assigned=False,
+    )
+
+    snapshot = build_dashboard_unrealized_snapshot([open_call], [], {})
+
+    assert snapshot["total_unreal"] == pytest.approx(325.0)
+    assert snapshot["stock_unreal"] == pytest.approx(0.0)
+    assert snapshot["option_unreal"] == pytest.approx(325.0)
 
 
 def test_dashboard_unrealized_mixed_portfolio_characterization():
