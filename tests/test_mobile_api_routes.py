@@ -46,7 +46,7 @@ def test_ibkr_import_issue_resolved_only_by_later_success_covering_same_date():
 @pytest.fixture
 def api_harness(monkeypatch):
     mobile_api._clear_context_cache()
-    calls = SimpleNamespace(contexts=[], builders={})
+    calls = SimpleNamespace(contexts=[], builders={}, dashboard_target_return=None)
 
     monkeypatch.setattr(mobile_api.dashboard_app, "SHEET_ID", "sheet-id")
     monkeypatch.setattr(mobile_api.dashboard_app, "SHEETS", ["Options 2024", "Options 2025", "Options 2026"])
@@ -71,13 +71,14 @@ def api_harness(monkeypatch):
         calls.contexts.append(context)
         return context
 
-    def build_dashboard(context):
+    def build_dashboard(context, *, target_return=0.015):
         calls.builders["dashboard"] = context
+        calls.dashboard_target_return = target_return
         return {
             "request": _request_payload(context),
             "data_freshness": {},
             "snapshot": {},
-            "monthly_target": {},
+            "monthly_target": {"target_return": target_return},
             "open_option_short_preview": [],
             "issue_summary": {},
         }
@@ -809,6 +810,14 @@ def test_open_option_shorts_route_parses_sort_and_limit(api_harness):
     builder_call = api_harness.calls.builders["open_option_shorts"]
     assert builder_call["sort"] == "expiration"
     assert builder_call["limit"] == 2
+
+
+def test_dashboard_route_parses_target_return(api_harness):
+    response = api_harness.client.get("/v1/mobile/dashboard?target_return=0.02")
+
+    assert response.status_code == 200
+    assert response.json()["monthly_target"]["target_return"] == pytest.approx(0.02)
+    assert api_harness.calls.dashboard_target_return == pytest.approx(0.02)
 
 
 def test_tickers_route_parses_detail_query(api_harness):
