@@ -666,7 +666,7 @@ def test_near_strike_short_put_rolls_down_not_up():
             {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 77.5, "mark": 1.2, "underlying_price": 80.75, "delta": -0.32, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
             {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 95.0, "mark": 12.2, "underlying_price": 80.75, "delta": -0.88, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
             {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-06-18", "put_call": "PUT", "strike": 100.0, "mark": 14.8, "underlying_price": 80.75, "delta": -0.90, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
-            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-07-17", "put_call": "PUT", "strike": 72.5, "mark": 0.95, "underlying_price": 80.75, "delta": -0.21, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "IBKR", "expiry": "2026-07-17", "put_call": "PUT", "strike": 72.5, "mark": 1.45, "underlying_price": 80.75, "delta": -0.21, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
         ],
     }
 
@@ -770,6 +770,39 @@ def test_short_put_roll_down_rejects_same_expiry_price_inversion():
 
     assert [row["action"] for row in group["candidates"]] == ["Keep current put"]
     assert all(row["strike"] != pytest.approx(85.0) for row in group["candidates"])
+
+
+def test_short_put_roll_down_rejects_negative_expected_value():
+    payload = _base_payload()
+    payload["positions"]["open_option_shorts"] = [
+        {
+            "ticker": "PLD",
+            "option_type": "Put",
+            "strike": 135.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 16,
+            "quantity": -2,
+            "current_price": 139.04,
+            "moneyness": 0.03,
+            "accounting_open_premium": 296.0,
+            "strategy_premium_collected": 296.0,
+        }
+    ]
+    payload["tickers"]["items"] = [{"ticker": "PLD", "total_pnl": 296.0, "realized_options_pnl": 0.0, "unrealized_pnl": 296.0}]
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-06-02T12:00:00+00:00"},
+        "contracts": [
+            {"provider": "cutemarkets", "ticker": "PLD", "expiry": "2026-06-18", "put_call": "PUT", "strike": 135.0, "mark": 1.75, "underlying_price": 139.04, "delta": -0.30, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "PLD", "expiry": "2026-07-17", "put_call": "PUT", "strike": 125.0, "mark": 1.04, "underlying_price": 139.04, "delta": -0.14, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+            {"provider": "cutemarkets", "ticker": "PLD", "expiry": "2026-07-17", "put_call": "PUT", "strike": 130.0, "mark": 2.08, "underlying_price": 139.04, "delta": -0.23, "open_interest": 100, "volume": 20, "raw": {"price_source": "fmv"}},
+        ],
+    }
+
+    data = build_decision_lab_data(payload, option_market_data=option_market_data)
+    group = next(row for row in data["recommendation_candidates"] if row["ticker"] == "PLD")
+
+    assert any(row["strike"] == pytest.approx(130.0) for row in group["candidates"])
+    assert all(row["strike"] != pytest.approx(125.0) for row in group["candidates"])
 
 
 def test_strike_quality_splits_puts_and_calls_by_risk_bucket():

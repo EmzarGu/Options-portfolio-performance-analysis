@@ -676,6 +676,8 @@ def _short_put_roll_candidate(
         contract_qty=contract_qty,
     )
     expected_value_vs_current = expected_value - baseline_ev if expected_value is not None and baseline_ev is not None else None
+    if expected_value_vs_current is None or expected_value_vs_current <= 0:
+        return None
     score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry")))
     return {
         "action": "Roll put up",
@@ -778,6 +780,8 @@ def _short_put_risk_reduction_candidate(
         contract_qty=contract_qty,
     )
     expected_value_vs_current = expected_value - baseline_ev if expected_value is not None and baseline_ev is not None else None
+    if expected_value_vs_current is None or expected_value_vs_current <= 0:
+        return None
     score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry")))
     return {
         "action": "Roll put down/out",
