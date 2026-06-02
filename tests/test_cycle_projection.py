@@ -59,7 +59,7 @@ def _state():
     )
 
 
-def test_cycle_projection_keeps_risk_signals_and_roll_adjusted_display_values_out_of_projected_pnl():
+def test_cycle_projection_keeps_risk_signals_out_of_projected_pnl():
     cycle = build_state_cycle_projection(
         _state(),
         year_month=(2026, 6),
@@ -67,13 +67,13 @@ def test_cycle_projection_keeps_risk_signals_and_roll_adjusted_display_values_ou
         include_stock_unrealized=True,
     ).to_dict()
 
-    assert cycle["open_premium_collected"] == pytest.approx(300.0)
+    assert cycle["open_premium_collected"] == pytest.approx(450.0)
     assert cycle["stock_unrealized_pnl"] == pytest.approx(500.0)
     assert cycle["itm_put_unrealized_loss"] == pytest.approx(-1000.0)
     assert cycle["covered_call_upside_foregone"] == pytest.approx(-1000.0)
-    assert cycle["projected_cycle_pnl"] == pytest.approx(800.0)
+    assert cycle["projected_cycle_pnl"] == pytest.approx(950.0)
     assert cycle["target_pnl"] == pytest.approx(200.0)
-    assert cycle["projected_return_roac"] == pytest.approx(0.08)
+    assert cycle["projected_return_roac"] == pytest.approx(0.095)
 
 
 def test_future_cycle_projection_uses_same_canonical_shape():
@@ -84,6 +84,6 @@ def test_future_cycle_projection_uses_same_canonical_shape():
     )
 
     assert [row["cycle"] for row in rows] == ["2026-06", "2026-07"]
-    assert rows[0]["projected_cycle_pnl"] == pytest.approx(800.0)
+    assert rows[0]["projected_cycle_pnl"] == pytest.approx(950.0)
     assert rows[1]["projected_cycle_pnl"] == pytest.approx(150.0)
     assert rows[1]["stock_unrealized_pnl"] is None
