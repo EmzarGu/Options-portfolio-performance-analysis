@@ -1116,9 +1116,7 @@ function renderMonthly(){
       {key:"return_ropc",label:"RoPC",format:fmtPct,num:true,className:cls},
       {key:"open_expiring_incremental_premium",label:"Open premium",format:fmtMoney,num:true,className:cls},
       {key:"projected_month_pnl",label:"Projected P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
-      {key:"projected_return_roac",label:"Projected RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:cls},
-      {key:"projected_remaining_pnl",label:"Remaining",value:displayRemainingToTarget,format:fmtMoney,num:true,className:(v)=>numeric(v)>0?"neg":"pos"},
-      {key:"monthly_target_status",label:"Target status",value:displayTargetStatus,format:statusPill}
+      {key:"projected_return_roac",label:"Projected RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:v=>bandTone(v, targetFloor(), targetReturn())}
     ], {title:"Monthly table", wide:true})}
     ${sectionHead("Future Open Expiry Months")}
     ${dataTable("future-months", future, [

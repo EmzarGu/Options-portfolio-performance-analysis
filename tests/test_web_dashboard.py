@@ -200,6 +200,17 @@ def test_web_dashboard_uses_standard_monthly_projection_terms():
     assert "ITM put assignment P&L" in DASHBOARD_HTML
 
 
+def test_web_dashboard_monthly_table_uses_projected_roac_band_colors():
+    monthly_start = DASHBOARD_HTML.index('dataTable("monthly-table"')
+    monthly_end = DASHBOARD_HTML.index('dataTable("future-months"', monthly_start)
+    monthly_table_js = DASHBOARD_HTML[monthly_start:monthly_end]
+
+    assert 'label:"Remaining"' not in monthly_table_js
+    assert 'label:"Target status"' not in monthly_table_js
+    assert 'label:"Projected RoAC"' in monthly_table_js
+    assert "bandTone(v, targetFloor(), targetReturn())" in monthly_table_js
+
+
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     client = TestClient(web_dashboard.app)
