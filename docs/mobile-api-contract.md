@@ -658,17 +658,7 @@ Response:
     "peak_capital": 642000.0,
     "status": "below_target",
     "monthly_target_status": "beat",
-    "days_remaining": 18,
-    "cycle_projection": {
-      "cycle": "2026-05",
-      "cycle_label": "May 2026",
-      "open_premium_collected": 5200.0,
-      "stock_unrealized_pnl": 3400.0,
-      "projected_cycle_pnl": 8410.0,
-      "projected_return_roac": 0.016,
-      "target_pnl": 7890.0,
-      "remaining_to_target": 0.0
-    }
+    "days_remaining": 18
   },
   "months": [
     {
@@ -734,9 +724,7 @@ Nullability:
 - `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the canonical target-monitoring fields.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
-- `current_month.cycle_projection` is the same canonical cycle projection shape used by web Decision Lab/current-cycle logic. Clients may use the scalar `current_month.projected_*` fields for display and `cycle_projection` for reconciliation/details.
 - `future_months` contains future expiration months for currently open short options. Future rows use the same premium semantics, but return/target fields are `null` until a meaningful future capital denominator exists.
-- `future_months[].cycle_projection` is always populated when an open future expiration cycle exists.
 - `future_months.open_option_count` counts current open short option rows/lots expiring in that month.
 - `status` allowed values: `beat`, `miss`, `below_target`, `on_track`, `unavailable`.
 - `monthly_target_status` uses the same allowed values as `status`, but is based on projected RoAC.

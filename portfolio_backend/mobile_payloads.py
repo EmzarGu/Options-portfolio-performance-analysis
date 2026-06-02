@@ -632,7 +632,6 @@ def _mobile_month_row(
         out["projected_remaining_pnl"] = json_safe(projection["projected_remaining_pnl"])
         out["current_unrealized_pnl"] = json_safe(projection["current_unrealized_pnl"])
         out["includes_current_unrealized"] = bool(projection["includes_current_unrealized"])
-        out["cycle_projection"] = projection["cycle_projection"]
         out["monthly_target_status"] = _monthly_target_status(
             projection["projected_return_roac"],
             target_return,
@@ -751,7 +750,6 @@ def build_current_month_performance(
             "projected_remaining_pnl": None,
             "current_unrealized_pnl": None,
             "includes_current_unrealized": False,
-            "cycle_projection": None,
             "avg_capital": None,
             "peak_capital": None,
             "status": "unavailable",
@@ -779,7 +777,6 @@ def build_current_month_performance(
         "projected_remaining_pnl": month_row["projected_remaining_pnl"],
         "current_unrealized_pnl": month_row["current_unrealized_pnl"],
         "includes_current_unrealized": month_row["includes_current_unrealized"],
-        "cycle_projection": month_row["cycle_projection"],
         "avg_capital": month_row["avg_capital"],
         "peak_capital": month_row["peak_capital"],
         "status": month_row["status"],
