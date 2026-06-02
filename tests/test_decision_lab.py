@@ -173,65 +173,6 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
     assert cycle["open_ticker_count"] == 2
 
 
-def test_active_cycle_prefers_canonical_cycle_month_projection():
-    payload = _base_payload()
-    payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
-    payload["positions"]["open_option_shorts"] = [
-        {
-            "ticker": "BEN",
-            "option_type": "Put",
-            "strike": 29.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 31.0,
-            "display_premium_collected": 200.0,
-        }
-    ]
-    payload["monthly"]["future_months"] = [
-        {
-            "month": "2026-06-30",
-            "projected_month_pnl": 200.0,
-            "open_expiring_incremental_premium": 200.0,
-        }
-    ]
-    payload["monthly"]["cycle_months"] = [
-        {
-            "cycle": "2026-06",
-            "cycle_label": "June 2026",
-            "expiry_dates": ["2026-06-18"],
-            "min_dte": 24,
-            "max_dte": 24,
-            "open_ticker_count": 1,
-            "open_contract_count": 1,
-            "realized_cycle_pnl": 0.0,
-            "premium_component": 777.0,
-            "open_premium_collected": 777.0,
-            "stock_unrealized_pnl": 123.0,
-            "projected_pnl": 900.0,
-            "projected_cycle_pnl": 900.0,
-            "target_return": 0.02,
-            "target_floor": 0.01,
-            "target_base": 300000.0,
-            "target_pnl": 6000.0,
-            "remaining_to_target": 5100.0,
-            "projected_return_roac": 0.003,
-            "portfolio_put_exposure": 2900.0,
-            "portfolio_itm_put_exposure": 0.0,
-            "cycle_put_exposure": 2900.0,
-            "cycle_itm_put_exposure": 0.0,
-            "itm_put_unrealized_loss": 0.0,
-            "covered_call_upside_foregone": 0.0,
-        }
-    ]
-
-    cycle = build_decision_lab_data(payload)["active_cycle"]
-
-    assert cycle["premium_component"] == pytest.approx(777.0)
-    assert cycle["projected_pnl"] == pytest.approx(900.0)
-    assert cycle["projected_return_roac"] == pytest.approx(0.003)
-
-
 def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row():
     payload = _base_payload()
     payload["dashboard"]["request"] = {"as_of": "2026-06-01"}

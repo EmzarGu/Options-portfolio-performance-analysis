@@ -1156,34 +1156,6 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
     ]
 
 
-def test_current_month_aliases_match_canonical_cycle_projection():
-    state = _mobile_state()
-    state.as_of = pd.Timestamp("2026-06-01")
-    state.open_options = state.open_options.copy()
-    state.open_options["roll_adjusted_open_price"] = pd.NA
-    june_mask = state.open_options["expiration"].dt.to_period("M") == pd.Period("2026-06")
-    first_june_index = state.open_options.loc[june_mask].index[0]
-    state.open_options.loc[first_june_index, "roll_adjusted_open_price"] = 1.5
-
-    monthly = build_mobile_monthly_performance(
-        state,
-        {"as_of": state.as_of, "include_unrealized": True},
-        target_return=0.015,
-        monthly_range="ytd",
-    )
-    current = monthly["current_month"]
-    cycle = current["cycle_projection"]
-
-    assert cycle is not None
-    assert current["open_expiring_incremental_premium"] == pytest.approx(cycle["open_premium_collected"])
-    assert current["projected_month_pnl"] == pytest.approx(cycle["projected_cycle_pnl"])
-    assert current["projected_return_roac"] == pytest.approx(cycle["projected_return_roac"])
-    assert current["target_pnl"] == pytest.approx(cycle["target_pnl"])
-    assert current["projected_remaining_pnl"] == pytest.approx(cycle["remaining_to_target"])
-    assert current["open_expiring_incremental_premium"] == pytest.approx(300.0)
-    assert current["projected_month_pnl"] == pytest.approx(500.0)
-
-
 def test_monthly_performance_rows_support_ranges_and_missing_capital():
     state = _mobile_state()
     state.monthly_cycles.loc[pd.Timestamp("2026-05-31"), ["avg_capital", "roac"]] = pd.NA

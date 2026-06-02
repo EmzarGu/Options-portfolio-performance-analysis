@@ -479,9 +479,6 @@ def _current_state(
 
 
 def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
-    for row in (payload.get("monthly") or {}).get("cycle_months") or []:
-        if row.get("cycle"):
-            return dict(row)
     return build_payload_cycle_projection(payload)
 
 
