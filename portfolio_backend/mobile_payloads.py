@@ -13,7 +13,6 @@ from portfolio_backend.cycle_projection import (
     build_state_future_cycle_projections,
 )
 from portfolio_backend.issue_classification import classify_backend_issue
-from portfolio_backend.option_accounting import canonical_open_price, open_option_premium_from_row
 from portfolio_backend.serializers import json_safe
 from portfolio_backend.tables import build_assigned_holdings_frame, build_open_option_shorts_frame
 
@@ -329,16 +328,32 @@ def _monthly_target_status(current_return: Optional[float], target_return: float
 
 def _sum_open_expiring_premium_from_frame(
     expiring_options: pd.DataFrame,
+    month_end: pd.Timestamp,
+    *,
+    price_column: str,
 ) -> float:
-    if not {"expiration", "qty"}.issubset(expiring_options.columns):
+    required_columns = {"expiration", price_column, "qty"}
+    if price_column == "roll_adjusted_open_price":
+        required_columns = {"expiration", "qty"}
+    if not required_columns.issubset(expiring_options.columns):
         return 0.0
 
     expiring = expiring_options
     if expiring.empty:
         return 0.0
 
-    premiums = [open_option_premium_from_row(row) for row in expiring.to_dict(orient="records")]
-    return float(sum(premium for premium in premiums if premium is not None))
+    if price_column == "roll_adjusted_open_price":
+        if "roll_adjusted_open_price" in expiring.columns:
+            open_prices = pd.to_numeric(expiring["roll_adjusted_open_price"], errors="coerce")
+        else:
+            open_prices = pd.Series(pd.NA, index=expiring.index, dtype="Float64")
+        if "open_price" in expiring.columns:
+            open_prices = open_prices.fillna(pd.to_numeric(expiring["open_price"], errors="coerce"))
+    else:
+        open_prices = pd.to_numeric(expiring[price_column], errors="coerce")
+    quantities = pd.to_numeric(expiring["qty"], errors="coerce").abs()
+    premium = (open_prices * quantities * CONTRACT_MULTIPLIER).dropna()
+    return float(premium.sum()) if not premium.empty else 0.0
 
 
 def _open_options_expiring_in_month(state, month_end: Optional[pd.Timestamp]) -> pd.DataFrame:
@@ -361,13 +376,14 @@ def _open_expiring_incremental_premium(
     state,
     month_end: Optional[pd.Timestamp],
     expiring_options: Optional[pd.DataFrame] = None,
+    price_column: str = "roll_adjusted_open_price",
 ) -> Optional[float]:
     if month_end is None:
         return None
     options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
     if options.empty:
         return 0.0
-    return _sum_open_expiring_premium_from_frame(options)
+    return _sum_open_expiring_premium_from_frame(options, month_end, price_column=price_column)
 
 
 def _monthly_projection_values(
@@ -438,10 +454,12 @@ def _monthly_projection_values(
             "cycle_projection": canonical_cycle,
         }
 
+    open_expiring_price_column = "open_price" if realized_month_pnl else "roll_adjusted_open_price"
     open_expiring_incremental_premium = _open_expiring_incremental_premium(
         state,
         month_end,
         expiring_options=expiring_options,
+        price_column=open_expiring_price_column,
     )
 
     projected_month_pnl = None
@@ -1245,13 +1263,12 @@ def _unrealized_split_by_ticker(state) -> Dict[str, Dict[str, float]]:
     )
 
     open_options = getattr(state, "open_options", pd.DataFrame())
-    if open_options is not None and not open_options.empty and {"ticker", "qty"}.issubset(open_options.columns):
+    if open_options is not None and not open_options.empty and {"ticker", "open_price", "qty"}.issubset(open_options.columns):
         options = open_options.copy()
         options["ticker"] = options["ticker"].astype(str).str.upper().str.strip()
+        options["open_price"] = pd.to_numeric(options["open_price"], errors="coerce")
         options["qty"] = pd.to_numeric(options["qty"], errors="coerce").abs()
-        options["premium"] = [
-            open_option_premium_from_row(row) or 0.0 for row in options.to_dict(orient="records")
-        ]
+        options["premium"] = options["open_price"] * options["qty"] * CONTRACT_MULTIPLIER
         for ticker, premium in options.loc[options["ticker"].ne("")].groupby("ticker")["premium"].sum().items():
             if pd.notna(premium):
                 rows[str(ticker)]["current_option_premium_unrealized_pnl"] += float(premium)
@@ -1915,7 +1932,9 @@ def build_open_option_short_rows(state, *, sort: str = "moneyness_risk", limit: 
         expiration = _date_string(row.get("expiration"))
         opened = _date_string(row.get("trans_date"))
         open_price = _number(row.get("open_price"))
-        roll_adjusted_open_price = canonical_open_price(open_price, row.get("roll_adjusted_open_price"))
+        roll_adjusted_open_price = _number(row.get("roll_adjusted_open_price"))
+        if roll_adjusted_open_price is None:
+            roll_adjusted_open_price = open_price
         current_price = _number(row.get("current_price"))
         moneyness = _number(row.get("moneyness_pct"))
         missing_price = current_price is None
@@ -1928,14 +1947,12 @@ def build_open_option_short_rows(state, *, sort: str = "moneyness_risk", limit: 
         premium_collected = None
         if open_price is not None and quantity is not None:
             premium_collected = abs(quantity) * open_price * CONTRACT_MULTIPLIER
-        roll_adjusted_premium_collected = open_option_premium_from_row(
-            {
-                "quantity": quantity,
-                "open_price": open_price,
-                "roll_adjusted_open_price": roll_adjusted_open_price,
-            }
-        )
+        roll_adjusted_premium_collected = None
+        if roll_adjusted_open_price is not None and quantity is not None:
+            roll_adjusted_premium_collected = abs(quantity) * roll_adjusted_open_price * CONTRACT_MULTIPLIER
         display_premium_collected = roll_adjusted_premium_collected
+        if display_premium_collected is None:
+            display_premium_collected = premium_collected
 
         rows.append(
             {

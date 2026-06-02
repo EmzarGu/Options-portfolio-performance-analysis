@@ -15,7 +15,6 @@ from portfolio_backend.models import (
     RealizedSale,
     StockTxn,
 )
-from portfolio_backend.option_accounting import canonical_open_price
 
 
 def _fill_numeric_columns(df: pd.DataFrame, columns: List[str], value: float = 0.0) -> pd.DataFrame:
@@ -388,8 +387,7 @@ def calculate_unrealized_positions(
 
     # Option unrealized (premium received) + short put stock component
     for lot in open_options:
-        open_price = canonical_open_price(lot.open_price, lot.roll_adjusted_open_price) or 0.0
-        premium_total = open_price * lot.qty * CONTRACT_MULTIPLIER
+        premium_total = lot.open_price * lot.qty * CONTRACT_MULTIPLIER
         per_ticker[lot.ticker] += premium_total
         if lot.otype == "Put":
             px = prices.get(lot.ticker)

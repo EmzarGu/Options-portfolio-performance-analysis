@@ -7,7 +7,6 @@ from typing import Any, Callable, Optional
 
 from portfolio_backend.cycle_projection import build_payload_cycle_projection
 from portfolio_backend.decision_lab_candidates import apply_option_market_candidates, recommendation_candidates
-from portfolio_backend.option_accounting import open_option_premium_from_row
 from portfolio_backend.option_market.history import historical_enrichment_to_probability_match
 
 
@@ -786,7 +785,12 @@ def _option_type(row: dict[str, Any]) -> str:
 
 
 def _open_short_premium(row: dict[str, Any]) -> float:
-    return open_option_premium_from_row(row) or 0.0
+    premium = _num(row.get("display_premium_collected"))
+    if premium is None:
+        premium = _num(row.get("roll_adjusted_premium_collected"))
+    if premium is None:
+        premium = _num(row.get("premium_collected"))
+    return premium or 0
 
 
 def _open_short_assignment_gap(row: dict[str, Any]) -> float:

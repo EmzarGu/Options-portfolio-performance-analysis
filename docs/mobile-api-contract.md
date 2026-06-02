@@ -212,15 +212,15 @@ Fields:
 
 - `snapshot.ytd_total_pnl`: null if `include_unrealized=true` and unrealized snapshot is blocked.
 - `snapshot.current_unrealized_pnl`, `current_option_unrealized_pnl`, `current_stock_unrealized_pnl`, `current_put_assignment_unrealized_pnl`: null if blocked by missing required prices.
-- `snapshot.current_option_unrealized_pnl`: includes effective open short option premium for all current open options and the assignment gap for open ITM puts. The assignment gap is `(current_price - strike) * contracts * 100`, so it is negative when assignment would create an immediate stock loss.
-- `snapshot.current_option_premium_unrealized_pnl`: effective open short option premium before subtracting the ITM put assignment gap. Rolled replacement premiums remain in this open component until the replacement lifecycle closes. This is a display/reconciliation subcomponent of `current_option_unrealized_pnl`, not an additional amount to add to total unrealized.
+- `snapshot.current_option_unrealized_pnl`: includes open short option premium and the assignment gap for open ITM puts. The assignment gap is `(current_price - strike) * contracts * 100`, so it is negative when assignment would create an immediate stock loss.
+- `snapshot.current_option_premium_unrealized_pnl`: open short option premium before subtracting the ITM put assignment gap. This is a display/reconciliation subcomponent of `current_option_unrealized_pnl`, not an additional amount to add to total unrealized.
 - `snapshot.current_stock_unrealized_pnl`: actual held-stock unrealized P&L only. Open ITM put assignment exposure is excluded because the shares are not owned yet.
 - `snapshot.itm_put_cash_required`: cash required to take assignment of currently ITM open puts at strike. `itm_put_market_value` is the current market value of those shares, and the difference is represented in `current_put_assignment_unrealized_pnl`.
 - `snapshot.available_cash`: reserved for an IBKR available-cash import. It is `null` until the import stores account cash balances.
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
-- `monthly_target.projected_month_pnl`: canonical active-cycle projection. It is realized cycle P&L plus open premium for the active expiration cycle, plus current stock unrealized P&L for the active current cycle when unrealized display is enabled.
+- `monthly_target.projected_month_pnl`: `realized_month_pnl + open_expiring_incremental_premium`.
 - `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
 - `monthly_target.*`: null for return/P&L fields if the required monthly capital denominator or source value is unavailable.
 - `open_option_short_preview`: sorted by moneyness risk, limited to 3-5 rows.
@@ -574,7 +574,7 @@ Nullability:
 - History row `id` is mandatory when `history` is populated. Use `year:{YYYY}:ticker:{ticker}`.
 - `unrealized_pnl` and `total_pnl` are `null` when unrealized snapshot is blocked.
 - `current_option_premium_unrealized_pnl`, `current_put_assignment_unrealized_pnl`, `current_option_unrealized_pnl`, and `current_stock_unrealized_pnl` are `null` when unrealized snapshot is blocked.
-- `current_option_premium_unrealized_pnl` is effective open short option premium by ticker. It is not realized P&L.
+- `current_option_premium_unrealized_pnl` is open short option premium by ticker. It is not realized P&L.
 - `current_put_assignment_unrealized_pnl` is the open ITM put assignment gap by ticker. It is negative when assignment would immediately create a stock loss.
 - `current_option_unrealized_pnl` is `current_option_premium_unrealized_pnl + current_put_assignment_unrealized_pnl`.
 - `current_stock_unrealized_pnl` is actual held-stock unrealized P&L by ticker. It excludes open put assignment exposure because those shares are not owned yet.
@@ -728,10 +728,10 @@ Nullability:
 - Month row `id` is mandatory and must follow the stable row ID rules above.
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
-- `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options. Rolled replacement premium remains open until the replacement closes, expires, or is assigned, so this field uses the same open-premium basis as the dashboard current unrealized option component.
+- `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting. For same-expiration rolls, replacement premium can be netted into the realized roll event, so this incremental field may be zero even while a rolled replacement remains open.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
 - `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`, `canonical_cycle_projection`.
-- `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`, plus current stock unrealized P&L for the active current cycle when unrealized display is enabled.
+- `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the canonical target-monitoring fields.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `current_month.cycle_projection` is the same canonical cycle projection shape used by web Decision Lab/current-cycle logic. Clients may use the scalar `current_month.projected_*` fields for display and `cycle_projection` for reconciliation/details.

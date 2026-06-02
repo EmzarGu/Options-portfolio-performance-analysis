@@ -334,6 +334,7 @@ def _process_roll_adjusted_option_executions(
             item.ib_exec_id or "",
         ),
     )
+    roll_allocations, rolled_sells = _plan_same_day_roll_allocations(ordered)
     open_map: dict[tuple, list[OptionLot]] = defaultdict(list)
     realized: list[OptionPnLEvent] = []
     all_lots: list[OptionLot] = []
@@ -369,18 +370,39 @@ def _process_roll_adjusted_option_executions(
             roll_adjusted_open_price=lot.roll_adjusted_open_price,
         )
 
+    def consume_roll_allocations(execution_index: int, qty: float) -> list[dict[str, float]]:
+        remaining = qty
+        consumed: list[dict[str, float]] = []
+        allocations = roll_allocations.get(execution_index, [])
+        while remaining > 1e-9 and allocations:
+            allocation = allocations[0]
+            take = min(remaining, allocation["qty"])
+            ratio = take / allocation["qty"]
+            net_cash = allocation["net_cash"] * ratio
+            consumed.append({"sell_index": allocation["sell_index"], "qty": take, "net_cash": net_cash})
+            allocation["qty"] -= take
+            allocation["net_cash"] -= net_cash
+            remaining -= take
+            if allocation["qty"] <= 1e-9:
+                allocations.pop(0)
+        return consumed
+
     def contract_multiplier(execution: IbkrOptionExecution) -> float:
         return float(execution.multiplier or CONTRACT_MULTIPLIER)
+
+    roll_adjusted_cash_by_sell_index: dict[int, float] = defaultdict(float)
 
     def add_open_lot(
         execution: IbkrOptionExecution,
         qty: float,
         net_cash: float,
+        *,
+        roll_adjusted_net_cash: float | None = None,
     ) -> None:
         if qty <= 1e-9:
             return
         multiplier = contract_multiplier(execution)
-        open_price = net_cash / (qty * multiplier)
+        roll_adjusted_cash = net_cash if roll_adjusted_net_cash is None else roll_adjusted_net_cash
         open_map[lot_key(execution)].append(
             OptionLot(
                 ticker=execution.ticker,
@@ -389,17 +411,27 @@ def _process_roll_adjusted_option_executions(
                 qty=int(round(qty)),
                 open_date=execution.date,
                 expiration=execution.expiration,
-                open_price=open_price,
+                open_price=net_cash / (qty * multiplier),
                 comment=_execution_comment(execution),
                 assigned=is_assigned(execution),
-                roll_adjusted_open_price=open_price,
+                roll_adjusted_open_price=roll_adjusted_cash / (qty * multiplier),
             )
         )
 
     for index, execution in enumerate(ordered):
         key = lot_key(execution)
         if execution.action == "Sell":
-            add_open_lot(execution, execution.qty, execution.net_cash)
+            rolled = rolled_sells.get(index, {"qty": 0.0, "net_cash": 0.0})
+            rolled_qty = min(float(rolled["qty"]), execution.qty)
+            add_open_lot(
+                execution,
+                rolled_qty,
+                0.0,
+                roll_adjusted_net_cash=roll_adjusted_cash_by_sell_index.get(index, 0.0),
+            )
+            residual_qty = execution.qty - rolled_qty
+            residual_cash = execution.net_cash - float(rolled["net_cash"])
+            add_open_lot(execution, residual_qty, residual_cash)
             continue
 
         qty_to_close = execution.qty
@@ -412,8 +444,18 @@ def _process_roll_adjusted_option_executions(
             lot = buckets[0]
             take = min(qty_to_close, lot.qty)
             buy_cash = execution.net_cash * (take / execution.qty)
+            roll_contributions = consume_roll_allocations(index, take)
             multiplier = contract_multiplier(execution)
-            pnl = lot.open_price * take * multiplier + buy_cash
+            roll_credit = sum(contribution["net_cash"] for contribution in roll_contributions)
+            pnl = lot.open_price * take * multiplier + buy_cash + roll_credit
+            for contribution in roll_contributions:
+                contribution_qty = contribution["qty"]
+                contribution_cash = (
+                    lot.open_price * contribution_qty * multiplier
+                    + execution.net_cash * (contribution_qty / execution.qty)
+                    + contribution["net_cash"]
+                )
+                roll_adjusted_cash_by_sell_index[int(contribution["sell_index"])] += contribution_cash
             close_debit_price = max(-buy_cash / (take * multiplier), 0.0)
             realized.append(
                 OptionPnLEvent(
@@ -487,6 +529,51 @@ def _process_roll_adjusted_option_executions(
         all_lots,
         issues,
     )
+
+
+def _plan_same_day_roll_allocations(
+    executions: list[IbkrOptionExecution],
+) -> tuple[dict[int, list[dict[str, float]]], dict[int, dict[str, float]]]:
+    by_group: dict[tuple, list[tuple[int, IbkrOptionExecution]]] = defaultdict(list)
+    for index, execution in enumerate(executions):
+        exec_group = _ibkr_roll_execution_group(execution.ib_exec_id)
+        if exec_group is None:
+            continue
+        by_group[(execution.date, execution.ticker, execution.otype, exec_group)].append((index, execution))
+
+    roll_allocations: dict[int, list[dict[str, float]]] = defaultdict(list)
+    rolled_sells: dict[int, dict[str, float]] = defaultdict(lambda: {"qty": 0.0, "net_cash": 0.0})
+    for rows in by_group.values():
+        buys = [
+            {"index": index, "execution": execution, "remaining": execution.qty}
+            for index, execution in rows
+            if execution.action == "Buy"
+            and execution.open_close == "C"
+            and abs(execution.net_cash) > 1e-9
+            and execution.ib_exec_id
+        ]
+        sells = [
+            {"index": index, "execution": execution, "remaining": execution.qty}
+            for index, execution in rows
+            if execution.action == "Sell" and execution.open_close == "O" and execution.ib_exec_id
+        ]
+        for buy in buys:
+            for sell in sells:
+                if buy["remaining"] <= 1e-9:
+                    break
+                if sell["remaining"] <= 1e-9:
+                    continue
+                take = min(buy["remaining"], sell["remaining"])
+                sell_execution = sell["execution"]
+                net_cash = sell_execution.net_cash * (take / sell_execution.qty)
+                roll_allocations[buy["index"]].append(
+                    {"sell_index": sell["index"], "qty": take, "net_cash": net_cash}
+                )
+                rolled_sells[sell["index"]]["qty"] += take
+                rolled_sells[sell["index"]]["net_cash"] += net_cash
+                buy["remaining"] -= take
+                sell["remaining"] -= take
+    return roll_allocations, rolled_sells
 
 
 def _ibkr_roll_execution_group(ib_exec_id: Optional[str]) -> Optional[str]:
