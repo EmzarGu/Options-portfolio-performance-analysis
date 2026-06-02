@@ -702,17 +702,17 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "open_expiring_roll_adjusted_premium": 625.0,
         "open_expiring_intrinsic_value_gap": -5000.0,
         "open_expiring_option_unrealized_pnl": -4375.0,
-        "projected_month_pnl": 925.0,
-        "projected_return_roac": 0.0925,
-        "projected_return_ropc": 0.07708333333333334,
+        "projected_month_pnl": 725.0,
+        "projected_return_roac": 0.0725,
+        "projected_return_ropc": 0.06041666666666667,
         "projected_remaining_pnl": 0.0,
-        "current_unrealized_pnl": 200.0,
-        "risk_adjusted_projected_month_pnl": 925.0,
-        "risk_adjusted_projected_return_roac": 0.0925,
-        "risk_adjusted_projected_return_ropc": 0.07708333333333334,
-        "risk_adjusted_projected_remaining_pnl": 0.0,
-        "risk_adjusted_monthly_target_status": "beat",
-        "risk_adjusted_projection_basis": "canonical_cycle_projected_pnl",
+        "current_unrealized_pnl": -4375.0,
+        "risk_adjusted_projected_month_pnl": -4275.0,
+        "risk_adjusted_projected_return_roac": -0.4275,
+        "risk_adjusted_projected_return_ropc": -0.35625,
+        "risk_adjusted_projected_remaining_pnl": 4425.0,
+        "risk_adjusted_monthly_target_status": "below_target",
+        "risk_adjusted_projection_basis": "realized_plus_open_expiring_option_unrealized",
         "includes_current_unrealized": True,
         "monthly_target_status": "beat",
         "includes_open_premium": True,
@@ -1163,18 +1163,18 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
             "open_expiring_option_unrealized_pnl": -4375.0,
             "includes_open_premium": True,
             "projection_basis": "realized_plus_open_premium",
-            "projected_month_pnl": 925.0,
-            "projected_return_roac": 0.0925,
-            "projected_return_ropc": 0.07708333333333334,
+            "projected_month_pnl": 725.0,
+            "projected_return_roac": 0.0725,
+            "projected_return_ropc": 0.06041666666666667,
             "target_pnl": 150.0,
             "projected_remaining_pnl": 0.0,
-            "current_unrealized_pnl": 200.0,
-            "risk_adjusted_projected_month_pnl": 925.0,
-            "risk_adjusted_projected_return_roac": 0.0925,
-            "risk_adjusted_projected_return_ropc": 0.07708333333333334,
-            "risk_adjusted_projected_remaining_pnl": 0.0,
-            "risk_adjusted_monthly_target_status": "beat",
-            "risk_adjusted_projection_basis": "canonical_cycle_projected_pnl",
+            "current_unrealized_pnl": -4375.0,
+            "risk_adjusted_projected_month_pnl": -4275.0,
+            "risk_adjusted_projected_return_roac": -0.4275,
+            "risk_adjusted_projected_return_ropc": -0.35625,
+            "risk_adjusted_projected_remaining_pnl": 4425.0,
+            "risk_adjusted_monthly_target_status": "below_target",
+            "risk_adjusted_projection_basis": "realized_plus_open_expiring_option_unrealized",
             "includes_current_unrealized": True,
             "monthly_target_status": "beat",
         },
@@ -1190,9 +1190,9 @@ def test_monthly_performance_rows_support_ranges_and_missing_capital():
     assert [row["id"] for row in rows] == ["month:2026-04-30", "month:2026-05-31"]
     assert rows[1]["return_roac"] is None
     assert rows[1]["status"] == "unavailable"
-    assert rows[1]["projected_return_roac"] == pytest.approx(0.07708333333333334)
-    assert rows[1]["projected_return_ropc"] == pytest.approx(0.07708333333333334)
-    assert rows[1]["monthly_target_status"] == "beat"
+    assert rows[1]["projected_return_roac"] is None
+    assert rows[1]["projected_return_ropc"] == pytest.approx(0.06041666666666667)
+    assert rows[1]["monthly_target_status"] == "unavailable"
 
     with pytest.raises(ValueError):
         build_monthly_performance_rows(state, monthly_range="unsupported")
@@ -1201,18 +1201,44 @@ def test_monthly_performance_rows_support_ranges_and_missing_capital():
 def test_future_monthly_performance_rows_emit_open_expiry_months():
     rows = build_future_monthly_performance_rows(_mobile_state_with_future_september(), target_return=0.015)
 
-    assert [row["id"] for row in rows] == ["month:2026-06-30", "month:2026-09-30"]
-    assert rows[0]["open_ticker_count"] == 1
-    assert rows[0]["open_option_count"] == 2
-    assert rows[0]["open_expiring_incremental_premium"] == pytest.approx(200.0)
-    assert rows[0]["projected_month_pnl"] == pytest.approx(200.0)
-    assert rows[0]["projected_return_roac"] == pytest.approx(0.02)
-    assert rows[0]["target_pnl"] == pytest.approx(150.0)
-    assert rows[0]["projection_basis"] == "canonical_cycle_projection"
-    assert rows[0]["cycle_projection"]["projected_cycle_pnl"] == pytest.approx(200.0)
-    assert rows[1]["open_expiring_incremental_premium"] == pytest.approx(300.0)
-    assert rows[1]["projected_month_pnl"] == pytest.approx(300.0)
-    assert rows[1]["projected_return_roac"] == pytest.approx(0.03)
+    assert rows == [
+        {
+            "id": "month:2026-06-30",
+            "month": "2026-06-30",
+            "open_option_count": 1,
+            "open_ticker_count": 1,
+            "open_expiring_option_premium": 200.0,
+            "open_expiring_incremental_premium": 200.0,
+            "open_expiring_roll_adjusted_premium": 200.0,
+            "open_expiring_intrinsic_value_gap": 0.0,
+            "open_expiring_option_unrealized_pnl": 200.0,
+            "projected_month_pnl": 200.0,
+            "projected_return_roac": None,
+            "projected_return_ropc": None,
+            "target_pnl": None,
+            "projected_remaining_pnl": None,
+            "includes_open_premium": True,
+            "projection_basis": "realized_plus_open_premium",
+        },
+        {
+            "id": "month:2026-09-30",
+            "month": "2026-09-30",
+            "open_option_count": 1,
+            "open_ticker_count": 1,
+            "open_expiring_option_premium": 300.0,
+            "open_expiring_incremental_premium": 300.0,
+            "open_expiring_roll_adjusted_premium": 350.0,
+            "open_expiring_intrinsic_value_gap": 0.0,
+            "open_expiring_option_unrealized_pnl": 300.0,
+            "projected_month_pnl": 300.0,
+            "projected_return_roac": None,
+            "projected_return_ropc": None,
+            "target_pnl": None,
+            "projected_remaining_pnl": None,
+            "includes_open_premium": True,
+            "projection_basis": "realized_plus_open_premium",
+        },
+    ]
 
 
 def test_current_month_performance_uses_active_cycle_when_month_row_missing():
@@ -1284,19 +1310,19 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "open_expiring_option_unrealized_pnl": -4375.0,
         "includes_open_premium": True,
         "projection_basis": "realized_plus_open_premium",
-        "projected_month_pnl": 925.0,
-        "projected_return_roac": 0.0925,
-        "projected_return_ropc": 0.07708333333333334,
+        "projected_month_pnl": 725.0,
+        "projected_return_roac": 0.0725,
+        "projected_return_ropc": 0.06041666666666667,
         "target_pnl": 150.0,
         "remaining_pnl": 50.0,
         "projected_remaining_pnl": 0.0,
-        "current_unrealized_pnl": 200.0,
-        "risk_adjusted_projected_month_pnl": 925.0,
-        "risk_adjusted_projected_return_roac": 0.0925,
-        "risk_adjusted_projected_return_ropc": 0.07708333333333334,
-        "risk_adjusted_projected_remaining_pnl": 0.0,
-        "risk_adjusted_monthly_target_status": "beat",
-        "risk_adjusted_projection_basis": "canonical_cycle_projected_pnl",
+        "current_unrealized_pnl": -4375.0,
+        "risk_adjusted_projected_month_pnl": -4275.0,
+        "risk_adjusted_projected_return_roac": -0.4275,
+        "risk_adjusted_projected_return_ropc": -0.35625,
+        "risk_adjusted_projected_remaining_pnl": 4425.0,
+        "risk_adjusted_monthly_target_status": "below_target",
+        "risk_adjusted_projection_basis": "realized_plus_open_expiring_option_unrealized",
         "includes_current_unrealized": True,
         "avg_capital": 10000.0,
         "peak_capital": 12000.0,
