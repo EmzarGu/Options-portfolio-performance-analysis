@@ -5,6 +5,8 @@ from typing import Dict, List, TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from portfolio_backend.option_accounting import canonical_open_price
+
 if TYPE_CHECKING:
     from portfolio_backend.models import OptionLot
 
@@ -30,9 +32,7 @@ def build_open_options_frame(open_option_lots: List["OptionLot"]) -> pd.DataFram
                 "expiration": lot.expiration,
                 "trans_date": lot.open_date,
                 "open_price": lot.open_price,
-                "roll_adjusted_open_price": lot.roll_adjusted_open_price
-                if lot.roll_adjusted_open_price is not None
-                else lot.open_price,
+                "roll_adjusted_open_price": canonical_open_price(lot.open_price, lot.roll_adjusted_open_price),
             }
             for lot in open_option_lots
         ]
