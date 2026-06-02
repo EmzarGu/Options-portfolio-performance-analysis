@@ -788,29 +788,39 @@ function monthlyRows(){
 }
 function monthlyChartRows(){
   const rows = monthlyRows();
-  const seen = new Set(rows.map(row => fmtDate(row.month)));
   const activeCycle = decisionActiveCycle();
   const activeMonth = activeCycle.cycle ? `${activeCycle.cycle}-01` : null;
-  const future = activeMonth && !seen.has(fmtDate(activeMonth)) ? [activeCycleMonthlyRow(activeCycle)] : [];
-  return [...rows, ...future].filter(Boolean).sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+  const activeRow = activeCycleMonthlyRow(activeCycle);
+  let foundActive = false;
+  const merged = rows.map(row => {
+    if (activeMonth && activeRow && fmtDate(row.month).slice(0,7) === fmtDate(activeMonth).slice(0,7)) {
+      foundActive = true;
+      return {...row, ...activeRow};
+    }
+    return row;
+  });
+  if (activeRow && !foundActive) merged.push(activeRow);
+  return merged.filter(Boolean).sort((a,b)=>String(a.month).localeCompare(String(b.month)));
 }
 function activeCycleMonthlyRow(c){
   if (!c || !c.cycle) return null;
+  const projected = numeric(c.projected_pnl ?? c.projected_cycle_pnl ?? c.projected_month_pnl);
+  const projectedReturn = numeric(c.projected_return_roac);
   return {
     month: `${c.cycle}-01`,
     realized_options_pnl: c.realized_cycle_pnl,
     realized_stock_pnl: c.stock_unrealized_pnl,
     dividends: 0,
-    total_realized_pnl: c.projected_pnl,
+    total_realized_pnl: projected,
     avg_capital: c.target_base,
     peak_capital: c.target_base,
-    return_roac: c.projected_return_roac,
-    return_ropc: c.projected_return_roac,
-    projected_month_pnl: c.projected_pnl,
-    projected_return_roac: c.projected_return_roac,
+    return_roac: projectedReturn,
+    return_ropc: projectedReturn,
+    projected_month_pnl: projected,
+    projected_return_roac: projectedReturn,
     target_pnl: c.target_pnl,
     projected_remaining_pnl: c.remaining_to_target,
-    monthly_target_status: c.projected_return_roac >= (c.target_return ?? targetReturn()) ? "Beat Target" : "Below Target",
+    monthly_target_status: c.monthly_target_status || (projectedReturn >= (c.target_return ?? targetReturn()) ? "Beat Target" : "Below Target"),
     is_active_cycle_projection: true
   };
 }
@@ -825,28 +835,28 @@ function futureCycleRows(){
         open_ticker_count: active.open_ticker_count ?? row.open_ticker_count ?? row.open_option_count,
         open_option_count: active.open_contract_count ?? row.open_option_count,
         realized_cycle_pnl: active.realized_cycle_pnl,
-        open_premium_collected: active.premium_component,
+        open_premium_collected: active.open_premium_collected ?? active.premium_component,
         stock_unrealized_pnl: active.stock_unrealized_pnl,
         itm_put_unrealized_loss: active.itm_put_unrealized_loss,
-        projected_cycle_pnl: active.projected_pnl,
+        projected_cycle_pnl: active.projected_pnl ?? active.projected_cycle_pnl,
         target_pnl: active.target_pnl,
         remaining_to_target: active.remaining_to_target,
         projected_return_roac: active.projected_return_roac,
       };
     }
-    const premium = numeric(row.open_expiring_incremental_premium ?? row.open_expiring_option_premium) || 0;
+    const cycle = row.cycle_projection || {};
     return {
       month: row.month,
       open_ticker_count: row.open_ticker_count ?? row.open_option_count,
       open_option_count: row.open_option_count,
-      realized_cycle_pnl: 0,
-      open_premium_collected: premium,
-      stock_unrealized_pnl: null,
-      itm_put_unrealized_loss: null,
-      projected_cycle_pnl: premium,
-      target_pnl: null,
-      remaining_to_target: null,
-      projected_return_roac: null,
+      realized_cycle_pnl: cycle.realized_cycle_pnl ?? 0,
+      open_premium_collected: cycle.open_premium_collected ?? row.open_expiring_incremental_premium ?? row.open_expiring_option_premium,
+      stock_unrealized_pnl: cycle.stock_unrealized_pnl ?? null,
+      itm_put_unrealized_loss: cycle.itm_put_unrealized_loss ?? null,
+      projected_cycle_pnl: cycle.projected_cycle_pnl ?? row.projected_month_pnl,
+      target_pnl: cycle.target_pnl ?? row.target_pnl ?? null,
+      remaining_to_target: cycle.remaining_to_target ?? row.projected_remaining_pnl ?? null,
+      projected_return_roac: cycle.projected_return_roac ?? row.projected_return_roac ?? null,
     };
   });
 }
@@ -867,14 +877,14 @@ function decisionData(){
   return data.decision_lab || {};
 }
 function decisionActiveCycle(){
-  return decisionData().active_cycle || {};
+  return (data.monthly || {}).active_cycle || ((data.dashboard || {}).monthly_target || {}).cycle_projection || decisionData().active_cycle || {};
 }
 function activeCycleWaterfall(c){
   const parts = [
     ["Realized cycle P&L", c.realized_cycle_pnl],
-    ["Open premium collected", c.premium_component],
+    ["Open premium collected", c.open_premium_collected ?? c.premium_component],
     ["Stock unrealized P&L", c.stock_unrealized_pnl],
-    ["Projected cycle P&L", c.projected_pnl],
+    ["Projected cycle P&L", c.projected_pnl ?? c.projected_cycle_pnl],
     ["Target P&L", c.target_pnl],
     ["Remaining", c.remaining_to_target],
   ];

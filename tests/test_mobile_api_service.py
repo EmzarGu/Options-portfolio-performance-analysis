@@ -132,6 +132,7 @@ def test_mobile_payload_wrappers_emit_expected_top_level_shapes(monkeypatch):
         "target_return",
         "target_basis",
         "return_metric",
+        "active_cycle",
         "current_month",
         "months",
         "future_months",

@@ -478,6 +478,21 @@ def _current_state(
 
 
 def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
+    canonical = ((payload.get("monthly") or {}).get("active_cycle") or {})
+    if not canonical:
+        canonical = ((payload.get("dashboard") or {}).get("monthly_target") or {}).get("cycle_projection") or {}
+    if canonical:
+        out = dict(canonical)
+        target_return = _num(out.get("target_return")) or _num((payload.get("web") or {}).get("target_return")) or 0.02
+        target_floor = _num((payload.get("web") or {}).get("target_floor")) or _num(out.get("target_floor")) or 0.01
+        out["premium_component"] = _num(out.get("open_premium_collected")) or 0.0
+        out["projected_pnl"] = _num(out.get("projected_cycle_pnl"))
+        out["target_return"] = target_return
+        out["target_floor"] = target_floor
+        out["remaining_to_target"] = _num(out.get("remaining_to_target"))
+        out["projected_return_roac"] = _num(out.get("projected_return_roac"))
+        return out
+
     open_rows = _open_short_rows(payload)
     today = _as_of_date(payload)
     dated_rows = [(row, _parse_date(row.get("expiration"))) for row in open_rows]
