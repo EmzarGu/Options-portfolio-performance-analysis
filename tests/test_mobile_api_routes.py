@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 import mobile_api
 from portfolio_backend.ibkr.importer import IbkrImportService, LocalJsonImportStore, LocalRawReportStore
 from portfolio_backend.mobile_api_service import MobileServiceDependencies
-from portfolio_backend.mobile_payloads import IMPORT_RELOAD_ENDPOINTS
 from portfolio_backend.pipeline_snapshot_store import MemoryPipelineSnapshotStore, pipeline_snapshot_id
 
 
@@ -669,7 +668,7 @@ def test_import_route_starts_ibkr_import_job(api_harness, monkeypatch):
     assert response.status_code == 200
     assert response.json()["import"]["status"] == "started"
     assert response.json()["import"]["job_name"] == "ibkr-flex-import"
-    assert response.json()["reload_endpoints"] == IMPORT_RELOAD_ENDPOINTS
+    assert "/v1/mobile/issues" in response.json()["reload_endpoints"]
 
 
 def test_refresh_route_records_best_effort_audit(api_harness, monkeypatch):

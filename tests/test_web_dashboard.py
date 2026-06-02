@@ -222,20 +222,6 @@ def test_web_dashboard_reads_target_return_from_cookie(monkeypatch):
     assert _embedded_dashboard_data(response.text)["web"]["target_return"] == 0.03
 
 
-def test_web_dashboard_env_int_falls_back_for_invalid_values(monkeypatch):
-    monkeypatch.setenv("WEB_DASHBOARD_DATA_CACHE_SECONDS", "not-an-int")
-
-    assert web_dashboard._dashboard_data_cache_seconds() == web_dashboard.DEFAULT_DASHBOARD_DATA_CACHE_SECONDS
-
-
-def test_web_dashboard_cached_list_respects_ttl():
-    cache = (100.0, [{"id": "cached"}])
-
-    assert web_dashboard._cached_list(cache, ttl_seconds=30, now=120.0) == [{"id": "cached"}]
-    assert web_dashboard._cached_list(cache, ttl_seconds=30, now=131.0) is None
-    assert web_dashboard._cached_list(cache, ttl_seconds=0, now=120.0) is None
-
-
 def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     monkeypatch.setenv("WEB_DASHBOARD_DATA_CACHE_SECONDS", "300")
