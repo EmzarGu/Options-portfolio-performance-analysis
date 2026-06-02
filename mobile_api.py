@@ -1258,7 +1258,6 @@ def get_mobile_dashboard(
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
-    target_return: float = 0.015,
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     return build_mobile_dashboard_payload(
@@ -1267,8 +1266,7 @@ def get_mobile_dashboard(
             include_unrealized=include_unrealized,
             selected_sheets=selected_sheets,
             cache_bust=cache_bust,
-        ),
-        target_return=target_return,
+        )
     )
 
 

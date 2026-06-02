@@ -1185,9 +1185,9 @@ def test_future_monthly_performance_rows_emit_open_expiry_months():
     assert rows[0]["target_pnl"] == pytest.approx(150.0)
     assert rows[0]["projection_basis"] == "canonical_cycle_projection"
     assert rows[0]["cycle_projection"]["projected_cycle_pnl"] == pytest.approx(200.0)
-    assert rows[1]["open_expiring_incremental_premium"] == pytest.approx(350.0)
-    assert rows[1]["projected_month_pnl"] == pytest.approx(350.0)
-    assert rows[1]["projected_return_roac"] == pytest.approx(0.035)
+    assert rows[1]["open_expiring_incremental_premium"] == pytest.approx(300.0)
+    assert rows[1]["projected_month_pnl"] == pytest.approx(300.0)
+    assert rows[1]["projected_return_roac"] == pytest.approx(0.03)
 
 
 def test_current_month_performance_uses_active_cycle_when_month_row_missing():

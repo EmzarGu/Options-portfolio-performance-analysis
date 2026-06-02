@@ -72,8 +72,8 @@ def api_harness(monkeypatch):
         calls.contexts.append(context)
         return context
 
-    def build_dashboard(context, *, target_return=0.015):
-        calls.builders["dashboard"] = {"context": context, "target_return": target_return}
+    def build_dashboard(context):
+        calls.builders["dashboard"] = context
         return {
             "request": _request_payload(context),
             "data_freshness": {},
@@ -750,7 +750,7 @@ def test_read_routes_reuse_context_for_same_request(api_harness):
     assert dashboard_response.status_code == 200
     assert positions_response.status_code == 200
     assert len(api_harness.calls.contexts) == 1
-    assert api_harness.calls.builders["dashboard"]["context"] is api_harness.calls.builders["positions"]
+    assert api_harness.calls.builders["dashboard"] is api_harness.calls.builders["positions"]
 
 
 def test_refresh_updates_default_read_cache_bust(api_harness):
@@ -760,7 +760,7 @@ def test_refresh_updates_default_read_cache_bust(api_harness):
     assert refresh_response.status_code == 200
     assert dashboard_response.status_code == 200
     assert len(api_harness.calls.contexts) == 1
-    assert api_harness.calls.builders["dashboard"]["context"].request.cache_bust == 123
+    assert api_harness.calls.builders["dashboard"].request.cache_bust == 123
 
 
 @pytest.mark.parametrize(
@@ -829,14 +829,6 @@ def test_monthly_route_parses_target_and_range(api_harness):
     builder_call = api_harness.calls.builders["monthly"]
     assert builder_call["target_return"] == pytest.approx(0.02)
     assert builder_call["monthly_range"] == "3m"
-
-
-def test_dashboard_route_parses_target_return(api_harness):
-    response = api_harness.client.get("/v1/mobile/dashboard?target_return=0.02")
-
-    assert response.status_code == 200
-    builder_call = api_harness.calls.builders["dashboard"]
-    assert builder_call["target_return"] == pytest.approx(0.02)
 
 
 @pytest.mark.parametrize(
