@@ -319,7 +319,10 @@ def _monthly_projection_values(
     avg_capital = _number(row.get("avg_capital"))
     peak_capital = _number(row.get("peak_capital"))
     realized_month_pnl = _number(row.get("total_realized_pnl"))
-    open_expiring_incremental_premium = _open_expiring_incremental_premium(state, month_end)
+    as_of_ts = pd.to_datetime(getattr(state, "as_of", None), errors="coerce")
+    as_of_month = None if pd.isna(as_of_ts) else as_of_ts.to_period("M").to_timestamp("M")
+    month_is_closed = month_end is not None and as_of_month is not None and month_end < as_of_month
+    open_expiring_incremental_premium = 0.0 if month_is_closed else _open_expiring_incremental_premium(state, month_end)
     open_expiring_option_premium = open_expiring_incremental_premium
 
     projected_month_pnl = None
@@ -536,14 +539,19 @@ def _cycle_projection(
 
     stock_unrealized_pnl = None
     itm_put_unrealized_loss = cycle_unrealized["put_gap"]
+    itm_call_stock_pnl = cycle_unrealized.get("itm_call_stock_pnl", 0.0)
     if not bool(getattr(state, "unrealized_blocked", False)):
         stock_unrealized_pnl = cycle_unrealized["stock_unrealized"]
 
+    # Monthly/cycle target P&L follows the documented accounting projection:
+    # realized cycle P&L plus open premium for options expiring in the cycle,
+    # adjusted only for ITM options whose expiry/assignment economics would be
+    # realized in that same cycle. Broad stock unrealized P&L is not additive.
     projected_cycle_pnl = projection["projected_month_pnl"]
     if projected_cycle_pnl is not None and itm_put_unrealized_loss is not None:
         projected_cycle_pnl += itm_put_unrealized_loss
-    if projected_cycle_pnl is not None and stock_unrealized_pnl is not None:
-        projected_cycle_pnl += stock_unrealized_pnl
+    if projected_cycle_pnl is not None and itm_call_stock_pnl is not None:
+        projected_cycle_pnl += itm_call_stock_pnl
 
     target_base = projection["target_pnl"] / target_return if projection["target_pnl"] is not None and target_return else None
     projected_return_roac = projected_cycle_pnl / target_base if projected_cycle_pnl is not None and target_base not in (None, 0) else None
@@ -565,6 +573,7 @@ def _cycle_projection(
         "open_expiring_option_premium": json_safe(projection["open_expiring_option_premium"]),
         "open_expiring_incremental_premium": json_safe(projection["open_expiring_incremental_premium"]),
         "stock_unrealized_pnl": json_safe(stock_unrealized_pnl),
+        "itm_call_stock_pnl": json_safe(itm_call_stock_pnl),
         "projected_cycle_pnl": json_safe(projected_cycle_pnl),
         "projected_month_pnl": json_safe(projected_cycle_pnl),
         "target_return": json_safe(float(target_return)),

@@ -541,10 +541,11 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
     itm_put_unrealized_loss = _sum(
         [gap for gap in [_open_short_assignment_gap(row) for row in cycle_puts] if gap < 0]
     )
+    itm_call_stock_pnl = _itm_call_assignment_stock_pnl(cycle_rows, _inventory_rows(payload))
     projected_pnl = _num(cycle_month_row.get("projected_month_pnl")) if cycle_month_row else None
     if projected_pnl is None:
         projected_pnl = realized_cycle_pnl + premium_component
-    projected_pnl = projected_pnl + stock_unrealized_pnl + itm_put_unrealized_loss
+    projected_pnl = projected_pnl + itm_put_unrealized_loss + itm_call_stock_pnl
     covered_call_upside_foregone = _sum(
         [
             gap
@@ -576,6 +577,7 @@ def _active_cycle(payload: dict[str, Any]) -> dict[str, Any]:
         "realized_cycle_pnl": realized_cycle_pnl,
         "premium_component": premium_component,
         "stock_unrealized_pnl": stock_unrealized_pnl,
+        "itm_call_stock_pnl": itm_call_stock_pnl,
         "itm_put_unrealized_loss": itm_put_unrealized_loss,
         "covered_call_upside_foregone": covered_call_upside_foregone,
         "projected_pnl": projected_pnl,
@@ -943,6 +945,41 @@ def _covered_call_upside_foregone(row: dict[str, Any]) -> float:
     if strike is None or current is None or not qty or not _option_type(row).startswith("call"):
         return 0.0
     return -max(current - strike, 0) * 100 * qty
+
+
+def _itm_call_assignment_stock_pnl(option_rows: list[dict[str, Any]], inventory_rows: list[dict[str, Any]]) -> float:
+    inventory_by_ticker: dict[str, list[dict[str, float]]] = {}
+    for row in inventory_rows:
+        ticker = str(row.get("ticker") or "").upper().strip()
+        shares = _num(row.get("shares"))
+        cost = _num(row.get("cost_per_share"))
+        if not ticker or shares is None or shares <= 0 or cost is None:
+            continue
+        inventory_by_ticker.setdefault(ticker, []).append({"shares": float(shares), "cost": float(cost)})
+
+    total = 0.0
+    call_rows = sorted(
+        [row for row in option_rows if _option_type(row).startswith("call")],
+        key=lambda row: (_num(row.get("strike")) or 0.0),
+    )
+    for row in call_rows:
+        ticker = str(row.get("ticker") or "").upper().strip()
+        strike = _num(row.get("strike"))
+        current = _num(row.get("current_price"))
+        qty = abs(_num(row.get("quantity")) or 0)
+        if not ticker or strike is None or current is None or current <= strike or not qty:
+            continue
+        shares_needed = qty * 100
+        queue = inventory_by_ticker.get(ticker, [])
+        while shares_needed > 0 and queue:
+            lot = queue[0]
+            use = min(shares_needed, lot["shares"])
+            total += (strike - lot["cost"]) * use
+            lot["shares"] -= use
+            shares_needed -= use
+            if lot["shares"] <= 0:
+                queue.pop(0)
+    return float(total)
 
 
 def _put_exposure(rows: list[dict[str, Any]]) -> float:

@@ -636,6 +636,7 @@ def test_cycle_unrealized_components_reuse_accounting_rules_for_scoped_options()
 
     assert components["option_premium"] == pytest.approx(400.0)
     assert components["put_gap"] == pytest.approx(-300.0)
+    assert components["itm_call_stock_pnl"] == pytest.approx(1000.0)
     assert components["stock_unrealized"] == pytest.approx(1000.0)
     assert components["total_unrealized"] == pytest.approx(1100.0)
 

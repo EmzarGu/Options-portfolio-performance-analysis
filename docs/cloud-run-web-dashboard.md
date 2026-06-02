@@ -33,6 +33,12 @@ month block shows cash required to take assignment of all currently ITM puts.
 IBKR available cash is not displayed until the import explicitly stores account
 cash balances.
 
+Active and future option-cycle projections are shared with the mobile payload.
+They add realized cycle P&L, open premium for options expiring in the cycle,
+ITM put assignment P&L, and ITM covered-call stock P&L that would be realized
+by assignment in that same expiry cycle. They do not add broad current held-stock
+unrealized P&L for OTM calls or unrelated holdings.
+
 Manual refresh is source-aware and Firestore-backed. The server first checks the
 latest successful IBKR import marker. If the marker is unchanged, it restores
 the persisted base pipeline from Firestore `pipeline_snapshots`, refreshes only

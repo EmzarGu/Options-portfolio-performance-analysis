@@ -196,7 +196,8 @@ def test_web_dashboard_uses_standard_monthly_projection_terms():
     assert "Open option net" not in DASHBOARD_HTML
     assert "Target-view P&L" not in DASHBOARD_HTML
     assert "Projected cycle P&L" in DASHBOARD_HTML
-    assert "Stock unrealized P&L" in DASHBOARD_HTML
+    assert "ITM call stock P&L" in DASHBOARD_HTML
+    assert "ITM put assignment P&L" in DASHBOARD_HTML
 
 
 def test_web_dashboard_passes_target_return_from_query(monkeypatch):

@@ -120,12 +120,14 @@ def calculate_option_cycle_unrealized_components(
         return {
             "option_premium": 0.0,
             "put_gap": 0.0,
+            "itm_call_stock_pnl": 0.0,
             "stock_unrealized": 0.0,
             "total_unrealized": 0.0,
         }
 
     inv_df, _, total_unrealized = calculate_unrealized_positions(option_lots, inventory_lots, prices or {})
     option_premium = sum(lot.open_price * lot.qty * CONTRACT_MULTIPLIER for lot in option_lots)
+    itm_call_stock_pnl = _itm_call_assignment_stock_pnl(option_lots, inventory_lots, prices or {})
     put_gap = 0.0
     stock_unrealized = 0.0
     if inv_df is not None and not inv_df.empty and {"source", "unrealized_pnl"}.issubset(inv_df.columns):
@@ -136,9 +138,60 @@ def calculate_option_cycle_unrealized_components(
     return {
         "option_premium": float(option_premium),
         "put_gap": float(put_gap),
+        "itm_call_stock_pnl": float(itm_call_stock_pnl),
         "stock_unrealized": float(stock_unrealized),
         "total_unrealized": float(total_unrealized),
     }
+
+
+def _itm_call_assignment_stock_pnl(
+    option_lots: List[OptionLot],
+    inventory_lots: List[OpenLot],
+    prices: Dict[str, Any],
+) -> float:
+    """Projected stock P&L for covered calls currently ITM in the cycle.
+
+    This is an expiry/assignment component, not a broad unrealized-stock
+    snapshot. OTM covered calls do not realize stock in the cycle, so their
+    current stock P&L is intentionally excluded from this component.
+    """
+
+    calls_by_ticker: Dict[str, List[OptionLot]] = defaultdict(list)
+    for lot in option_lots:
+        px = _number(prices.get(lot.ticker))
+        if lot.otype == "Call" and lot.qty > 0 and px is not None and px > lot.strike:
+            calls_by_ticker[lot.ticker].append(lot)
+    if not calls_by_ticker:
+        return 0.0
+
+    inv_by_ticker: Dict[str, List[OpenLot]] = defaultdict(list)
+    for lot in inventory_lots:
+        inv_by_ticker[lot.ticker].append(
+            OpenLot(
+                ticker=lot.ticker,
+                buy_date=lot.buy_date,
+                shares_remaining=int(lot.shares_remaining),
+                cost_per_share=float(lot.cost_per_share),
+            )
+        )
+    for lots in inv_by_ticker.values():
+        lots.sort(key=lambda lot: pd.Timestamp.max if pd.isna(lot.buy_date) else lot.buy_date)
+
+    total = 0.0
+    for ticker, calls in calls_by_ticker.items():
+        calls.sort(key=lambda lot: lot.strike)
+        inventory_queue = inv_by_ticker.get(ticker, [])
+        for call in calls:
+            shares_needed = int(call.qty * CONTRACT_MULTIPLIER)
+            while shares_needed > 0 and inventory_queue:
+                inv_lot = inventory_queue[0]
+                use = min(shares_needed, inv_lot.shares_remaining)
+                total += (call.strike - inv_lot.cost_per_share) * use
+                inv_lot.shares_remaining -= use
+                shares_needed -= use
+                if inv_lot.shares_remaining <= 0:
+                    inventory_queue.pop(0)
+    return float(total)
 
 
 def build_monthly_summary(

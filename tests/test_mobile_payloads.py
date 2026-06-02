@@ -773,6 +773,7 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "days_remaining": 28,
     }
     assert monthly_target["cycle_projection"]["projected_cycle_pnl"] == pytest.approx(-2775.0)
+    assert monthly_target["cycle_projection"]["itm_call_stock_pnl"] == pytest.approx(500.0)
     assert monthly_target["cycle_projection"]["stock_unrealized_pnl"] == pytest.approx(500.0)
     assert monthly_target["cycle_projection"]["open_premium_collected"] == pytest.approx(625.0)
     assert monthly_target["cycle_projection"]["itm_put_unrealized_loss"] == pytest.approx(-4000.0)
@@ -1194,6 +1195,7 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
     assert rows[1]["projected_month_pnl"] == pytest.approx(-2775.0)
     assert rows[1]["projected_return_roac"] == pytest.approx(-0.2775)
     assert rows[1]["cycle_projection"]["projected_cycle_pnl"] == pytest.approx(-2775.0)
+    assert rows[1]["cycle_projection"]["itm_call_stock_pnl"] == pytest.approx(500.0)
     assert rows[1]["cycle_projection"]["stock_unrealized_pnl"] == pytest.approx(500.0)
     assert rows[1]["cycle_projection"]["itm_put_unrealized_loss"] == pytest.approx(-4000.0)
     assert {k: rows[1][k] for k in [
@@ -1271,21 +1273,23 @@ def test_future_call_cycle_caps_stock_pnl_at_itm_call_strike_and_not_put_loss():
 
     assert len(rows) == 1
     projection = rows[0]["cycle_projection"]
+    assert projection["itm_call_stock_pnl"] == pytest.approx(500.0)
     assert projection["stock_unrealized_pnl"] == pytest.approx(500.0)
     assert projection["projected_cycle_pnl"] == pytest.approx(500.0)
     assert projection["itm_put_unrealized_loss"] == pytest.approx(0.0)
     assert projection["covered_call_upside_foregone"] == pytest.approx(-1000.0)
 
 
-def test_future_call_cycle_uses_current_stock_pnl_when_call_is_otm():
+def test_future_call_cycle_keeps_otm_stock_unrealized_out_of_projected_pnl():
     rows = build_future_monthly_performance_rows(
         _mobile_state_with_future_call(strike=70.0, current_price=60.0),
         target_return=0.015,
     )
 
     projection = rows[0]["cycle_projection"]
+    assert projection["itm_call_stock_pnl"] == pytest.approx(0.0)
     assert projection["stock_unrealized_pnl"] == pytest.approx(1500.0)
-    assert projection["projected_cycle_pnl"] == pytest.approx(1500.0)
+    assert projection["projected_cycle_pnl"] == pytest.approx(0.0)
     assert projection["itm_put_unrealized_loss"] == pytest.approx(0.0)
     assert projection["covered_call_upside_foregone"] == pytest.approx(0.0)
 
@@ -1399,6 +1403,19 @@ def test_dashboard_and_monthly_share_canonical_current_cycle_projection():
     assert monthly["active_cycle"]["projected_cycle_pnl"] == pytest.approx(expected)
     assert monthly["current_month"]["projected_month_pnl"] == pytest.approx(expected)
     assert monthly["months"][-1]["projected_month_pnl"] == pytest.approx(expected)
+
+
+def test_closed_month_rows_do_not_include_open_option_assignment_projection():
+    state = _mobile_state()
+    state.as_of = pd.Timestamp("2026-06-02")
+
+    rows = build_monthly_performance_rows(state, target_return=0.015, monthly_range="ytd")
+    may = next(row for row in rows if row["month"] == "2026-05-31")
+
+    assert may["total_realized_pnl"] == pytest.approx(100.0)
+    assert may["projected_month_pnl"] == pytest.approx(100.0)
+    assert may["projected_return_roac"] == pytest.approx(0.01)
+    assert "cycle_projection" not in may
 
 
 def test_mobile_monthly_performance_matches_contract_fixture():

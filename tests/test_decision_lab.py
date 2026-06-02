@@ -202,7 +202,7 @@ def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row(
     assert cycle["projected_return_roac"] == pytest.approx(200.0 / 300000.0)
 
 
-def test_active_cycle_includes_dashboard_stock_unrealized_component():
+def test_active_cycle_excludes_broad_stock_unrealized_from_projected_pnl():
     payload = _base_payload()
     payload["dashboard"]["snapshot"] = {"current_stock_unrealized_pnl": 150.0}
     payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
@@ -223,7 +223,55 @@ def test_active_cycle_includes_dashboard_stock_unrealized_component():
 
     assert cycle["premium_component"] == pytest.approx(200.0)
     assert cycle["stock_unrealized_pnl"] == pytest.approx(150.0)
-    assert cycle["projected_pnl"] == pytest.approx(350.0)
+    assert cycle["projected_pnl"] == pytest.approx(200.0)
+
+
+def test_active_cycle_adds_only_itm_option_assignment_components_to_projected_pnl():
+    payload = _base_payload()
+    payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
+    payload["positions"]["inventory"] = [
+        {"ticker": "CALL", "shares": 100, "cost_per_share": 45.0},
+        {"ticker": "OTMC", "shares": 100, "cost_per_share": 30.0},
+    ]
+    payload["positions"]["open_option_shorts"] = [
+        {
+            "ticker": "PUT",
+            "option_type": "Put",
+            "strike": 100.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 24,
+            "quantity": -1,
+            "current_price": 80.0,
+            "display_premium_collected": 200.0,
+        },
+        {
+            "ticker": "CALL",
+            "option_type": "Call",
+            "strike": 50.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 24,
+            "quantity": -1,
+            "current_price": 60.0,
+            "display_premium_collected": 100.0,
+        },
+        {
+            "ticker": "OTMC",
+            "option_type": "Call",
+            "strike": 70.0,
+            "expiration": "2026-06-18",
+            "days_to_expiration": 24,
+            "quantity": -1,
+            "current_price": 60.0,
+            "display_premium_collected": 50.0,
+        },
+    ]
+
+    cycle = build_decision_lab_data(payload)["active_cycle"]
+
+    assert cycle["premium_component"] == pytest.approx(350.0)
+    assert cycle["itm_put_unrealized_loss"] == pytest.approx(-2000.0)
+    assert cycle["itm_call_stock_pnl"] == pytest.approx(500.0)
+    assert cycle["projected_pnl"] == pytest.approx(-1150.0)
 
 
 def test_missing_option_data_does_not_emit_provider_candidates():

@@ -221,7 +221,7 @@ Fields:
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
 - `monthly_target.open_expiring_option_premium`: alias for `open_expiring_incremental_premium`. It is the additive open premium that is safe to add to realized P&L without double-counting same-expiration roll credits already recognized in realized roll economics.
 - `monthly_target.projected_month_pnl`: canonical active-cycle projection and must match `monthly_target.cycle_projection.projected_cycle_pnl`.
-- `monthly_target.cycle_projection`: the canonical active-cycle object used by web and mobile. It includes the active cycle label/month, expiries, open ticker/contract counts, realized cycle P&L, additive open premium, cycle-scoped stock unrealized P&L, projected cycle P&L, target/remaining values, put exposure, ITM put signal, and covered-call upside signal. Current and future open cycles use the same projection logic; only the expiry-month input set changes.
+- `monthly_target.cycle_projection`: the canonical active-cycle object used by web and mobile. It includes the active cycle label/month, expiries, open ticker/contract counts, realized cycle P&L, additive open premium, ITM put assignment P&L for puts expiring in the cycle, ITM covered-call stock P&L for calls expiring in the cycle, projected cycle P&L, target/remaining values, put exposure, ITM put signal, and covered-call upside signal. Broad held-stock unrealized P&L is reported separately and is not added to cycle target P&L unless the open ITM call would realize that stock sale in the cycle.
 - `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
 - `monthly_target.*`: null for return/P&L fields if the required monthly capital denominator or source value is unavailable.
 - `open_option_short_preview`: sorted by moneyness risk, limited to 3-5 rows.
@@ -727,9 +727,9 @@ Nullability:
 - `open_expiring_option_premium` is an alias of `open_expiring_incremental_premium`.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
 - `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
-- `projected_month_pnl` for the active/current month is the canonical active-cycle projected P&L and matches `active_cycle.projected_cycle_pnl`. Future rows use their own `cycle_projection.projected_cycle_pnl` when open option exposure exists.
+- `projected_month_pnl` for the active/current month is the canonical active-cycle projected P&L and matches `active_cycle.projected_cycle_pnl`. Closed historical months remain realized-only. Future rows use their own `cycle_projection.projected_cycle_pnl` when open option exposure exists.
 - `active_cycle` contains the canonical active-cycle projection for the current managed option cycle.
-- `cycle_projection` on `current_month`, active month rows, and `future_months` contains the same projection shape for that expiration month. Current and future open months both use cycle-scoped option lots, linked stock inventory, and prices through the shared accounting projection.
+- `cycle_projection` on `current_month`, active month rows, and `future_months` contains the same projection shape for that expiration month. Current and future open months both use cycle-scoped option lots, linked stock inventory, and prices through the shared accounting projection. Projection P&L is `realized_cycle_pnl + open_premium_collected + itm_put_unrealized_loss + itm_call_stock_pnl`; OTM call stock unrealized P&L stays outside this sum.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are derived from the same projected value shown in `projected_month_pnl`.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `future_months` contains future expiration months for currently open short options. Future rows include `cycle_projection` so web and mobile can display the same open-premium projection, target P&L, remaining P&L, and projected RoAC when the latest monthly capital denominator is available.
