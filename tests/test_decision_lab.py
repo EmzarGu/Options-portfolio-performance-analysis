@@ -477,6 +477,64 @@ def test_recovery_covered_call_prefers_near_basis_not_far_otm_strikes():
     assert {row["strike"] for row in group["candidates"]} == {150.0}
 
 
+def test_recovery_covered_call_rejects_mixed_date_chain_marks():
+    payload = _base_payload()
+    payload["positions"]["inventory"] = [
+        {
+            "ticker": "NLR",
+            "shares": 100,
+            "cost_per_share": 150.0,
+            "current_price": 132.0,
+            "unrealized_pnl": -1800.0,
+            "covered_shares": 0,
+        }
+    ]
+    payload["tickers"]["items"] = [{"ticker": "NLR", "total_pnl": -1000.0, "realized_options_pnl": 745.0, "unrealized_pnl": -1800.0}]
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-06-02T12:00:00+00:00"},
+        "contracts": [
+            {
+                "provider": "cutemarkets",
+                "ticker": "NLR",
+                "expiry": "2026-06-18",
+                "put_call": "CALL",
+                "strike": 150.0,
+                "mark": 0.55,
+                "underlying_price": 132.0,
+                "delta": 0.14,
+                "open_interest": 100,
+                "volume": 20,
+                "raw": {
+                    "price_source": "day_close",
+                    "source": {"day": {"last_updated": 1780286400000000000}},
+                },
+            },
+            {
+                "provider": "cutemarkets",
+                "ticker": "NLR",
+                "expiry": "2026-06-18",
+                "put_call": "CALL",
+                "strike": 153.0,
+                "mark": 0.59,
+                "underlying_price": 132.0,
+                "delta": 0.14,
+                "open_interest": 100,
+                "volume": 20,
+                "raw": {
+                    "price_source": "day_close",
+                    "source": {"day": {"last_updated": 1780084800000000000}},
+                },
+            },
+        ],
+    }
+
+    data = build_decision_lab_data(payload, option_market_data=option_market_data)
+    group = next(row for row in data["recommendation_candidates"] if row["ticker"] == "NLR")
+
+    assert [row["strike"] for row in group["candidates"]] == [150.0]
+    assert group["candidate_status"]["rejection_counts"]["stale chain price"] == 1
+
+
 def test_covered_call_rolls_are_scored_as_packages_not_new_leg_only():
     payload = _base_payload()
     payload["positions"]["inventory"] = [

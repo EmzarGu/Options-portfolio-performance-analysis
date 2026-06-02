@@ -135,6 +135,7 @@ def _real_contract_candidates(
     current_strike = _num(open_options[0].get("strike")) if open_options else None
     candidates = []
     rejection_counts: Counter[str] = Counter()
+    rows = _filter_stale_chain_marks(rows, rejection_counts)
 
     if put_call == "CALL" and category in {"Evaluate exit vs roll", "Roll to improve recovery", "Accept / monitor exit"}:
         current_contract = _matching_contract(rows, current_expiry, current_strike)
@@ -225,6 +226,50 @@ def _entry_contract_pool(rows: list[dict[str, Any]], group: dict[str, Any], put_
         eligible = [row for row in rows if (_num(row.get("strike")) or 0) >= floor]
         return eligible or rows
     return rows
+
+
+def _filter_stale_chain_marks(rows: list[dict[str, Any]], rejection_counts: Counter[str]) -> list[dict[str, Any]]:
+    latest_by_expiry: dict[str, date] = {}
+    for row in rows:
+        if _has_executable_quote(row):
+            continue
+        price_date = _contract_price_date(row)
+        if price_date is None:
+            continue
+        expiry = str(row.get("expiry") or "")[:10]
+        latest_by_expiry[expiry] = max(latest_by_expiry.get(expiry, price_date), price_date)
+    if not latest_by_expiry:
+        return rows
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if _has_executable_quote(row):
+            filtered.append(row)
+            continue
+        expiry = str(row.get("expiry") or "")[:10]
+        latest = latest_by_expiry.get(expiry)
+        price_date = _contract_price_date(row)
+        if latest is not None and price_date is not None and price_date < latest:
+            rejection_counts["stale chain price"] += 1
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def _has_executable_quote(contract: dict[str, Any]) -> bool:
+    bid = _num(contract.get("bid"))
+    ask = _num(contract.get("ask"))
+    return bid is not None and ask is not None and bid > 0 and ask > 0 and ask >= bid
+
+
+def _contract_price_date(contract: dict[str, Any]) -> Optional[date]:
+    raw = contract.get("raw") if isinstance(contract.get("raw"), dict) else {}
+    price_source = str(raw.get("price_source") or "").lower()
+    if price_source not in {"day_close", "day_vwap"}:
+        return None
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    day = source.get("day") if isinstance(source.get("day"), dict) else {}
+    return _timestamp_date(day.get("last_updated"))
 
 
 def _option_price(contract: Optional[dict[str, Any]]) -> Optional[float]:
@@ -1027,6 +1072,7 @@ def _candidate_status(
             "message": f"{len(candidates)} {'indicative' if all_indicative else 'actionable'} contract(s) found.",
             "raw_contract_count": len(raw_contracts),
             "eligible_contract_count": len(candidates),
+            "rejection_counts": dict(rejection_counts),
             "provider": status.get("provider"),
             "last_fetched_at": status.get("last_fetched_at"),
         }
