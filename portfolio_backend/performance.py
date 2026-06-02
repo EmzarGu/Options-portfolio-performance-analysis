@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,121 @@ def _fill_numeric_columns(df: pd.DataFrame, columns: List[str], value: float = 0
         else:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(value)
     return df
+
+
+def _number(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _option_lots_from_frame(options: pd.DataFrame) -> List[OptionLot]:
+    if options is None or options.empty:
+        return []
+    required = {"ticker", "type", "strike", "qty", "expiration"}
+    if not required.issubset(options.columns):
+        return []
+    lots: List[OptionLot] = []
+    for _, row in options.iterrows():
+        ticker = str(row.get("ticker") or "").upper().strip()
+        otype_raw = str(row.get("type") or "").lower().strip()
+        otype = "Put" if otype_raw == "put" else "Call" if otype_raw == "call" else ""
+        strike = _number(row.get("strike"))
+        qty = abs(_number(row.get("qty")) or 0.0)
+        expiration = pd.to_datetime(row.get("expiration"), errors="coerce")
+        if not ticker or not otype or strike is None or qty == 0 or pd.isna(expiration):
+            continue
+        open_date = pd.to_datetime(
+            row.get("trans_date", row.get("open_date", row.get("date"))),
+            errors="coerce",
+        )
+        lots.append(
+            OptionLot(
+                ticker=ticker,
+                otype=otype,
+                strike=float(strike),
+                qty=int(round(qty)),
+                open_date=open_date if not pd.isna(open_date) else pd.NaT,
+                expiration=expiration,
+                open_price=_number(row.get("open_price")) or 0.0,
+                comment=str(row.get("comment") or ""),
+                assigned=bool(row.get("assigned") or False),
+                roll_adjusted_open_price=_number(row.get("roll_adjusted_open_price")),
+            )
+        )
+    return lots
+
+
+def _inventory_lots_from_frame(inventory: pd.DataFrame, tickers: Optional[set[str]] = None) -> List[OpenLot]:
+    if inventory is None or inventory.empty:
+        return []
+    required = {"ticker", "shares", "cost_per_share"}
+    if not required.issubset(inventory.columns):
+        return []
+    inv = inventory.copy()
+    if "source" in inv.columns:
+        inv = inv.loc[~inv["source"].astype(str).str.lower().eq("put_gap")]
+    inv["ticker"] = inv["ticker"].astype(str).str.upper().str.strip()
+    if tickers is not None:
+        inv = inv.loc[inv["ticker"].isin(tickers)]
+    lots: List[OpenLot] = []
+    for _, row in inv.iterrows():
+        ticker = str(row.get("ticker") or "").upper().strip()
+        shares = abs(_number(row.get("shares")) or 0.0)
+        cost = _number(row.get("cost_per_share"))
+        if not ticker or shares == 0 or cost is None:
+            continue
+        buy_date = pd.to_datetime(row.get("buy_date"), errors="coerce")
+        lots.append(
+            OpenLot(
+                ticker=ticker,
+                buy_date=buy_date if not pd.isna(buy_date) else pd.NaT,
+                shares_remaining=int(round(shares)),
+                cost_per_share=float(cost),
+            )
+        )
+    return lots
+
+
+def calculate_option_cycle_unrealized_components(
+    options: pd.DataFrame,
+    inventory: pd.DataFrame,
+    prices: Dict[str, Any],
+) -> Dict[str, Optional[float]]:
+    option_lots = _option_lots_from_frame(options)
+    call_tickers = {lot.ticker for lot in option_lots if lot.otype == "Call"}
+    inventory_lots = _inventory_lots_from_frame(inventory, call_tickers)
+    if not option_lots:
+        return {
+            "option_premium": 0.0,
+            "put_gap": 0.0,
+            "stock_unrealized": 0.0,
+            "total_unrealized": 0.0,
+        }
+
+    inv_df, _, total_unrealized = calculate_unrealized_positions(option_lots, inventory_lots, prices or {})
+    option_premium = sum(lot.open_price * lot.qty * CONTRACT_MULTIPLIER for lot in option_lots)
+    put_gap = 0.0
+    stock_unrealized = 0.0
+    if inv_df is not None and not inv_df.empty and {"source", "unrealized_pnl"}.issubset(inv_df.columns):
+        unrealized = pd.to_numeric(inv_df["unrealized_pnl"], errors="coerce").fillna(0.0)
+        source = inv_df["source"].astype(str).str.lower()
+        put_gap = float(unrealized.loc[source.eq("put_gap")].sum())
+        stock_unrealized = float(unrealized.loc[~source.eq("put_gap")].sum())
+    return {
+        "option_premium": float(option_premium),
+        "put_gap": float(put_gap),
+        "stock_unrealized": float(stock_unrealized),
+        "total_unrealized": float(total_unrealized),
+    }
 
 
 def build_monthly_summary(

@@ -1925,7 +1925,7 @@ def test_ibkr_monthly_projection_reports_incremental_and_roll_adjusted_open_prem
     assert may["realized_options_pnl"] == pytest.approx(897.0)
     assert may["open_expiring_option_premium"] == pytest.approx(0.0)
     assert may["open_expiring_incremental_premium"] == pytest.approx(0.0)
-    assert may["open_expiring_roll_adjusted_premium"] == pytest.approx(897.0)
+    assert "open_expiring_roll_adjusted_premium" not in may
     assert may["projected_month_pnl"] == pytest.approx(897.0)
 
 

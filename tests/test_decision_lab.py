@@ -155,8 +155,6 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
             "month": "2026-06-30",
             "projected_month_pnl": 300.0,
             "open_expiring_incremental_premium": 300.0,
-            "open_expiring_intrinsic_value_gap": -500.0,
-            "open_expiring_option_unrealized_pnl": -200.0,
         }
     ]
 

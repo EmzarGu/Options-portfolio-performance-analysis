@@ -37,6 +37,7 @@ from portfolio_backend.performance import (
     build_per_ticker_totals,
     build_yearly_with_dashboard_unrealized,
     calculate_performance_metrics,
+    calculate_option_cycle_unrealized_components,
     calculate_unrealized_positions,
     period_returns,
 )
@@ -579,6 +580,64 @@ def test_covered_call_caps_unrealized_stock_pnl():
     assert round(total_unreal, 2) == 1200.0
     assert round(float(per_ticker_unreal["CCC"]), 2) == 1200.0
     assert inv_df.loc[inv_df["ticker"] == "CCC", "unrealized_pnl"].iloc[0] == 1000.0
+
+
+def test_cycle_unrealized_components_reuse_accounting_rules_for_scoped_options():
+    options = pd.DataFrame(
+        [
+            {
+                "ticker": "CCC",
+                "type": "Call",
+                "strike": 100.0,
+                "qty": 1,
+                "expiration": pd.Timestamp("2024-04-01"),
+                "trans_date": pd.Timestamp("2024-01-01"),
+                "open_price": 2.0,
+            },
+            {
+                "ticker": "DEF",
+                "type": "Put",
+                "strike": 15.0,
+                "qty": 1,
+                "expiration": pd.Timestamp("2024-04-01"),
+                "trans_date": pd.Timestamp("2024-01-01"),
+                "open_price": 2.0,
+            },
+        ]
+    )
+    inventory = pd.DataFrame(
+        [
+            {
+                "ticker": "CCC",
+                "buy_date": pd.Timestamp("2024-01-01"),
+                "shares": 100,
+                "cost_per_share": 90.0,
+                "current_price": 110.0,
+                "unrealized_pnl": 2000.0,
+                "source": "stock_lot",
+            },
+            {
+                "ticker": "OTHER",
+                "buy_date": pd.Timestamp("2024-01-01"),
+                "shares": 100,
+                "cost_per_share": 10.0,
+                "current_price": 50.0,
+                "unrealized_pnl": 4000.0,
+                "source": "stock_lot",
+            },
+        ]
+    )
+
+    components = calculate_option_cycle_unrealized_components(
+        options,
+        inventory,
+        {"CCC": 110.0, "DEF": 12.0, "OTHER": 50.0},
+    )
+
+    assert components["option_premium"] == pytest.approx(400.0)
+    assert components["put_gap"] == pytest.approx(-300.0)
+    assert components["stock_unrealized"] == pytest.approx(1000.0)
+    assert components["total_unrealized"] == pytest.approx(1100.0)
 
 
 def test_capital_timeline_uses_put_reserve_days():
