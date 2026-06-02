@@ -1923,7 +1923,9 @@ def test_ibkr_monthly_projection_reports_incremental_and_roll_adjusted_open_prem
     rows = build_monthly_performance_rows(state, target_return=0.015, monthly_range="ytd")
     may = next(row for row in rows if row["month"] == "2026-05-31")
     assert may["realized_options_pnl"] == pytest.approx(897.0)
+    assert may["open_expiring_option_premium"] == pytest.approx(0.0)
     assert may["open_expiring_incremental_premium"] == pytest.approx(0.0)
+    assert may["open_expiring_roll_adjusted_premium"] == pytest.approx(897.0)
     assert may["projected_month_pnl"] == pytest.approx(897.0)
 
 

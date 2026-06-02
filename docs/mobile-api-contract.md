@@ -149,7 +149,11 @@ Response:
     "realized_month_pnl": 3210.0,
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
+    "open_expiring_option_premium": 5200.0,
     "open_expiring_incremental_premium": 5200.0,
+    "open_expiring_roll_adjusted_premium": 5890.0,
+    "open_expiring_intrinsic_value_gap": -1800.0,
+    "open_expiring_option_unrealized_pnl": 3400.0,
     "includes_open_premium": true,
     "projection_basis": "realized_plus_open_premium",
     "projected_month_pnl": 8410.0,
@@ -157,6 +161,12 @@ Response:
     "projected_return_ropc": 0.0131,
     "projected_remaining_pnl": 0.0,
     "current_unrealized_pnl": 3400.0,
+    "risk_adjusted_projected_month_pnl": 6610.0,
+    "risk_adjusted_projected_return_roac": 0.0126,
+    "risk_adjusted_projected_return_ropc": 0.0103,
+    "risk_adjusted_projected_remaining_pnl": 0.0,
+    "risk_adjusted_monthly_target_status": "below_target",
+    "risk_adjusted_projection_basis": "realized_plus_open_expiring_option_unrealized",
     "includes_current_unrealized": true,
     "monthly_target_status": "beat",
     "days_remaining": 18
@@ -220,8 +230,13 @@ Fields:
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
+- `monthly_target.open_expiring_option_premium`: backward-compatible alias for `open_expiring_incremental_premium`. It is the additive open premium that is safe to add to realized P&L without double-counting same-expiration roll credits already recognized in realized roll economics.
+- `monthly_target.open_expiring_intrinsic_value_gap`: current intrinsic value gap for still-open short options expiring in the target month. It is negative when open puts/calls are in the money from the seller's perspective.
+- `monthly_target.open_expiring_option_unrealized_pnl`: `open_expiring_incremental_premium + open_expiring_intrinsic_value_gap`.
 - `monthly_target.projected_month_pnl`: `realized_month_pnl + open_expiring_incremental_premium`.
+- `monthly_target.risk_adjusted_projected_month_pnl`: current-month risk view, `realized_month_pnl + open_expiring_option_unrealized_pnl`. This is the preferred headline value for dashboard target monitoring because it is scoped to options expiring in the target month rather than the full portfolio unrealized snapshot.
 - `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
+- `monthly_target.risk_adjusted_monthly_target_status`: target status based on `risk_adjusted_projected_return_roac`.
 - `monthly_target.*`: null for return/P&L fields if the required monthly capital denominator or source value is unavailable.
 - `open_option_short_preview`: sorted by moneyness risk, limited to 3-5 rows.
 
@@ -330,7 +345,9 @@ Response:
       "id": "month:2026-06-30",
       "month": "2026-06-30",
       "open_option_count": 3,
+      "open_expiring_option_premium": 2600.0,
       "open_expiring_incremental_premium": 2600.0,
+      "open_expiring_roll_adjusted_premium": 3100.0,
       "projected_month_pnl": 2600.0,
       "projected_return_roac": null,
       "projected_return_ropc": null,
@@ -647,7 +664,11 @@ Response:
     "realized_month_pnl": 3210.0,
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
+    "open_expiring_option_premium": 5200.0,
     "open_expiring_incremental_premium": 5200.0,
+    "open_expiring_roll_adjusted_premium": 5890.0,
+    "open_expiring_intrinsic_value_gap": -1800.0,
+    "open_expiring_option_unrealized_pnl": 3400.0,
     "projected_month_pnl": 8410.0,
     "projected_return_roac": 0.016,
     "projected_return_ropc": 0.0131,
@@ -675,7 +696,11 @@ Response:
       "target_return": 0.015,
       "status": "beat",
       "realized_month_pnl": 11840.0,
+      "open_expiring_option_premium": 0.0,
       "open_expiring_incremental_premium": 0.0,
+      "open_expiring_roll_adjusted_premium": 0.0,
+      "open_expiring_intrinsic_value_gap": 0.0,
+      "open_expiring_option_unrealized_pnl": 0.0,
       "includes_open_premium": false,
       "projection_basis": "realized_only",
       "projected_month_pnl": 11840.0,
@@ -699,7 +724,11 @@ Response:
       "target_return": 0.015,
       "status": "miss",
       "realized_month_pnl": -3920.0,
+      "open_expiring_option_premium": 2500.0,
       "open_expiring_incremental_premium": 2500.0,
+      "open_expiring_roll_adjusted_premium": 2500.0,
+      "open_expiring_intrinsic_value_gap": -600.0,
+      "open_expiring_option_unrealized_pnl": 1900.0,
       "includes_open_premium": true,
       "projection_basis": "realized_plus_open_premium",
       "projected_month_pnl": -1420.0,
@@ -719,10 +748,16 @@ Nullability:
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
 - `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting. For same-expiration rolls, replacement premium can be netted into the realized roll event, so this incremental field may be zero even while a rolled replacement remains open.
+- `open_expiring_option_premium` is a backward-compatible legacy alias of `open_expiring_incremental_premium`.
+- `open_expiring_roll_adjusted_premium` is a display/reconciliation value for premium attached to currently open expiring chains, including same-expiration roll history. It is not used in `projected_month_pnl`; use `open_expiring_incremental_premium` for additive current-month projections.
+- `open_expiring_intrinsic_value_gap` is the current intrinsic value gap for still-open short options expiring in that month. It is negative for in-the-money short puts/calls and zero for out-of-the-money options.
+- `open_expiring_option_unrealized_pnl` is `open_expiring_incremental_premium + open_expiring_intrinsic_value_gap`.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
-- `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`, `canonical_cycle_projection`.
+- `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
 - `projected_month_pnl` is `realized_month_pnl + open_expiring_incremental_premium`.
-- `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the canonical target-monitoring fields.
+- `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are the premium-only target-monitoring fields retained for backward compatibility.
+- `risk_adjusted_projected_month_pnl` is emitted for the current month when current prices are available. It equals `realized_month_pnl + open_expiring_option_unrealized_pnl`, so it accounts for ITM option risk in the current expiration month instead of treating open premium as clean profit or mixing in future-month/full-portfolio unrealized P&L.
+- `risk_adjusted_projected_return_roac`, `risk_adjusted_projected_remaining_pnl`, and `risk_adjusted_monthly_target_status` are the preferred current-month dashboard fields when present. Historical and future rows return null/unavailable for these fields because they do not have a current unrealized snapshot.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `future_months` contains future expiration months for currently open short options. Future rows use the same premium semantics, but return/target fields are `null` until a meaningful future capital denominator exists.
 - `future_months.open_option_count` counts current open short option rows/lots expiring in that month.
@@ -735,6 +770,7 @@ Backend source today:
 
 - `state.monthly_cycles`
 - `state.open_options` for expiration-month incremental open short premium projection.
+- `state.lots` for roll-adjusted open short premium display where source accounting provides roll metadata.
 - `state.monthly_returns_covered`
 - `state.first_incomplete_return_month`
 - `state.last_complete_return_month`

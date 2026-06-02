@@ -385,6 +385,105 @@ def _open_expiring_incremental_premium(
     return _sum_open_expiring_premium_from_frame(options, month_end, price_column="open_price")
 
 
+def _open_expiring_roll_adjusted_premium(
+    state,
+    month_end: Optional[pd.Timestamp],
+    expiring_options: Optional[pd.DataFrame] = None,
+) -> Optional[float]:
+    if month_end is None:
+        return None
+    lots = getattr(state, "lots", None)
+    if lots is not None:
+        total = 0.0
+        found = False
+        for lot in lots:
+            if getattr(lot, "close_date", None) is not None:
+                continue
+            expiration = pd.to_datetime(getattr(lot, "expiration", None), errors="coerce")
+            if pd.isna(expiration) or expiration.to_period("M") != month_end.to_period("M"):
+                continue
+            qty = abs(_number(getattr(lot, "qty", None)) or 0.0)
+            roll_price = getattr(lot, "roll_adjusted_open_price", None)
+            price = _number(roll_price if roll_price is not None else getattr(lot, "open_price", None))
+            if price is None:
+                continue
+            total += price * qty * CONTRACT_MULTIPLIER
+            found = True
+        if found:
+            return float(total)
+
+    options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
+    if options.empty:
+        return 0.0
+    price_column = "roll_adjusted_open_price" if "roll_adjusted_open_price" in options.columns else "open_price"
+    return _sum_open_expiring_premium_from_frame(options, month_end, price_column=price_column)
+
+
+def _open_expiring_intrinsic_value_gap(
+    state,
+    month_end: Optional[pd.Timestamp],
+    expiring_options: Optional[pd.DataFrame] = None,
+) -> Optional[float]:
+    if month_end is None:
+        return None
+    options = _open_options_expiring_in_month(state, month_end) if expiring_options is None else expiring_options
+    if options.empty:
+        return 0.0
+    required = {"ticker", "type", "strike", "qty", "expiration"}
+    if not required.issubset(options.columns):
+        return 0.0
+
+    stock_prices = getattr(state, "stock_prices", {}) or {}
+    total = 0.0
+    for _, row in options.iterrows():
+        ticker = str(row.get("ticker") or "").upper().strip()
+        option_type = str(row.get("type") or "").lower().strip()
+        strike = _number(row.get("strike"))
+        qty = abs(_number(row.get("qty")) or 0.0)
+        current_price = _number(stock_prices.get(ticker))
+        if not ticker or strike is None or current_price is None or qty == 0:
+            continue
+        if option_type == "put":
+            total += min(current_price - strike, 0.0) * qty * CONTRACT_MULTIPLIER
+        elif option_type == "call":
+            total += min(strike - current_price, 0.0) * qty * CONTRACT_MULTIPLIER
+
+    return float(total)
+
+
+def _legacy_open_expiring_projection_fields(
+    state,
+    month_end: Optional[pd.Timestamp],
+    *,
+    expiring_options: pd.DataFrame,
+) -> Dict[str, Optional[float]]:
+    incremental_premium = _open_expiring_incremental_premium(
+        state,
+        month_end,
+        expiring_options=expiring_options,
+    )
+    roll_adjusted_premium = _open_expiring_roll_adjusted_premium(
+        state,
+        month_end,
+        expiring_options=expiring_options,
+    )
+    intrinsic_value_gap = _open_expiring_intrinsic_value_gap(
+        state,
+        month_end,
+        expiring_options=expiring_options,
+    )
+    option_unrealized_pnl = None
+    if incremental_premium is not None and intrinsic_value_gap is not None:
+        option_unrealized_pnl = incremental_premium + intrinsic_value_gap
+    return {
+        "open_expiring_option_premium": incremental_premium,
+        "open_expiring_incremental_premium": incremental_premium,
+        "open_expiring_roll_adjusted_premium": roll_adjusted_premium,
+        "open_expiring_intrinsic_value_gap": intrinsic_value_gap,
+        "open_expiring_option_unrealized_pnl": option_unrealized_pnl,
+    }
+
+
 def _monthly_projection_values(
     state,
     row: Dict[str, Any],
@@ -412,11 +511,13 @@ def _monthly_projection_values(
         if realized_month_pnl is None:
             realized_month_pnl = 0.0
 
-    open_expiring_incremental_premium = _open_expiring_incremental_premium(
+    legacy_fields = _legacy_open_expiring_projection_fields(
         state,
         month_end,
         expiring_options=expiring_options,
     )
+    open_expiring_incremental_premium = legacy_fields["open_expiring_incremental_premium"]
+    open_expiring_option_unrealized_pnl = legacy_fields["open_expiring_option_unrealized_pnl"]
 
     projected_month_pnl = None
     if realized_month_pnl is not None and open_expiring_incremental_premium is not None:
@@ -459,30 +560,61 @@ def _monthly_projection_values(
             peak_capital = avg_capital
 
     current_unrealized_pnl = None
+    risk_adjusted_projected_month_pnl = None
+    risk_adjusted_projected_return_roac = None
+    risk_adjusted_projected_return_ropc = None
+    risk_adjusted_projected_remaining_pnl = None
+    risk_adjusted_monthly_target_status = "unavailable"
+    risk_adjusted_projection_basis = "unavailable"
     includes_current_unrealized = False
     if is_current_month and not bool(getattr(state, "unrealized_blocked", False)):
-        current_unrealized_pnl = _number(getattr(state, "stock_unreal", None)) or 0.0
-        includes_current_unrealized = canonical_cycle is not None
+        if canonical_cycle is not None and projected_month_pnl is not None:
+            current_unrealized_pnl = _number(getattr(state, "stock_unreal", None)) or 0.0
+            risk_adjusted_projected_month_pnl = projected_month_pnl
+            risk_adjusted_projected_return_roac = projected_return_roac
+            risk_adjusted_projected_return_ropc = projected_return_ropc
+            risk_adjusted_projected_remaining_pnl = projected_remaining_pnl
+            risk_adjusted_projection_basis = "canonical_cycle_projected_pnl"
+            includes_current_unrealized = True
+        else:
+            current_unrealized_pnl = open_expiring_option_unrealized_pnl
+            if realized_month_pnl is not None and current_unrealized_pnl is not None:
+                risk_adjusted_projected_month_pnl = realized_month_pnl + current_unrealized_pnl
+                risk_adjusted_projection_basis = "realized_plus_open_expiring_option_unrealized"
+                includes_current_unrealized = True
+                if avg_capital not in (None, 0):
+                    risk_adjusted_projected_return_roac = risk_adjusted_projected_month_pnl / avg_capital
+                if peak_capital not in (None, 0):
+                    risk_adjusted_projected_return_ropc = risk_adjusted_projected_month_pnl / peak_capital
+                if target_pnl is not None:
+                    risk_adjusted_projected_remaining_pnl = max(target_pnl - risk_adjusted_projected_month_pnl, 0.0)
+
+        risk_adjusted_monthly_target_status = _monthly_target_status(
+            risk_adjusted_projected_return_roac,
+            target_return,
+            month_end,
+            getattr(state, "as_of", None),
+        )
 
     return {
         "avg_capital": avg_capital,
         "peak_capital": peak_capital,
         "realized_month_pnl": realized_month_pnl,
-        "open_expiring_incremental_premium": open_expiring_incremental_premium,
+        **legacy_fields,
         "includes_open_premium": includes_open_premium,
-        "projection_basis": (
-            "canonical_cycle_projection"
-            if canonical_cycle is not None
-            else "realized_plus_open_premium"
-            if includes_open_premium
-            else "realized_only"
-        ),
+        "projection_basis": "realized_plus_open_premium" if includes_open_premium else "realized_only",
         "projected_month_pnl": projected_month_pnl,
         "projected_return_roac": projected_return_roac,
         "projected_return_ropc": projected_return_ropc,
         "target_pnl": target_pnl,
         "projected_remaining_pnl": projected_remaining_pnl,
         "current_unrealized_pnl": current_unrealized_pnl,
+        "risk_adjusted_projected_month_pnl": risk_adjusted_projected_month_pnl,
+        "risk_adjusted_projected_return_roac": risk_adjusted_projected_return_roac,
+        "risk_adjusted_projected_return_ropc": risk_adjusted_projected_return_ropc,
+        "risk_adjusted_projected_remaining_pnl": risk_adjusted_projected_remaining_pnl,
+        "risk_adjusted_monthly_target_status": risk_adjusted_monthly_target_status,
+        "risk_adjusted_projection_basis": risk_adjusted_projection_basis,
         "includes_current_unrealized": includes_current_unrealized,
         "cycle_projection": canonical_cycle,
     }
@@ -517,12 +649,22 @@ def build_monthly_target(state, *, target_return: float = 0.015) -> Dict[str, An
         "realized_month_pnl": json_safe(projection["realized_month_pnl"]),
         "realized_options_pnl": json_safe(_number(row.get("realized_options_pnl"))),
         "realized_stock_pnl": json_safe(_number(row.get("realized_stock_pnl"))),
+        "open_expiring_option_premium": json_safe(projection["open_expiring_option_premium"]),
         "open_expiring_incremental_premium": json_safe(projection["open_expiring_incremental_premium"]),
+        "open_expiring_roll_adjusted_premium": json_safe(projection["open_expiring_roll_adjusted_premium"]),
+        "open_expiring_intrinsic_value_gap": json_safe(projection["open_expiring_intrinsic_value_gap"]),
+        "open_expiring_option_unrealized_pnl": json_safe(projection["open_expiring_option_unrealized_pnl"]),
         "projected_month_pnl": json_safe(projection["projected_month_pnl"]),
         "projected_return_roac": json_safe(projection["projected_return_roac"]),
         "projected_return_ropc": json_safe(projection["projected_return_ropc"]),
         "projected_remaining_pnl": json_safe(projection["projected_remaining_pnl"]),
         "current_unrealized_pnl": json_safe(projection["current_unrealized_pnl"]),
+        "risk_adjusted_projected_month_pnl": json_safe(projection["risk_adjusted_projected_month_pnl"]),
+        "risk_adjusted_projected_return_roac": json_safe(projection["risk_adjusted_projected_return_roac"]),
+        "risk_adjusted_projected_return_ropc": json_safe(projection["risk_adjusted_projected_return_ropc"]),
+        "risk_adjusted_projected_remaining_pnl": json_safe(projection["risk_adjusted_projected_remaining_pnl"]),
+        "risk_adjusted_monthly_target_status": projection["risk_adjusted_monthly_target_status"],
+        "risk_adjusted_projection_basis": projection["risk_adjusted_projection_basis"],
         "includes_current_unrealized": bool(projection["includes_current_unrealized"]),
         "monthly_target_status": _monthly_target_status(
             projection["projected_return_roac"],
@@ -622,7 +764,11 @@ def _mobile_month_row(
     }
     if state is not None:
         out["realized_month_pnl"] = json_safe(projection["realized_month_pnl"])
+        out["open_expiring_option_premium"] = json_safe(projection["open_expiring_option_premium"])
         out["open_expiring_incremental_premium"] = json_safe(projection["open_expiring_incremental_premium"])
+        out["open_expiring_roll_adjusted_premium"] = json_safe(projection["open_expiring_roll_adjusted_premium"])
+        out["open_expiring_intrinsic_value_gap"] = json_safe(projection["open_expiring_intrinsic_value_gap"])
+        out["open_expiring_option_unrealized_pnl"] = json_safe(projection["open_expiring_option_unrealized_pnl"])
         out["includes_open_premium"] = bool(projection["includes_open_premium"])
         out["projection_basis"] = projection["projection_basis"]
         out["projected_month_pnl"] = json_safe(projection["projected_month_pnl"])
@@ -631,6 +777,14 @@ def _mobile_month_row(
         out["target_pnl"] = json_safe(projection["target_pnl"])
         out["projected_remaining_pnl"] = json_safe(projection["projected_remaining_pnl"])
         out["current_unrealized_pnl"] = json_safe(projection["current_unrealized_pnl"])
+        out["risk_adjusted_projected_month_pnl"] = json_safe(projection["risk_adjusted_projected_month_pnl"])
+        out["risk_adjusted_projected_return_roac"] = json_safe(projection["risk_adjusted_projected_return_roac"])
+        out["risk_adjusted_projected_return_ropc"] = json_safe(projection["risk_adjusted_projected_return_ropc"])
+        out["risk_adjusted_projected_remaining_pnl"] = json_safe(
+            projection["risk_adjusted_projected_remaining_pnl"]
+        )
+        out["risk_adjusted_monthly_target_status"] = projection["risk_adjusted_monthly_target_status"]
+        out["risk_adjusted_projection_basis"] = projection["risk_adjusted_projection_basis"]
         out["includes_current_unrealized"] = bool(projection["includes_current_unrealized"])
         out["monthly_target_status"] = _monthly_target_status(
             projection["projected_return_roac"],
@@ -709,7 +863,11 @@ def build_future_monthly_performance_rows(
                 "month": json_safe(month_end),
                 "open_option_count": int(_number(projection.get("open_contract_count")) or 0),
                 "open_ticker_count": int(_number(projection.get("open_ticker_count")) or 0),
+                "open_expiring_option_premium": json_safe(projection.get("open_premium_collected")),
                 "open_expiring_incremental_premium": json_safe(projection.get("open_premium_collected")),
+                "open_expiring_roll_adjusted_premium": None,
+                "open_expiring_intrinsic_value_gap": json_safe(projection.get("itm_put_unrealized_loss")),
+                "open_expiring_option_unrealized_pnl": None,
                 "projected_month_pnl": json_safe(projection.get("projected_cycle_pnl")),
                 "projected_return_roac": json_safe(projection.get("projected_return_roac")),
                 "projected_return_ropc": json_safe(projection.get("projected_return_roac")),
@@ -739,7 +897,11 @@ def build_current_month_performance(
             "realized_month_pnl": None,
             "realized_options_pnl": None,
             "realized_stock_pnl": None,
+            "open_expiring_option_premium": None,
             "open_expiring_incremental_premium": None,
+            "open_expiring_roll_adjusted_premium": None,
+            "open_expiring_intrinsic_value_gap": None,
+            "open_expiring_option_unrealized_pnl": None,
             "includes_open_premium": False,
             "projection_basis": "realized_only",
             "projected_month_pnl": None,
@@ -749,6 +911,12 @@ def build_current_month_performance(
             "remaining_pnl": None,
             "projected_remaining_pnl": None,
             "current_unrealized_pnl": None,
+            "risk_adjusted_projected_month_pnl": None,
+            "risk_adjusted_projected_return_roac": None,
+            "risk_adjusted_projected_return_ropc": None,
+            "risk_adjusted_projected_remaining_pnl": None,
+            "risk_adjusted_monthly_target_status": "unavailable",
+            "risk_adjusted_projection_basis": "unavailable",
             "includes_current_unrealized": False,
             "avg_capital": None,
             "peak_capital": None,
@@ -766,7 +934,11 @@ def build_current_month_performance(
         "realized_month_pnl": month_row["realized_month_pnl"],
         "realized_options_pnl": month_row["realized_options_pnl"],
         "realized_stock_pnl": month_row["realized_stock_pnl"],
+        "open_expiring_option_premium": month_row["open_expiring_option_premium"],
         "open_expiring_incremental_premium": month_row["open_expiring_incremental_premium"],
+        "open_expiring_roll_adjusted_premium": month_row["open_expiring_roll_adjusted_premium"],
+        "open_expiring_intrinsic_value_gap": month_row["open_expiring_intrinsic_value_gap"],
+        "open_expiring_option_unrealized_pnl": month_row["open_expiring_option_unrealized_pnl"],
         "includes_open_premium": month_row["includes_open_premium"],
         "projection_basis": month_row["projection_basis"],
         "projected_month_pnl": month_row["projected_month_pnl"],
@@ -776,6 +948,12 @@ def build_current_month_performance(
         "remaining_pnl": month_row["remaining_pnl"],
         "projected_remaining_pnl": month_row["projected_remaining_pnl"],
         "current_unrealized_pnl": month_row["current_unrealized_pnl"],
+        "risk_adjusted_projected_month_pnl": month_row["risk_adjusted_projected_month_pnl"],
+        "risk_adjusted_projected_return_roac": month_row["risk_adjusted_projected_return_roac"],
+        "risk_adjusted_projected_return_ropc": month_row["risk_adjusted_projected_return_ropc"],
+        "risk_adjusted_projected_remaining_pnl": month_row["risk_adjusted_projected_remaining_pnl"],
+        "risk_adjusted_monthly_target_status": month_row["risk_adjusted_monthly_target_status"],
+        "risk_adjusted_projection_basis": month_row["risk_adjusted_projection_basis"],
         "includes_current_unrealized": month_row["includes_current_unrealized"],
         "avg_capital": month_row["avg_capital"],
         "peak_capital": month_row["peak_capital"],
