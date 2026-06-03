@@ -6,7 +6,7 @@ import hmac
 import logging
 import os
 from collections import OrderedDict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from inspect import Parameter, signature
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
@@ -65,6 +65,7 @@ SERVICE_NAME = "options-roi-mobile-api"
 DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
+DEFAULT_REFRESH_REUSE_SECONDS = 300
 PUBLIC_PATHS = {"/v1/mobile/health"}
 PRICE_ONLY_RELOAD_ENDPOINTS = [
     "/v1/mobile/dashboard",
@@ -422,6 +423,31 @@ def _clear_context_cache() -> None:
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _refresh_reuse_seconds() -> int:
+    value = os.getenv("SHARED_REFRESH_REUSE_SECONDS", str(DEFAULT_REFRESH_REUSE_SECONDS)).strip()
+    try:
+        return max(int(float(value)), 0)
+    except ValueError:
+        return DEFAULT_REFRESH_REUSE_SECONDS
+
+
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _resolve_dependencies(source_metadata: Dict[str, Any]) -> MobileServiceDependencies:
@@ -849,6 +875,45 @@ def _load_refreshed_context_snapshot(
     )
 
 
+def _refreshed_context_age_seconds(context: MobilePayloadContext) -> Optional[float]:
+    metadata = dict(getattr(context, "source_metadata", {}) or {})
+    timestamp = _parse_timestamp(metadata.get("prices_updated_at")) or _parse_timestamp(metadata.get("created_at"))
+    if timestamp is None:
+        return None
+    return max((datetime.now(timezone.utc) - timestamp).total_seconds(), 0.0)
+
+
+def _load_recent_refreshed_context_snapshot(
+    *,
+    request: MobilePayloadRequest,
+    available: List[str],
+    source_marker: Optional[Dict[str, Any]],
+    max_age_seconds: int,
+    timing_recorder=None,
+) -> Optional[MobilePayloadContext]:
+    if max_age_seconds <= 0:
+        return None
+    context = _load_refreshed_context_snapshot(
+        request=request,
+        available=available,
+        source_marker=source_marker,
+        timing_recorder=timing_recorder,
+    )
+    if context is None:
+        return None
+    age_seconds = _refreshed_context_age_seconds(context)
+    if age_seconds is None or age_seconds > max_age_seconds:
+        if timing_recorder is not None:
+            timing_recorder("recent_refreshed_context_hit", 0)
+        return None
+    if timing_recorder is not None:
+        timing_recorder("recent_refreshed_context_hit", 1)
+        timing_recorder("recent_refreshed_context_age_ms", age_seconds * 1000)
+    context.source_metadata["refreshed_context_reused"] = True
+    context.source_metadata["refreshed_context_age_seconds"] = round(age_seconds, 3)
+    return context
+
+
 def _refresh_prices_from_cached_base(
     context: MobilePayloadContext,
     *,
@@ -1040,6 +1105,28 @@ def _smart_refresh_context(
         timing_recorder=timing_recorder,
     )
 
+    recent_context = _load_recent_refreshed_context_snapshot(
+        request=active_request,
+        available=active_available,
+        source_marker=source_marker,
+        max_age_seconds=_refresh_reuse_seconds(),
+        timing_recorder=timing_recorder,
+    )
+    if recent_context is not None:
+        refresh_metadata = {
+            "scope": "cached_recent",
+            "pipeline_refreshed": False,
+            "prices_refreshed": False,
+            "source_checked": True,
+            "source_changed": False,
+            "source_snapshot_id": (source_marker or {}).get("source_snapshot_id"),
+            "refreshed_context_snapshot_id": recent_context.source_metadata.get("refreshed_context_snapshot_id"),
+            "refreshed_context_age_seconds": recent_context.source_metadata.get("refreshed_context_age_seconds"),
+            "reload_endpoints": PRICE_ONLY_RELOAD_ENDPOINTS,
+        }
+        _set_active_cache_bust(resolved_cache_bust)
+        return (recent_context, resolved_cache_bust, refresh_metadata)
+
     snapshot_context = _load_pipeline_snapshot_context(
         request=active_request,
         available=active_available,
@@ -1132,6 +1219,10 @@ def _apply_refresh_metadata(payload: Dict[str, Any], refresh_metadata: Dict[str,
             refresh["source_snapshot_id"] = refresh_metadata["source_snapshot_id"]
         if refresh_metadata.get("pipeline_snapshot_id"):
             refresh["pipeline_snapshot_id"] = refresh_metadata["pipeline_snapshot_id"]
+        if refresh_metadata.get("refreshed_context_snapshot_id"):
+            refresh["refreshed_context_snapshot_id"] = refresh_metadata["refreshed_context_snapshot_id"]
+        if refresh_metadata.get("refreshed_context_age_seconds") is not None:
+            refresh["refreshed_context_age_seconds"] = refresh_metadata["refreshed_context_age_seconds"]
     return payload
 
 

@@ -49,6 +49,10 @@ refresh. If the marker changed or no valid base snapshot exists, the server
 rebuilds the full accounting pipeline and stores both the base pipeline snapshot
 and the latest refreshed context.
 
+If another web or iOS process already wrote a refreshed context for the same
+IBKR import marker within `SHARED_REFRESH_REUSE_SECONDS` (default 300 seconds),
+manual refresh reuses that shared context instead of fetching prices again.
+
 ## Required Runtime Config
 
 Environment variables:
@@ -61,6 +65,7 @@ IBKR_FLEX_QUERY_ID=1504277
 PIPELINE_SNAPSHOT_STORE=auto
 WEB_DASHBOARD_AUTH=1
 WEB_DASHBOARD_DATA_CACHE_SECONDS=0
+SHARED_REFRESH_REUSE_SECONDS=300
 ```
 
 Secrets:

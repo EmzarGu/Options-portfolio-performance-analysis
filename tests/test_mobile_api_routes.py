@@ -532,6 +532,78 @@ def test_ibkr_refresh_persists_refreshed_context_for_later_reads(monkeypatch):
     assert loaded.source_metadata["snapshot_kind"] == "refreshed_context"
 
 
+def test_ibkr_refresh_reuses_recent_refreshed_context_across_cache_busts(monkeypatch):
+    mobile_api._clear_context_cache()
+    store = MemoryPipelineSnapshotStore()
+    marker = {
+        "source_snapshot_id": "ibkr-flex:1504277:run-1",
+        "import_run_id": "run-1",
+        "finished_at": "2026-05-13T10:00:00Z",
+        "query_id": "1504277",
+    }
+    base_state = SimpleNamespace(name="persisted-base")
+    snapshot_id = pipeline_snapshot_id(
+        source_snapshot_id="ibkr-flex:1504277:run-1",
+        as_of=date(2026, 5, 13),
+        selected_sheets=["IBKR Flex"],
+    )
+    store.save(snapshot_id, base_state, {"source_snapshot_id": marker["source_snapshot_id"]})
+
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "1504277")
+    monkeypatch.setenv("SHARED_REFRESH_REUSE_SECONDS", "300")
+    monkeypatch.setattr(mobile_api, "get_default_pipeline_snapshot_store", lambda: store)
+    monkeypatch.setattr(mobile_api, "_refresh_source_marker", lambda timing_recorder=None: marker)
+    monkeypatch.setattr(
+        mobile_api,
+        "build_ibkr_mobile_payload_context",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full IBKR rebuild should not run")),
+    )
+
+    refresh_calls = {"count": 0}
+
+    def refresh_prices(context, *, request, available, source_marker, timing_recorder=None):
+        refresh_calls["count"] += 1
+        return mobile_api.MobilePayloadContext(
+            state=SimpleNamespace(name=f"refreshed-state-{refresh_calls['count']}"),
+            request={
+                "as_of": request.as_of,
+                "include_unrealized": request.include_unrealized,
+                "selected_sheets": request.selected_sheets,
+            },
+            available_sheets=available,
+            source_metadata={**context.source_metadata, "prices_updated_at": mobile_api._now_iso()},
+            base_state=context.base_state,
+        )
+
+    monkeypatch.setattr(mobile_api, "_refresh_prices_from_cached_base", refresh_prices)
+
+    first, first_cache_bust, first_metadata = mobile_api._smart_refresh_context(
+        as_of=date(2026, 5, 13),
+        include_unrealized=True,
+        selected_sheets=["Options 2024", "Options 2025"],
+        cache_bust=123,
+    )
+    mobile_api._clear_context_cache()
+    second, second_cache_bust, second_metadata = mobile_api._smart_refresh_context(
+        as_of=date(2026, 5, 13),
+        include_unrealized=True,
+        selected_sheets=["Options 2024", "Options 2025"],
+        cache_bust=456,
+    )
+
+    assert refresh_calls["count"] == 1
+    assert first.state.name == "refreshed-state-1"
+    assert first_cache_bust == 123
+    assert first_metadata["scope"] == "prices_only"
+    assert second.state.name == "refreshed-state-1"
+    assert second_cache_bust == 456
+    assert second_metadata["scope"] == "cached_recent"
+    assert second_metadata["pipeline_refreshed"] is False
+    assert second_metadata["prices_refreshed"] is False
+    assert second.source_metadata["refreshed_context_reused"] is True
+
+
 def test_ibkr_config_reports_single_source_partition(api_harness, monkeypatch):
     monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
     monkeypatch.setattr(mobile_api, "_available_sheets", lambda: ["IBKR Flex"])

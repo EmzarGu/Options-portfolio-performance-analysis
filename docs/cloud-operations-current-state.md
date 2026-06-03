@@ -64,6 +64,10 @@ import marker, `as_of` date, and normalized source partition. Mobile and web
 Cloud Run instances restore this shared snapshot before fetching current
 prices. A full rebuild is expected only when the IBKR import marker changes,
 the snapshot is missing/corrupt, or the snapshot schema is intentionally bumped.
+Manual refreshes also reuse the latest successful refreshed context when it is
+recent and tied to the same IBKR import marker. This avoids duplicate web/iOS
+price refresh work when both clients refresh within the shared freshness window
+(`SHARED_REFRESH_REUSE_SECONDS`, default 300 seconds).
 
 ## Artifact Registry
 
