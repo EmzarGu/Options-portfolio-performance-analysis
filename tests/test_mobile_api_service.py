@@ -1,8 +1,10 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 
 import portfolio_backend.mobile_api_service as service
+import portfolio_backend.ibkr.mobile_service as ibkr_service
 from portfolio_backend.mobile_api_service import (
     MobilePayloadRequest,
     MobileServiceDependencies,
@@ -78,6 +80,72 @@ def test_mobile_payload_context_builds_priced_state(monkeypatch):
     }
     assert context.state.price_errors == ["MISS: no price returned"]
     assert context.state.price_summary == {"stocks_requested": 4, "stocks_fetched": 3}
+
+
+def test_ibkr_mobile_payload_context_builds_priced_state_and_metadata(monkeypatch):
+    base_state = _mobile_state()
+    report = SimpleNamespace(metadata={"fromDate": "20260101", "toDate": "20260503", "sourceFiles": ["flex.xml"]})
+
+    def fake_build_ibkr_base_pipeline(report_arg, **kwargs):
+        assert report_arg is report
+        assert kwargs["as_of"] == date(2026, 5, 3)
+        assert kwargs["selected_sheets"] == ["IBKR Flex"]
+        assert kwargs["cache_bust"] == 7
+        return base_state
+
+    monkeypatch.setattr(ibkr_service, "build_ibkr_base_pipeline", fake_build_ibkr_base_pipeline)
+    monkeypatch.setattr(ibkr_service, "current_price_tickers_for_state", lambda state: ("CALL", "CLEAR", "MISS", "PUTT"))
+
+    def apply_live(base_state, live_prices, price_errors, price_summary, price_updated_at):
+        base_state.stock_prices = live_prices
+        base_state.price_errors = price_errors
+        base_state.price_summary = {
+            "stocks_requested": price_summary["requested"],
+            "stocks_fetched": price_summary["fetched"],
+        }
+        base_state.price_updated_at = price_updated_at
+        return base_state
+
+    monkeypatch.setattr(ibkr_service, "apply_live_price_overlay", apply_live)
+    monkeypatch.setattr(ibkr_service, "apply_unrealized_adjusted_display", lambda state, include_unrealized: state)
+
+    timings: dict[str, float] = {}
+    context = ibkr_service.build_ibkr_mobile_payload_context(
+        MobilePayloadRequest(
+            sheet_id="unused",
+            as_of=date(2026, 5, 3),
+            selected_sheets=["IBKR Flex"],
+            include_unrealized=True,
+            cache_bust=7,
+        ),
+        _dependencies(),
+        report,
+        available_sheets=["IBKR Flex"],
+        source_metadata={"source_snapshot_id": "snapshot-1"},
+        timing_recorder=lambda phase, elapsed: timings.setdefault(phase, elapsed),
+    )
+
+    assert context.request == {
+        "as_of": date(2026, 5, 3),
+        "include_unrealized": True,
+        "selected_sheets": ["IBKR Flex"],
+    }
+    assert context.available_sheets == ["IBKR Flex"]
+    assert context.source_metadata["source"] == "ibkr_flex"
+    assert context.source_metadata["source_snapshot_id"] == "snapshot-1"
+    assert context.source_metadata["from_date"] == "20260101"
+    assert context.source_metadata["to_date"] == "20260503"
+    assert context.source_metadata["source_files"] == ["flex.xml"]
+    assert context.base_state is base_state
+    assert context.state.price_errors == ["MISS: no price returned"]
+    assert context.state.price_summary == {"stocks_requested": 4, "stocks_fetched": 3}
+    assert {
+        "pipeline_build_ms",
+        "price_ticker_resolution_ms",
+        "price_fetch_ms",
+        "price_overlay_ms",
+        "unrealized_adjustment_ms",
+    }.issubset(timings)
 
 
 def test_mobile_payload_wrappers_emit_expected_top_level_shapes(monkeypatch):

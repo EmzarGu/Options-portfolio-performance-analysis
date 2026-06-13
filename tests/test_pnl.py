@@ -1884,7 +1884,7 @@ def test_pipeline_denominator_returns_remain_when_historical_price_history_is_co
     assert pd.notna(yearly_row["ann_roac"])
 
 
-def test_pipeline_state_exposes_legacy_key_outputs(monkeypatch):
+def test_pipeline_state_exposes_mapping_compatible_contract(monkeypatch):
     df_opts = pd.DataFrame(
         [
             {
