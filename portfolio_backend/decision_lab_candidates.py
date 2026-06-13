@@ -24,10 +24,11 @@ MAX_COVERED_CALL_DELTA = 0.65
 MAX_INDICATIVE_PRICE_AGE_DAYS = 7
 
 
-def recommendation_candidates(ticker_situations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def recommendation_candidates(ticker_situations: list[dict[str, Any]], *, as_of: Optional[date] = None) -> list[dict[str, Any]]:
+    reference_date = as_of or date.today()
     rows = []
     for situation in ticker_situations:
-        contract_requests = _contract_requests_for_situation(situation)
+        contract_requests = _contract_requests_for_situation(situation, reference_date)
         if not contract_requests:
             continue
         rows.append(
@@ -45,7 +46,7 @@ def recommendation_candidates(ticker_situations: list[dict[str, Any]]) -> list[d
     return rows
 
 
-def _contract_requests_for_situation(situation: dict[str, Any]) -> list[dict[str, Any]]:
+def _contract_requests_for_situation(situation: dict[str, Any], reference_date: date) -> list[dict[str, Any]]:
     category = str(situation.get("category") or "")
     open_rows = situation.get("_open_rows") or []
     if category in {"Recover with covered call", "Evaluate exit vs roll", "Roll to improve recovery", "Accept / monitor exit"}:
@@ -63,18 +64,18 @@ def _contract_requests_for_situation(situation: dict[str, Any]) -> list[dict[str
                 expiries.append(expiry)
 
     if category == "Recover with covered call":
-        expiries.extend(_standard_monthly_expiries(2))
+        expiries.extend(_standard_monthly_expiries(2, reference_date))
     elif put_call == "CALL":
-        expiries.extend(_standard_monthly_expiries(2))
+        expiries.extend(_standard_monthly_expiries(2, reference_date))
     elif category == "Harvest unused put risk":
         for row in open_rows:
             if _option_type(row).startswith("put"):
                 expiry = str(row.get("expiration") or "")[:10]
                 if expiry:
                     expiries.append(expiry)
-        expiries.extend(_standard_monthly_expiries(2))
+        expiries.extend(_standard_monthly_expiries(2, reference_date))
     else:
-        expiries.extend(_standard_monthly_expiries(2))
+        expiries.extend(_standard_monthly_expiries(2, reference_date))
 
     deduped = []
     seen = set()
@@ -94,13 +95,16 @@ def _contract_requests_for_situation(situation: dict[str, Any]) -> list[dict[str
 def apply_option_market_candidates(
     candidate_groups: list[dict[str, Any]],
     option_market_data: dict[str, Any],
+    *,
+    as_of: Optional[date] = None,
 ) -> list[dict[str, Any]]:
+    reference_date = as_of or date.today()
     contracts = _contracts_by_key(option_market_data.get("contracts") or [])
     status = option_market_data.get("status") or {}
     rows = []
     for group in candidate_groups:
         ticker = str(group.get("ticker") or "").upper()
-        converted, candidate_status = _real_contract_candidates(ticker, group, contracts, status)
+        converted, candidate_status = _real_contract_candidates(ticker, group, contracts, status, reference_date)
         rows.append(
             {
                 **group,
@@ -118,6 +122,7 @@ def _real_contract_candidates(
     group: dict[str, Any],
     contracts: dict[tuple[str, str], list[dict[str, Any]]],
     status: dict[str, Any],
+    reference_date: date,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     category = str(group.get("category") or "")
     put_call = "PUT" if category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk"} else "CALL"
@@ -139,7 +144,7 @@ def _real_contract_candidates(
 
     if put_call == "CALL" and category in {"Evaluate exit vs roll", "Roll to improve recovery", "Accept / monitor exit"}:
         current_contract = _matching_contract(rows, current_expiry, current_strike)
-        baseline = _covered_call_baseline(current_contract, group, status)
+        baseline = _covered_call_baseline(current_contract, group, status, reference_date)
         if baseline is not None:
             candidates.append(baseline)
         roll_pool = [
@@ -147,16 +152,16 @@ def _real_contract_candidates(
             for row in rows
             if _num(row.get("strike")) is not None
             and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
-            and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts, status)
+            and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts, status, reference_date)
         ]
         roll_candidates = [
-            _covered_call_roll_candidate(row, current_contract, group, status)
+            _covered_call_roll_candidate(row, current_contract, group, status, reference_date)
             for row in roll_pool
         ]
         candidates.extend([row for row in roll_candidates if row is not None])
     elif category in {"Reduce assignment risk", "Monitor assignment risk"}:
         current_contract = _matching_contract(rows, current_expiry, current_strike)
-        baseline = _short_put_baseline(current_contract, group, status)
+        baseline = _short_put_baseline(current_contract, group, status, reference_date)
         if baseline is not None:
             candidates.append(baseline)
         roll_pool = [
@@ -166,16 +171,16 @@ def _real_contract_candidates(
             and current_strike is not None
             and (_num(row.get("strike")) or 0) < current_strike
             and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
-            and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts, status)
+            and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts, status, reference_date)
         ]
         candidates.extend(
             row
-            for row in [_short_put_risk_reduction_candidate(row, current_contract, group, status) for row in roll_pool]
+            for row in [_short_put_risk_reduction_candidate(row, current_contract, group, status, reference_date) for row in roll_pool]
             if row is not None
         )
     elif category == "Harvest unused put risk":
         current_contract = _matching_contract(rows, current_expiry, current_strike)
-        baseline = _short_put_baseline(current_contract, group, status)
+        baseline = _short_put_baseline(current_contract, group, status, reference_date)
         if baseline is not None:
             candidates.append(baseline)
         roll_pool = [
@@ -185,18 +190,18 @@ def _real_contract_candidates(
             and current_strike is not None
             and (_num(row.get("strike")) or 0) > current_strike
             and (not current_expiry or str(row.get("expiry") or "")[:10] == current_expiry)
-            and _contract_is_actionable(row, group, "Roll put up", rejection_counts, status)
+            and _contract_is_actionable(row, group, "Roll put up", rejection_counts, status, reference_date)
         ]
         candidates.extend(
             row
-            for row in [_short_put_roll_candidate(row, current_contract, group, status) for row in roll_pool]
+            for row in [_short_put_roll_candidate(row, current_contract, group, status, reference_date) for row in roll_pool]
             if row is not None
         )
     else:
         action = "Sell covered call" if put_call == "CALL" else "Roll down/out"
         filtered = _entry_contract_pool(rows, group, put_call)
-        actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status)]
-        candidates = [_candidate_from_live_contract(action, row, group, status) for row in actionable]
+        actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status, reference_date)]
+        candidates = [_candidate_from_live_contract(action, row, group, status, reference_date) for row in actionable]
         candidates = sorted(candidates, key=lambda row: row["score"], reverse=True)
 
     deduped: list[dict[str, Any]] = []
@@ -431,6 +436,7 @@ def _covered_call_baseline(
     current_contract: Optional[dict[str, Any]],
     group: dict[str, Any],
     status: dict[str, Any],
+    reference_date: date,
 ) -> Optional[dict[str, Any]]:
     state = group.get("current_state") if isinstance(group.get("current_state"), dict) else {}
     open_option = (state.get("open_options") or [{}])[0]
@@ -465,7 +471,7 @@ def _covered_call_baseline(
         "action": "Accept / monitor exit",
         "strike": current_strike,
         "expiry": expiry,
-        "dte": _days_until(expiry) if expiry else open_option.get("dte"),
+        "dte": _days_until(expiry, reference_date) if expiry else open_option.get("dte"),
         "premium": strategy_premium,
         "delta": delta,
         "iv": _num(current_contract.get("volatility")) if current_contract and current_contract.get("volatility") is not None else None,
@@ -501,6 +507,7 @@ def _covered_call_roll_candidate(
     current_contract: Optional[dict[str, Any]],
     group: dict[str, Any],
     status: dict[str, Any],
+    reference_date: date,
 ) -> Optional[dict[str, Any]]:
     state = group.get("current_state") if isinstance(group.get("current_state"), dict) else {}
     open_option = (state.get("open_options") or [{}])[0]
@@ -531,7 +538,7 @@ def _covered_call_roll_candidate(
     baseline_exit = (current_strike - cost) * 100 * contract_qty + (_num(open_option.get("strategy_premium_collected")) or 0)
     exit_pnl = baseline_exit + extra_upside + net_credit
     incremental_exit = exit_pnl - baseline_exit
-    dte_added = max((_days_until(new_expiry) or 0) - (_days_until(current_expiry) or 0), 0)
+    dte_added = max((_days_until(new_expiry, reference_date) or 0) - (_days_until(current_expiry, reference_date) or 0), 0)
     delta = abs(_num(new_contract.get("delta")) or 0) if new_contract.get("delta") is not None else None
     action = _roll_call_action(new_contract, current_expiry, current_strike)
     if action != "Roll out same strike" and current_price is not None and new_strike < current_price:
@@ -575,12 +582,12 @@ def _covered_call_roll_candidate(
     if delta is not None and delta > MAX_COVERED_CALL_DELTA and action != "Roll out same strike":
         return None
 
-    score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_expiry))
+    score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_expiry, reference_date))
     return {
         "action": action,
         "strike": new_strike,
         "expiry": new_expiry,
-        "dte": _days_until(new_expiry),
+        "dte": _days_until(new_expiry, reference_date),
         "premium": new_credit * 100 * contract_qty,
         "delta": delta,
         "iv": _num(new_contract.get("volatility")) if new_contract.get("volatility") is not None else None,
@@ -614,6 +621,7 @@ def _short_put_baseline(
     current_contract: Optional[dict[str, Any]],
     group: dict[str, Any],
     status: dict[str, Any],
+    reference_date: date,
 ) -> Optional[dict[str, Any]]:
     state = group.get("current_state") if isinstance(group.get("current_state"), dict) else {}
     open_option = (state.get("open_options") or [{}])[0]
@@ -642,7 +650,7 @@ def _short_put_baseline(
         "action": "Keep current put",
         "strike": strike,
         "expiry": expiry,
-        "dte": _days_until(expiry) if expiry else open_option.get("dte"),
+        "dte": _days_until(expiry, reference_date) if expiry else open_option.get("dte"),
         "premium": strategy_premium,
         "delta": delta,
         "iv": _num(current_contract.get("volatility")) if current_contract and current_contract.get("volatility") is not None else None,
@@ -678,6 +686,7 @@ def _short_put_roll_candidate(
     current_contract: Optional[dict[str, Any]],
     group: dict[str, Any],
     status: dict[str, Any],
+    reference_date: date,
 ) -> Optional[dict[str, Any]]:
     state = group.get("current_state") if isinstance(group.get("current_state"), dict) else {}
     open_option = (state.get("open_options") or [{}])[0]
@@ -723,12 +732,12 @@ def _short_put_roll_candidate(
     expected_value_vs_current = expected_value - baseline_ev if expected_value is not None and baseline_ev is not None else None
     if expected_value_vs_current is None or expected_value_vs_current <= 0:
         return None
-    score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry")))
+    score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry"), reference_date))
     return {
         "action": "Roll put up",
         "strike": new_strike,
         "expiry": str(new_contract.get("expiry") or "")[:10],
-        "dte": _days_until(new_contract.get("expiry")),
+        "dte": _days_until(new_contract.get("expiry"), reference_date),
         "premium": new_credit * 100 * contract_qty,
         "delta": delta,
         "iv": _num(new_contract.get("volatility")) if new_contract.get("volatility") is not None else None,
@@ -764,6 +773,7 @@ def _short_put_risk_reduction_candidate(
     current_contract: Optional[dict[str, Any]],
     group: dict[str, Any],
     status: dict[str, Any],
+    reference_date: date,
 ) -> Optional[dict[str, Any]]:
     state = group.get("current_state") if isinstance(group.get("current_state"), dict) else {}
     open_option = (state.get("open_options") or [{}])[0]
@@ -802,7 +812,11 @@ def _short_put_risk_reduction_candidate(
     if net_credit < 0 and abs(net_credit) > min(250.0, assignment_risk_reduction * 0.12):
         return None
 
-    dte_added = max((_days_until(new_contract.get("expiry")) or 0) - (_days_until(open_option.get("expiry")) or 0), 0)
+    dte_added = max(
+        (_days_until(new_contract.get("expiry"), reference_date) or 0)
+        - (_days_until(open_option.get("expiry"), reference_date) or 0),
+        0,
+    )
     out_of_money_gap = max(current_price - new_strike, 0) * 100 * contract_qty
     baseline_ev = _put_roll_ev(
         net_credit=0.0,
@@ -827,12 +841,12 @@ def _short_put_risk_reduction_candidate(
     expected_value_vs_current = expected_value - baseline_ev if expected_value is not None and baseline_ev is not None else None
     if expected_value_vs_current is None or expected_value_vs_current <= 0:
         return None
-    score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry")))
+    score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry"), reference_date))
     return {
         "action": "Roll put down/out",
         "strike": new_strike,
         "expiry": str(new_contract.get("expiry") or "")[:10],
-        "dte": _days_until(new_contract.get("expiry")),
+        "dte": _days_until(new_contract.get("expiry"), reference_date),
         "premium": new_credit * 100 * contract_qty,
         "delta": delta,
         "iv": _num(new_contract.get("volatility")) if new_contract.get("volatility") is not None else None,
@@ -976,6 +990,7 @@ def _contract_is_actionable(
     action: str,
     rejection_counts: Counter[str],
     status: dict[str, Any],
+    reference_date: date,
 ) -> bool:
     bid = _num(contract.get("bid"))
     ask = _num(contract.get("ask"))
@@ -1027,7 +1042,7 @@ def _contract_is_actionable(
         rejection_counts["implausible delta"] += 1
         return False
 
-    dte = _days_until(contract.get("expiry"))
+    dte = _days_until(contract.get("expiry"), reference_date)
     if dte is None or dte < 7 or dte > 75:
         rejection_counts["outside DTE window"] += 1
         return False
@@ -1106,7 +1121,13 @@ def _matching_contract(rows: list[dict[str, Any]], expiry: str, strike: Optional
     return exact[0] if exact else None
 
 
-def _candidate_from_live_contract(action: str, contract: dict[str, Any], group: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
+def _candidate_from_live_contract(
+    action: str,
+    contract: dict[str, Any],
+    group: dict[str, Any],
+    status: dict[str, Any],
+    reference_date: date,
+) -> dict[str, Any]:
     state = group.get("current_state") if isinstance(group.get("current_state"), dict) else {}
     current = _num(state.get("current_price")) or _num(contract.get("underlying_price"))
     cost = _num(state.get("cost_basis")) or current
@@ -1174,12 +1195,12 @@ def _candidate_from_live_contract(action: str, contract: dict[str, Any], group: 
         )
         expected_value_vs_current = expected_value
 
-    score = _candidate_ev_score(expected_value_vs_current, liquidity, _days_until(expiry) if expiry else None)
+    score = _candidate_ev_score(expected_value_vs_current, liquidity, _days_until(expiry, reference_date) if expiry else None)
     return {
         "action": action,
         "strike": strike,
         "expiry": expiry,
-        "dte": _days_until(expiry) if expiry else None,
+        "dte": _days_until(expiry, reference_date) if expiry else None,
         "premium": premium,
         "delta": delta,
         "iv": _num(contract.get("volatility")) if contract.get("volatility") is not None else None,
@@ -1293,11 +1314,11 @@ def _capped_upside(strike: Optional[float], current_price: Optional[float], cont
     return -max(current_price - strike, 0) * 100 * max(contract_qty, 1)
 
 
-def _days_until(value: Any) -> Optional[int]:
+def _days_until(value: Any, reference_date: Optional[date] = None) -> Optional[int]:
     parsed = _parse_date(value)
     if parsed is None:
         return None
-    return max((parsed - date.today()).days, 0)
+    return max((parsed - (reference_date or date.today())).days, 0)
 
 
 
@@ -1306,8 +1327,8 @@ def _option_type(row: dict[str, Any]) -> str:
     return str(row.get("option_type") or row.get("type") or row.get("put_call") or "").strip().lower()
 
 
-def _standard_monthly_expiries(count: int) -> list[str]:
-    today = date.today()
+def _standard_monthly_expiries(count: int, reference_date: Optional[date] = None) -> list[str]:
+    today = reference_date or date.today()
     expiries: list[str] = []
     year = today.year
     month = today.month

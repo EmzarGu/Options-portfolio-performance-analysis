@@ -151,6 +151,11 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     monkeypatch.setattr(
         web_dashboard,
+        "_monthly_target_band_from_request",
+        lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
+    monkeypatch.setattr(
+        web_dashboard,
         "_build_dashboard_data",
         lambda **_: (_ for _ in ()).throw(AssertionError("dashboard page should render a shell only")),
     )
@@ -164,6 +169,7 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
     assert shell_data["source"]["kind"] == "ibkr_flex"
     assert "Dashboard" in response.text
     assert "Decision Lab" in response.text
+    assert "Assignment Quality Lab" in response.text
     assert "IBKR Flex" in response.text
     assert "dashboard-data" in response.text
     assert "Period" in response.text
@@ -183,6 +189,30 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
 
 def test_web_dashboard_keeps_backend_rebased_benchmark_growth_series():
     assert "trimFiniteGrowthRows" not in DASHBOARD_HTML
+
+
+def test_web_dashboard_has_assignment_quality_renderer():
+    assert '["assignment_quality","Assignment Quality Lab"]' in DASHBOARD_HTML
+    assert 'id="assignment_quality"' in DASHBOARD_HTML
+    assert '"/api/assignment-quality"' in DASHBOARD_HTML
+    assert "function renderAssignmentQuality()" in DASHBOARD_HTML
+    assert "Actual less hold" in DASHBOARD_HTML
+    assert "Redeployment assumption" in DASHBOARD_HTML
+    assert "Wheel advantage" in DASHBOARD_HTML
+
+
+def test_assignment_quality_payload_is_lazy_loaded(monkeypatch):
+    monkeypatch.setattr(web_dashboard, "_is_authenticated", lambda request: True)
+    monkeypatch.setattr(
+        web_dashboard,
+        "_get_cached_assignment_quality_data",
+        lambda: {"summary": {"lots": 2}, "by_ticker": []},
+    )
+
+    response = TestClient(web_dashboard.app).get("/api/assignment-quality")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["lots"] == 2
 
 
 def test_web_dashboard_does_not_add_extra_benchmark_baseline_label():
@@ -345,6 +375,11 @@ def test_decision_lab_renders_shell_when_auth_disabled(monkeypatch):
 
 def test_decision_lab_api_builds_real_data_model(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(
+        web_dashboard,
+        "_monthly_target_band_from_request",
+        lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
     monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
     monkeypatch.setattr(
         web_dashboard,
@@ -389,6 +424,11 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
 
 def test_decision_lab_option_refresh_uses_force_loader(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(
+        web_dashboard,
+        "_monthly_target_band_from_request",
+        lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
     monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
     monkeypatch.setattr(web_dashboard, "_load_probability_trade_matches", lambda: [])
     monkeypatch.setattr(web_dashboard, "_load_historical_option_enrichments", lambda: [])
@@ -441,6 +481,11 @@ def test_web_dashboard_import_route_starts_job(monkeypatch):
 def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
+    monkeypatch.setattr(
+        web_dashboard,
+        "_monthly_target_band_from_request",
+        lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
     monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda **_: _fake_dashboard_data())
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 

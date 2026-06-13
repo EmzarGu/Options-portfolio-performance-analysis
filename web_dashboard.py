@@ -33,6 +33,7 @@ from portfolio_backend.option_market.cutemarkets import CuteMarketsClient
 from portfolio_backend.option_market.decision_data import decision_option_loader
 from portfolio_backend.option_market.store import FirestoreOptionMarketStore
 from portfolio_backend.web_dashboard_payloads import (
+    build_assignment_quality_data as build_web_assignment_quality_data,
     build_dashboard_data as build_web_dashboard_data,
     dashboard_shell_data as build_web_dashboard_shell_data,
     get_web_context,
@@ -52,6 +53,7 @@ COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 DEFAULT_SESSION_DAYS = 90
 DEFAULT_DASHBOARD_DATA_CACHE_SECONDS = 0
+DEFAULT_ASSIGNMENT_QUALITY_CACHE_SECONDS = 300
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -61,6 +63,9 @@ NO_STORE_HEADERS = {
 _dashboard_data_cache_lock = threading.Lock()
 _dashboard_data_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
 _dashboard_data_key_locks: Dict[tuple, threading.Lock] = {}
+_assignment_quality_cache_lock = threading.Lock()
+_assignment_quality_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
+_assignment_quality_key_locks: Dict[tuple, threading.Lock] = {}
 _probability_history_cache_lock = threading.Lock()
 _probability_history_cache: tuple[float, list[dict[str, Any]]] | None = None
 _option_history_cache_lock = threading.Lock()
@@ -370,6 +375,9 @@ def _clear_dashboard_data_cache() -> None:
     with _dashboard_data_cache_lock:
         _dashboard_data_cache.clear()
         _dashboard_data_key_locks.clear()
+    with _assignment_quality_cache_lock:
+        _assignment_quality_cache.clear()
+        _assignment_quality_key_locks.clear()
 
 
 def _get_cached_dashboard_data(
@@ -413,6 +421,42 @@ def _get_cached_dashboard_data(
                     oldest_key = min(_dashboard_data_cache, key=lambda cache_key: _dashboard_data_cache[cache_key][0])
                     _dashboard_data_cache.pop(oldest_key, None)
                     _dashboard_data_key_locks.pop(oldest_key, None)
+        return payload
+
+
+def _assignment_quality_cache_seconds() -> int:
+    raw = os.getenv("WEB_ASSIGNMENT_QUALITY_CACHE_SECONDS", str(DEFAULT_ASSIGNMENT_QUALITY_CACHE_SECONDS))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_ASSIGNMENT_QUALITY_CACHE_SECONDS
+
+
+def _get_cached_assignment_quality_data(*, as_of: Optional[date] = None) -> Dict[str, Any]:
+    ttl_seconds = _assignment_quality_cache_seconds()
+    key = (as_of.isoformat() if as_of else "",)
+    now = time()
+    with _assignment_quality_cache_lock:
+        cached = _assignment_quality_cache.get(key)
+        if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
+            return cached[1]
+        key_lock = _assignment_quality_key_locks.setdefault(key, threading.Lock())
+
+    with key_lock:
+        now = time()
+        with _assignment_quality_cache_lock:
+            cached = _assignment_quality_cache.get(key)
+            if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
+                return cached[1]
+
+        payload = build_web_assignment_quality_data(as_of=as_of)
+        if ttl_seconds > 0:
+            with _assignment_quality_cache_lock:
+                _assignment_quality_cache[key] = (time(), payload)
+                while len(_assignment_quality_cache) > 4:
+                    oldest_key = min(_assignment_quality_cache, key=lambda cache_key: _assignment_quality_cache[cache_key][0])
+                    _assignment_quality_cache.pop(oldest_key, None)
+                    _assignment_quality_key_locks.pop(oldest_key, None)
         return payload
 
 
@@ -744,6 +788,20 @@ def decision_lab_json(request: Request) -> JSONResponse:
         return JSONResponse(_build_decision_lab_payload(payload, force_refresh=False))
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/assignment-quality")
+def assignment_quality_json(request: Request) -> JSONResponse:
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    started_at = perf_counter()
+    try:
+        payload = _get_cached_assignment_quality_data()
+    except Exception as exc:
+        logger.warning("assignment_quality_payload_failed error=%s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    logger.info("web_assignment_quality_timing total_ms=%.2f", (perf_counter() - started_at) * 1000)
+    return JSONResponse(payload)
 
 
 @app.post("/api/decision-lab/options/refresh")

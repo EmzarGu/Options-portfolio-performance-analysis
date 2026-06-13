@@ -119,6 +119,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
   </section>
   <section id="dashboard" class="section active"></section>
   <section id="decision_lab" class="section"></section>
+  <section id="assignment_quality" class="section"></section>
   <section id="monthly" class="section"></section>
   <section id="tickers" class="section"></section>
   <section id="performance" class="section"></section>
@@ -144,17 +145,23 @@ const appState = {
   tickerSearch: "",
   tickerYear: "all",
   expectancyYear: "all",
+  assignmentYear: "all",
+  assignmentHorizon: "to_as_of",
+  assignmentQuality: null,
+  assignmentQualityLoading: false,
+  assignmentQualityError: "",
   sort: {},
   renderTimer: null
 };
 const sections = [
-  ["dashboard","Dashboard"], ["decision_lab","Decision Lab"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
+  ["dashboard","Dashboard"], ["decision_lab","Decision Lab"], ["assignment_quality","Assignment Quality Lab"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
   ["settings","Settings"], ["diagnostics","Diagnostics"],
   ["methodology","Methodology"]
 ];
 const pageTitles = {
   dashboard: "Dashboard",
   decision_lab: "Decision Lab",
+  assignment_quality: "Assignment Quality Lab",
   performance: "Performance",
   monthly: "Monthly",
   tickers: "Tickers",
@@ -1129,6 +1136,337 @@ function renderMonthly(){
     ], {title:"Future expiry months", small:true})}
   `;
 }
+function assignmentQualityData(){
+  return appState.assignmentQuality || data.assignment_quality || {};
+}
+async function loadAssignmentQuality(){
+  if (appState.assignmentQualityLoading) return;
+  appState.assignmentQualityLoading = true;
+  appState.assignmentQualityError = "";
+  try {
+    const response = await fetch("/api/assignment-quality", {
+      credentials: "same-origin",
+      headers: {"Accept": "application/json"}
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    appState.assignmentQuality = payload;
+  } catch (err) {
+    appState.assignmentQualityError = err && err.message || String(err);
+  } finally {
+    appState.assignmentQualityLoading = false;
+    if (appState.active === "assignment_quality") render();
+  }
+}
+function assignmentRowsForHorizon(horizon=appState.assignmentHorizon){
+  const aq = assignmentQualityData();
+  const rows = horizon === "to_as_of"
+    ? (aq.cohort_detail || aq.lot_detail || [])
+    : (aq.horizon_detail || []).filter(r => String(r.horizon) === String(horizon));
+  return rows.filter(r => appState.assignmentYear === "all" || String(r.assignment_year) === String(appState.assignmentYear));
+}
+function assignmentRows(){
+  return assignmentRowsForHorizon(appState.assignmentHorizon);
+}
+function assignmentLotRows(){
+  const aq = assignmentQualityData();
+  const rows = appState.assignmentHorizon === "to_as_of"
+    ? (aq.lot_detail || [])
+    : (aq.horizon_detail || []).filter(r => String(r.horizon) === String(appState.assignmentHorizon));
+  return rows.filter(r => appState.assignmentYear === "all" || String(r.assignment_year) === String(appState.assignmentYear));
+}
+function assignmentTickerRows(){
+  const rows = assignmentRows();
+  const groups = {};
+  rows.forEach(r => {
+    const ticker = String(r.ticker || "n/a");
+    const g = groups[ticker] ||= {ticker, lots:0, assigned_shares:0, assigned_capital:0, assigned_put_pnl:0, post_assignment_put_pnl:0, put_pnl:0, call_cashflow_pnl:0, actual_stock_pnl:0, hold_stock_pnl:0, opportunity_cost:0, actual_total_pnl:0, counterfactual_total_pnl:0, delta_actual_minus_hold:0};
+    g.lots += numeric(r.lots) || 1;
+    g.assigned_shares += numeric(r.assigned_shares) || numeric(r.original_shares) || 0;
+    ["assigned_capital","assigned_put_pnl","post_assignment_put_pnl","put_pnl","call_cashflow_pnl","actual_stock_pnl","hold_stock_pnl","opportunity_cost","actual_total_pnl","counterfactual_total_pnl","delta_actual_minus_hold"].forEach(k => { g[k] += numeric(r[k]) || 0; });
+  });
+  return Object.values(groups).map(r => ({
+    ...r,
+    actual_roi: r.assigned_capital ? r.actual_total_pnl / r.assigned_capital : null,
+    hold_roi: r.assigned_capital ? r.counterfactual_total_pnl / r.assigned_capital : null,
+    delta_roi: r.assigned_capital ? r.delta_actual_minus_hold / r.assigned_capital : null,
+    decision_read: assignmentDecision(r.delta_actual_minus_hold, r.assigned_capital)
+  })).sort((a,b)=>(numeric(a.delta_actual_minus_hold)||0)-(numeric(b.delta_actual_minus_hold)||0));
+}
+function assignmentSummary(rows=assignmentRows()){
+  const lots = rows.length;
+  const sum = (key) => rows.reduce((acc, r) => acc + (numeric(r[key]) || 0), 0);
+  const deltaRows = rows.filter(r => numeric(r.delta_actual_minus_hold) !== null);
+  const assignedCapital = sum("assigned_capital");
+  const actualTotal = sum("actual_total_pnl");
+  const holdTotal = sum("counterfactual_total_pnl");
+  const delta = sum("delta_actual_minus_hold");
+  return {
+    lots,
+    assigned_capital: assignedCapital,
+    assigned_shares: sum("assigned_shares") || sum("original_shares"),
+    put_pnl: sum("put_pnl"),
+    call_cashflow_pnl: sum("call_cashflow_pnl"),
+    actual_stock_pnl: sum("actual_stock_pnl"),
+    hold_stock_pnl: sum("hold_stock_pnl"),
+    opportunity_cost: sum("opportunity_cost"),
+    actual_total_pnl: actualTotal,
+    counterfactual_total_pnl: holdTotal,
+    delta_actual_minus_hold: delta,
+    actual_roi: assignedCapital ? actualTotal / assignedCapital : null,
+    hold_roi: assignedCapital ? holdTotal / assignedCapital : null,
+    delta_roi: assignedCapital ? delta / assignedCapital : null,
+    actual_beat_hold_rate: deltaRows.length ? deltaRows.filter(r => (numeric(r.delta_actual_minus_hold) || 0) > 0).length / deltaRows.length : null
+  };
+}
+function assignmentDecision(delta, capital){
+  const d = numeric(delta) || 0, c = numeric(capital) || 0;
+  if (d <= -1500 || (c > 0 && d / c <= -0.10)) return "Graduate candidate";
+  if (d > 0) return "Wheel worked better";
+  return "Small difference";
+}
+function assignmentDecisionPill(value){
+  const text = String(value || "Small difference");
+  const tone = text === "Graduate candidate" ? "warn" : text === "Wheel worked better" ? "good" : "blue";
+  return `<span class="pill ${tone}">${safe(text)}</span>`;
+}
+function assignmentDeltaColor(delta, capital=0){
+  const d = numeric(delta) || 0;
+  const close = Math.max(500, Math.abs(numeric(capital) || 0) * 0.02);
+  if (d > close) return "#66d37a";
+  if (d < -close) return "#ff7078";
+  return "#f0c95a";
+}
+function assignmentDeltaCls(delta, row={}){
+  const d = numeric(delta) || 0;
+  const close = Math.max(500, Math.abs(numeric(row.assigned_capital) || 0) * 0.02);
+  if (d > close) return "pos";
+  if (d < -close) return "neg";
+  return "warn-text";
+}
+function assignmentHorizonLabel(h){
+  if (String(h) === "to_as_of") return "To current";
+  return String(h || "n/a");
+}
+function assignmentCohortRows(){
+  const rows = assignmentRows();
+  const groups = {};
+  rows.forEach(r => {
+    const year = String(r.assignment_year || "n/a");
+    const g = groups[year] ||= {assignment_year: year, lots:0, assigned_capital:0, actual_total_pnl:0, counterfactual_total_pnl:0, delta_actual_minus_hold:0, opportunity_cost:0};
+    g.lots += numeric(r.lots) || 1;
+    ["assigned_capital","actual_total_pnl","counterfactual_total_pnl","delta_actual_minus_hold","opportunity_cost"].forEach(k => { g[k] += numeric(r[k]) || 0; });
+  });
+  return Object.values(groups).sort((a,b)=>String(a.assignment_year).localeCompare(String(b.assignment_year)));
+}
+function assignmentHorizonRows(){
+  const controls = assignmentQualityData().controls || {};
+  const horizons = controls.horizons || ["to_as_of"];
+  return horizons.map(h => {
+    const rows = assignmentRowsForHorizon(h);
+    const summary = assignmentSummary(rows);
+    return {
+      ...summary,
+      horizon: h,
+      label: assignmentHorizonLabel(h),
+      complete_lots: rows.length,
+      total_lots: h === "to_as_of" ? rows.length : ((assignmentQualityData().lot_detail || []).filter(r => appState.assignmentYear === "all" || String(r.assignment_year) === String(appState.assignmentYear)).length)
+    };
+  });
+}
+function assignmentHorizontalOptions(valueFormatter){
+  const options = chartCommonOptions(valueFormatter);
+  options.indexAxis = "y";
+  options.plugins.tooltip.callbacks.label = function(item){
+    const label = item.dataset.label ? `${item.dataset.label}: ` : "";
+    return `${label}${valueFormatter(item.parsed.x)}`;
+  };
+  options.scales.x = {
+    grid: {color: "#26383c"},
+    border: {color: "#42585d"},
+    ticks: {color: "#c0cbc7", font: {size: 12, weight: 650}, callback: (value) => valueFormatter(value)}
+  };
+  options.scales.y = {
+    grid: {display: false},
+    ticks: {color: "#d8e3df", font: {size: 12, weight: 750}, autoSkip: false}
+  };
+  return options;
+}
+function assignmentOutcomeChart(summary){
+  const options = chartCommonOptions(fmtCompactMoney);
+  options.plugins.legend.display = false;
+  const rows = [
+    {label:"Actual path", value:summary.actual_total_pnl, color:"#8fb3ff"},
+    {label:"Hold counterfactual", value:summary.counterfactual_total_pnl, color:"#b8c2cc"},
+    {label:"Actual less hold", value:summary.delta_actual_minus_hold, color:assignmentDeltaColor(summary.delta_actual_minus_hold, summary.assigned_capital)}
+  ];
+  return chartRegister("Actual vs Hold Outcome", "same selected cohort and horizon", {
+    type: "bar",
+    data: {labels: rows.map(r => r.label), datasets: [{label:"P&L", data: rows.map(r => numeric(r.value)||0), backgroundColor: rows.map(r => r.color), borderWidth:0, borderRadius:2}]},
+    options
+  }, `<div class="footnote">Actual path is assigned-put premium plus post-assignment option cashflows and assigned-stock P&L. Hold counterfactual is assigned shares held to the selected horizon, less estimated redeployment income lost.</div>`);
+}
+function assignmentTickerDeltaChart(rows){
+  const sorted = [...(rows || [])].sort((a,b)=>(numeric(a.delta_actual_minus_hold)||0)-(numeric(b.delta_actual_minus_hold)||0));
+  const clean = sorted.length > 18 ? [...sorted.slice(0,9), ...sorted.slice(-9)] : sorted;
+  if (!clean.length) return `<div class="chart-card"><div class="chart-title"><strong>Ticker Delta Ranking</strong></div><div class="empty">Chart unavailable.</div></div>`;
+  const labels = clean.map(r => r.ticker);
+  const values = clean.map(r => numeric(r.delta_actual_minus_hold) || 0);
+  const options = assignmentHorizontalOptions(fmtCompactMoney);
+  options.plugins.legend.display = false;
+  return chartRegister("Ticker Delta Ranking", "actual less hold; green wheel wins, red hold wins", {
+    type: "bar",
+    data: {labels, datasets: [{label:"Actual less hold", data: values, backgroundColor: clean.map(r => assignmentDeltaColor(r.delta_actual_minus_hold, r.assigned_capital)), borderWidth:0, borderRadius:2}]},
+    options
+  });
+}
+function assignmentCohortChart(rows){
+  if (!rows.length) return `<div class="chart-card"><div class="chart-title"><strong>Assignment Cohorts</strong></div><div class="empty">Chart unavailable.</div></div>`;
+  const labels = rows.map(r => String(r.assignment_year));
+  const options = chartCommonOptions(fmtCompactMoney);
+  return chartRegister("Assignment Cohorts", "selected horizon, grouped by assignment year", {
+    type: "bar",
+    data: {labels, datasets: [
+      {label:"Actual path", data: rows.map(r => numeric(r.actual_total_pnl)||0), backgroundColor:"#8fb3ff", borderWidth:0, borderRadius:2},
+      {label:"Hold counterfactual", data: rows.map(r => numeric(r.counterfactual_total_pnl)||0), backgroundColor:"#b8c2cc", borderWidth:0, borderRadius:2},
+      {label:"Actual less hold", data: rows.map(r => numeric(r.delta_actual_minus_hold)||0), backgroundColor:rows.map(r => assignmentDeltaColor(r.delta_actual_minus_hold, r.assigned_capital)), borderWidth:0, borderRadius:2}
+    ]},
+    options
+  });
+}
+function assignmentHorizonChart(rows){
+  if (!rows.length) return `<div class="chart-card"><div class="chart-title"><strong>Hold Exit Horizon</strong></div><div class="empty">Chart unavailable.</div></div>`;
+  const labels = rows.map(r => r.label);
+  const options = chartCommonOptions(fmtCompactMoney);
+  return chartRegister("Hold Exit Horizon", "same cohort filter; fixed windows require price history", {
+    type: "bar",
+    data: {labels, datasets: [
+      {label:"Actual path", data: rows.map(r => numeric(r.actual_total_pnl)||0), backgroundColor:"#8fb3ff", borderWidth:0, borderRadius:2},
+      {label:"Hold counterfactual", data: rows.map(r => numeric(r.counterfactual_total_pnl)||0), backgroundColor:"#b8c2cc", borderWidth:0, borderRadius:2},
+      {label:"Actual less hold", data: rows.map(r => numeric(r.delta_actual_minus_hold)||0), backgroundColor:rows.map(r => assignmentDeltaColor(r.delta_actual_minus_hold, r.assigned_capital)), borderWidth:0, borderRadius:2}
+    ]},
+    options
+  }, `<div class="footnote">6M/12M/18M assume the assigned shares were sold at that post-assignment date. Lots without enough elapsed time or price history are excluded from that horizon.</div>`);
+}
+function assignmentComponentTable(summary){
+  const rows = [
+    {component:"Put premiums", actual:summary.put_pnl, hold:"included in hold", note:"Assigned-put premium plus later post-assignment put premiums."},
+    {component:"Call cashflows", actual:summary.call_cashflow_pnl, hold:0, note:"Covered-call premium and assignment cashflows in the actual wheel path."},
+    {component:"Assigned-stock P&L", actual:summary.actual_stock_pnl, hold:summary.hold_stock_pnl, note:"Actual stock sale/current P&L versus the theoretical hold stock P&L."},
+    {component:"Estimated redeployment income lost", actual:0, hold:-summary.opportunity_cost, note:"Assigned strike notional compounded at the monthly redeployment rate while capital is tied in stock."}
+  ];
+  return dataTable("assignment-components", rows, [
+    {key:"component",label:"Component"},
+    {key:"actual",label:"Actual path",format:v=>typeof v === "number" ? fmtMoney(v) : safe(v),num:true,className:cls},
+    {key:"hold",label:"Hold counterfactual",format:v=>typeof v === "number" ? fmtMoney(v) : safe(v),num:true,className:cls},
+    {key:"note",label:"Interpretation"}
+  ], {title:"P&L construction", subtitle:"How the selected figures are built.", compact:true, count:false});
+}
+function assignmentEventRows(){
+  const rows = assignmentLotRows();
+  const groups = {};
+  rows.forEach(r => {
+    const key = [r.ticker, r.assignment_date, r.assignment_year, r.expiration, r.strike].join("|");
+    const g = groups[key] ||= {ticker:r.ticker, assignment_date:r.assignment_date, assignment_year:r.assignment_year, expiration:r.expiration, strike:r.strike, contracts:0, original_shares:0, months_held:0, opportunity_cost:0, assigned_put_pnl:0, post_assignment_put_pnl:0, put_pnl:0, call_cashflow_pnl:0, actual_stock_pnl:0, actual_total_pnl:0, counterfactual_before_opportunity:0, counterfactual_total_pnl:0, delta_actual_minus_hold:0, assigned_capital:0};
+    g.contracts += Math.max((numeric(r.original_shares) || 0) / 100, 1);
+    ["original_shares","opportunity_cost","assigned_put_pnl","post_assignment_put_pnl","put_pnl","call_cashflow_pnl","actual_stock_pnl","actual_total_pnl","counterfactual_before_opportunity","counterfactual_total_pnl","delta_actual_minus_hold","assigned_capital"].forEach(k => { g[k] += numeric(r[k]) || 0; });
+    g.months_held = Math.max(g.months_held, numeric(r.months_held) || 0);
+  });
+  return Object.values(groups).map(r => ({...r, decision_read: assignmentDecision(r.delta_actual_minus_hold, r.assigned_capital)})).sort((a,b)=>String(a.assignment_date).localeCompare(String(b.assignment_date)) || String(a.ticker).localeCompare(String(b.ticker)));
+}
+function renderAssignmentQuality(){
+  const aq = assignmentQualityData();
+  if (aq.deferred || (!appState.assignmentQuality && !aq.error)) {
+    if (!appState.assignmentQualityLoading && !appState.assignmentQualityError) {
+      setTimeout(loadAssignmentQuality, 0);
+    }
+    $("assignment_quality").innerHTML = loadingPanel(
+      "Loading assignment quality...",
+      "This analysis uses historical price data and loads only when the tab is opened.",
+      appState.assignmentQualityError
+    );
+    const retry = $("retryDashboardLoad");
+    if (retry) retry.addEventListener("click", loadAssignmentQuality);
+    return;
+  }
+  if (aq.error) {
+    $("assignment_quality").innerHTML = `<div class="panel"><h2>Assignment Quality Lab unavailable</h2><p class="error">${safe(aq.error)}</p></div>`;
+    return;
+  }
+  const controls = aq.controls || {};
+  const years = ["all", ...(controls.assignment_years || []).map(String)];
+  const horizonRows = assignmentHorizonRows();
+  const tickerRows = assignmentTickerRows();
+  const rows = assignmentRows();
+  const eventRows = assignmentEventRows();
+  const summary = assignmentSummary(rows);
+  const modeNote = appState.assignmentHorizon === "to_as_of"
+    ? "Comparison uses current prices/open-call caps as of the dashboard date."
+    : `Hold scenario assumes sale ${assignmentHorizonLabel(appState.assignmentHorizon)} after each assignment; incomplete lots are excluded.`;
+  $("assignment_quality").innerHTML = `
+    ${sectionHead("Assignment Quality Lab", "Actual wheel management versus a counterfactual hold of the assigned shares.")}
+    <div class="toolbar">
+      <label><span class="control-label">Assignment cohort</span><select id="assignmentYear">${years.map(y=>`<option value="${safe(y)}" ${String(y)===String(appState.assignmentYear)?"selected":""}>${safe(y==="all"?"Full period":y)}</option>`).join("")}</select></label>
+      <label><span class="control-label">Hold exit horizon</span><select id="assignmentHorizon">${(controls.horizons || ["to_as_of"]).map(h=>`<option value="${safe(h)}" ${String(h)===String(appState.assignmentHorizon)?"selected":""}>${safe(assignmentHorizonLabel(h))}</option>`).join("")}</select></label>
+      ${badge(`Redeployment assumption ${fmtPct(controls.opportunity_monthly_rate ?? 0.015)} monthly, compounded`, "blue")}
+    </div>
+    <div class="grid metrics">
+      ${card("Actual path P&L", fmtMoney(summary.actual_total_pnl), "Assigned put + post-assignment options + stock P&L", cls(summary.actual_total_pnl))}
+      ${card("Hold counterfactual", fmtMoney(summary.counterfactual_total_pnl), `${assignmentHorizonLabel(appState.assignmentHorizon)} net of redeployment cost`, cls(summary.counterfactual_total_pnl))}
+      ${card("Wheel advantage", fmtMoney(summary.delta_actual_minus_hold), "Actual path minus hold counterfactual", assignmentDeltaCls(summary.delta_actual_minus_hold, summary))}
+      ${card("Ticker win rate", fmtPct(summary.actual_beat_hold_rate), "Share of selected rows where wheel beat hold")}
+    </div>
+    <div class="panel"><p>${safe(modeNote)} The hold counterfactual subtracts estimated redeployment income lost: assigned strike notional compounded at ${fmtPct(controls.opportunity_monthly_rate ?? 0.015)} per month. Strike notional is cumulative context, not peak dollars held at one time.</p></div>
+    <div style="height:12px"></div>
+    <div class="grid two-even">${assignmentOutcomeChart(summary)}${assignmentTickerDeltaChart(tickerRows)}</div>
+    <div style="height:12px"></div>
+    ${assignmentComponentTable(summary)}
+    ${sectionHead("Cohorts and Horizons")}
+    <div class="grid two-even">${assignmentCohortChart(assignmentCohortRows())}${assignmentHorizonChart(horizonRows)}</div>
+    ${sectionHead("Ticker Detail")}
+    ${dataTable("assignment-tickers", tickerRows, [
+      {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`},
+      {key:"lots",label:"Events",num:true},
+      {key:"assigned_shares",label:"Shares assigned",num:true},
+      {key:"put_pnl",label:"Put premiums",format:fmtMoney,num:true,className:cls},
+      {key:"call_cashflow_pnl",label:"Call cashflows",format:fmtMoney,num:true,className:cls},
+      {key:"actual_stock_pnl",label:"Stock P&L",format:fmtMoney,num:true,className:cls},
+      {key:"actual_total_pnl",label:"Actual total",format:fmtMoney,num:true,className:cls},
+      {key:"counterfactual_total_pnl",label:"Hold total",format:fmtMoney,num:true,className:cls},
+      {key:"delta_actual_minus_hold",label:"Wheel advantage",format:fmtMoney,num:true,className:assignmentDeltaCls},
+      {key:"delta_roi",label:"Advantage / notional",format:fmtPct,num:true,className:(v,row)=>assignmentDeltaCls(row.delta_actual_minus_hold,row)},
+      {key:"decision_read",label:"Read",format:assignmentDecisionPill}
+    ], {title:"Ticker assignment quality", subtitle:"Actual total = assigned-put premium + post-assignment puts + calls + stock P&L. Hold total is the selected hold counterfactual.", wide:true})}
+    ${sectionHead("Open Call Cap Exposure")}
+    ${dataTable("assignment-caps", aq.open_call_caps || [], [
+      {key:"ticker",label:"Ticker"},
+      {key:"assignment_date",label:"Assigned",format:fmtDate},
+      {key:"remaining_shares",label:"Shares",num:true},
+      {key:"covered_shares",label:"Covered",num:true},
+      {key:"assignment_strike",label:"Basis",format:v=>fmtMoney(v,2),num:true},
+      {key:"current_price",label:"Price",format:v=>fmtMoney(v,2),num:true},
+      {key:"open_call_min_strike",label:"Call strike",format:v=>fmtMoney(v,2),num:true},
+      {key:"cap_drag",label:"Cap drag",format:fmtMoney,num:true,className:cls}
+    ], {title:"Covered-call cap drag", small:true})}
+    ${sectionHead("Assignment Event Detail")}
+    ${dataTable("assignment-lots", eventRows, [
+      {key:"ticker",label:"Ticker"},
+      {key:"assignment_date",label:"Assigned",format:fmtDate},
+      {key:"assignment_year",label:"Year",num:true},
+      {key:"expiration",label:"Put expiry",format:fmtDate},
+      {key:"strike",label:"Strike",format:v=>fmtMoney(v,2),num:true},
+      {key:"contracts",label:"Contracts",format:v=>fmtDec(v,0),num:true},
+      {key:"original_shares",label:"Shares",num:true},
+      {key:"months_held",label:"Months",format:v=>fmtDec(v,1),num:true},
+      {key:"opportunity_cost",label:"Redeploy cost",format:fmtMoney,num:true},
+      {key:"actual_total_pnl",label:"Actual total",format:fmtMoney,num:true,className:cls},
+      {key:"counterfactual_before_opportunity",label:"Gross hold",format:fmtMoney,num:true,className:cls},
+      {key:"counterfactual_total_pnl",label:"Hold total",format:fmtMoney,num:true,className:cls},
+      {key:"delta_actual_minus_hold",label:"Wheel advantage",format:fmtMoney,num:true,className:assignmentDeltaCls},
+      {key:"decision_read",label:"Read",format:assignmentDecisionPill}
+    ], {title:"Assignment events", subtitle:"Identical contracts are grouped so repeated rows become one event.", wide:true, maxHeight:620})}
+  `;
+}
 function renderTickers(){
   const rows = data.tickers.items || data.tables.per_ticker_totals || [];
   const years = ["all", ...[...new Set((data.tables.per_ticker_yearly || []).map(r => String(r.year)))].sort()];
@@ -1461,6 +1799,8 @@ function bindControls(){
   });
   const tickerYear = $("tickerYear"); if (tickerYear) tickerYear.addEventListener("change", (e) => { appState.tickerYear = e.target.value; render(); });
   const expectancyYear = $("expectancyYear"); if (expectancyYear) expectancyYear.addEventListener("change", (e) => { appState.expectancyYear = e.target.value; render(); });
+  const assignmentYear = $("assignmentYear"); if (assignmentYear) assignmentYear.addEventListener("change", (e) => { appState.assignmentYear = e.target.value; render(); });
+  const assignmentHorizon = $("assignmentHorizon"); if (assignmentHorizon) assignmentHorizon.addEventListener("change", (e) => { appState.assignmentHorizon = e.target.value; render(); });
   const targetSettingsForm = $("targetSettingsForm");
   if (targetSettingsForm) targetSettingsForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1531,6 +1871,7 @@ function bindControls(){
 const sectionRenderers = {
   dashboard: renderDashboard,
   decision_lab: renderDecisionLab,
+  assignment_quality: renderAssignmentQuality,
   monthly: renderMonthly,
   tickers: renderTickers,
   performance: renderPerformance,

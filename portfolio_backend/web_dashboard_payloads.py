@@ -9,6 +9,8 @@ import pandas as pd
 
 import mobile_api
 from portfolio_backend.charts import build_benchmark_growth_chart_data, build_options_cycle_chart_data
+from portfolio_backend.ibkr.assignment_quality import assignment_quality_tickers, build_assignment_quality_analysis
+from portfolio_backend.ibkr.repository import load_flex_report_from_env
 from portfolio_backend.mobile_api_service import (
     build_mobile_dashboard_payload,
     build_mobile_issues_payload,
@@ -20,6 +22,7 @@ from portfolio_backend.mobile_api_service import (
 )
 from portfolio_backend.mobile_payloads import build_mobile_snapshot, build_yearly_performance_rows
 from portfolio_backend.performance import expectancies
+from portfolio_backend.price_history_store import get_default_price_history_store
 
 
 def _json_safe(value: Any) -> Any:
@@ -142,6 +145,51 @@ def _expectancy_by_year_records(state: Any) -> List[Dict[str, Any]]:
     return rows
 
 
+def _assignment_quality_payload(state: Any) -> Dict[str, Any]:
+    prices = dict(getattr(state, "stock_prices", {}) or getattr(state, "live_prices", {}) or {})
+    as_of = pd.to_datetime(getattr(state, "as_of", None) or date.today()).normalize()
+    try:
+        report = load_flex_report_from_env()
+    except Exception as exc:
+        return {"error": str(exc), "summary": {}, "by_ticker": [], "by_assignment_year": [], "by_horizon": [], "lot_detail": []}
+    assignment_tickers = assignment_quality_tickers(report, as_of=as_of)
+    missing_current = sorted(ticker for ticker in assignment_tickers if ticker not in prices)
+    if missing_current:
+        try:
+            deps = mobile_api._dependencies({})
+            if deps.fetch_current_prices is not None:
+                fetched, _errors, _summary = deps.fetch_current_prices(missing_current)
+                prices.update(fetched or {})
+        except Exception:
+            pass
+    historical_prices: Dict[str, pd.Series] = {}
+    history_errors: list[str] = []
+    tickers = sorted(set([*assignment_tickers, *[str(ticker).upper() for ticker in prices.keys()]]))
+    if tickers:
+        try:
+            store = get_default_price_history_store()
+            lookups = store.get_many_history(tickers, pd.Timestamp("2000-01-01"), as_of)
+            historical_prices = {
+                ticker: lookup.series
+                for ticker, lookup in lookups.items()
+                if lookup is not None and getattr(lookup, "series", pd.Series(dtype=float)) is not None
+            }
+        except Exception as exc:
+            history_errors.append(str(exc))
+    try:
+        payload = build_assignment_quality_analysis(
+            report,
+            as_of=as_of,
+            prices=prices,
+            historical_prices=historical_prices,
+        )
+    except Exception as exc:
+        return {"error": str(exc), "summary": {}, "by_ticker": [], "by_assignment_year": [], "by_horizon": [], "lot_detail": []}
+    if history_errors:
+        payload.setdefault("coverage", {})["history_errors"] = history_errors
+    return payload
+
+
 def get_web_context(
     *,
     as_of: Optional[date],
@@ -244,6 +292,7 @@ def build_dashboard_data(
             "tickers": tickers,
             "monthly": monthly,
             "yearly": yearly,
+            "assignment_quality": {"deferred": True},
             "views": {
                 "snapshots": {
                     "with_unrealized": build_mobile_snapshot(state, True),
@@ -313,6 +362,11 @@ def build_dashboard_data(
             ],
         }
     )
+
+
+def build_assignment_quality_data(*, as_of: Optional[date] = None) -> Dict[str, Any]:
+    context, _ = get_web_context(as_of=as_of, include_unrealized=True)
+    return _json_safe(_assignment_quality_payload(context.state))
 
 def dashboard_shell_data(*, include_unrealized: bool, target_return: float, target_floor: float = 0.01) -> Dict[str, Any]:
     target_floor = min(float(target_floor), float(target_return))

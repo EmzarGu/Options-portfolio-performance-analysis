@@ -9,7 +9,7 @@ from collections import OrderedDict
 from datetime import date, datetime, timezone
 from inspect import Parameter, signature
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     from fastapi import FastAPI, HTTPException, Query, Request
@@ -66,6 +66,7 @@ DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
 DEFAULT_REFRESH_REUSE_SECONDS = 300
+DEFAULT_SOURCE_MARKER_CACHE_SECONDS = 30
 PUBLIC_PATHS = {"/v1/mobile/health"}
 PRICE_ONLY_RELOAD_ENDPOINTS = [
     "/v1/mobile/dashboard",
@@ -89,6 +90,8 @@ FULL_RELOAD_ENDPOINTS = [
 _context_cache_lock = threading.Lock()
 _context_cache: "OrderedDict[Tuple[str, str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
 _active_cache_bust = 1
+_source_marker_cache_lock = threading.Lock()
+_source_marker_cache: Dict[str, tuple[float, Optional[Dict[str, Any]]]] = {}
 
 
 def _elapsed_ms(started_at: float) -> float:
@@ -148,6 +151,30 @@ def _timing_recorder(request: Request):
         _record_timing(request, phase, elapsed_ms)
 
     return record
+
+
+def _build_mobile_read_payload(
+    request: Request,
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    selected_sheets: Optional[List[str]],
+    cache_bust: Optional[int],
+    builder: Callable[[MobilePayloadContext], Dict[str, Any]],
+) -> Dict[str, Any]:
+    route_started_at = perf_counter()
+    context = _context(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        timing_recorder=_timing_recorder(request),
+    )
+    started_at = perf_counter()
+    payload = builder(context)
+    _record_timing(request, "dto_build_ms", _elapsed_ms(started_at))
+    _record_timing(request, "route_total_ms", _elapsed_ms(route_started_at))
+    return payload
 
 
 def _log_request_timing(
@@ -433,6 +460,14 @@ def _refresh_reuse_seconds() -> int:
         return DEFAULT_REFRESH_REUSE_SECONDS
 
 
+def _source_marker_cache_seconds() -> int:
+    value = os.getenv("SOURCE_MARKER_CACHE_SECONDS", str(DEFAULT_SOURCE_MARKER_CACHE_SECONDS)).strip()
+    try:
+        return max(int(float(value)), 0)
+    except ValueError:
+        return DEFAULT_SOURCE_MARKER_CACHE_SECONDS
+
+
 def _parse_timestamp(value: Any) -> Optional[datetime]:
     if value is None:
         return None
@@ -468,6 +503,19 @@ def _refresh_source_marker(timing_recorder=None) -> Optional[Dict[str, Any]]:
         if timing_recorder is not None:
             timing_recorder("source_check_ms", _elapsed_ms(started_at))
         return None
+    cache_seconds = _source_marker_cache_seconds()
+    if cache_seconds > 0:
+        now = perf_counter()
+        with _source_marker_cache_lock:
+            cached = _source_marker_cache.get(query_id)
+            if cached and now - cached[0] <= cache_seconds:
+                if timing_recorder is not None:
+                    timing_recorder("source_marker_cache_hit", 1)
+                    timing_recorder("source_check_ms", _elapsed_ms(started_at))
+                return dict(cached[1]) if cached[1] is not None else None
+    if timing_recorder is not None:
+        timing_recorder("source_marker_cache_hit", 0)
+    marker: Optional[Dict[str, Any]] = None
     try:
         from portfolio_backend.gcp import firestore_client
 
@@ -478,7 +526,11 @@ def _refresh_source_marker(timing_recorder=None) -> Optional[Dict[str, Any]]:
             if str(doc.get("status")) == "succeeded":
                 latest = _ibkr_import_marker_from_doc(doc, fallback_id=metadata_snap.id, query_id=query_id)
                 if latest is not None:
-                    return _with_ibkr_import_health(client, query_id, latest)
+                    marker = _with_ibkr_import_health(client, query_id, latest)
+                    if cache_seconds > 0:
+                        with _source_marker_cache_lock:
+                            _source_marker_cache[query_id] = (perf_counter(), dict(marker) if marker is not None else None)
+                    return marker
 
         try:
             from google.cloud.firestore_v1 import FieldFilter
@@ -506,7 +558,11 @@ def _refresh_source_marker(timing_recorder=None) -> Optional[Dict[str, Any]]:
             client.collection("app_metadata").document(f"ibkr_latest_import_{query_id}").set(latest, merge=True)
         except Exception as exc:
             logger.warning("ibkr_refresh_marker_cache_write_failed error=%s", exc)
-        return _with_ibkr_import_health(client, query_id, latest)
+        marker = _with_ibkr_import_health(client, query_id, latest)
+        if cache_seconds > 0:
+            with _source_marker_cache_lock:
+                _source_marker_cache[query_id] = (perf_counter(), dict(marker) if marker is not None else None)
+        return marker
     except Exception as exc:
         logger.warning("ibkr_refresh_source_check_failed error=%s", exc)
         return None
@@ -1409,6 +1465,7 @@ def trigger_mobile_ibkr_import() -> Dict[str, Any]:
 
 @app.get("/v1/mobile/dashboard")
 def get_mobile_dashboard(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
@@ -1417,37 +1474,41 @@ def get_mobile_dashboard(
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
     target_band = _target_band_for_request(target_return=target_return, target_floor=target_floor)
-    return build_mobile_dashboard_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=lambda context: build_mobile_dashboard_payload(
+            context,
+            target_return=target_band["target_return"],
+            target_floor=target_band["target_floor"],
         ),
-        target_return=target_band["target_return"],
-        target_floor=target_band["target_floor"],
     )
 
 
 @app.get("/v1/mobile/positions")
 def get_mobile_positions(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
-    return build_mobile_positions_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
-        )
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=build_mobile_positions_payload,
     )
 
 
 @app.get("/v1/mobile/open-option-shorts")
 def get_mobile_open_option_shorts(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
@@ -1473,20 +1534,19 @@ def get_mobile_open_option_shorts(
                 "details": {"received": limit},
             },
         )
-    return build_mobile_open_option_shorts_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
-        ),
-        sort=sort,
-        limit=limit,
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=lambda context: build_mobile_open_option_shorts_payload(context, sort=sort, limit=limit),
     )
 
 
 @app.get("/v1/mobile/tickers")
 def get_mobile_tickers(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
@@ -1494,20 +1554,19 @@ def get_mobile_tickers(
     include_history: bool = False,
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
-    return build_mobile_tickers_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
-        ),
-        year=year,
-        include_history=include_history,
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=lambda context: build_mobile_tickers_payload(context, year=year, include_history=include_history),
     )
 
 
 @app.get("/v1/mobile/performance/monthly")
 def get_mobile_monthly_performance(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
@@ -1526,48 +1585,52 @@ def get_mobile_monthly_performance(
             },
         )
     target_band = _target_band_for_request(target_return=target_return, target_floor=target_floor)
-    return build_mobile_monthly_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=lambda context: build_mobile_monthly_payload(
+            context,
+            target_return=target_band["target_return"],
+            target_floor=target_band["target_floor"],
+            monthly_range=range,
         ),
-        target_return=target_band["target_return"],
-        target_floor=target_band["target_floor"],
-        monthly_range=range,
     )
 
 
 @app.get("/v1/mobile/performance/yearly")
 def get_mobile_yearly_performance(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
-    return build_mobile_yearly_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
-        )
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=build_mobile_yearly_payload,
     )
 
 
 @app.get("/v1/mobile/issues")
 def get_mobile_issues(
+    request: Request,
     as_of: Optional[date] = None,
     include_unrealized: bool = True,
     selected_sheets: Optional[List[str]] = Query(default=None),
     cache_bust: Optional[int] = None,
 ) -> Dict[str, Any]:
-    return build_mobile_issues_payload(
-        _context(
-            as_of=as_of,
-            include_unrealized=include_unrealized,
-            selected_sheets=selected_sheets,
-            cache_bust=cache_bust,
-        )
+    return _build_mobile_read_payload(
+        request,
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=cache_bust,
+        builder=build_mobile_issues_payload,
     )

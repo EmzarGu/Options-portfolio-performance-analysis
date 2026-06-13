@@ -639,6 +639,11 @@ def test_ibkr_routes_build_from_persisted_local_json_store(tmp_path, monkeypatch
     monkeypatch.setattr(mobile_api.dashboard_app, "load_prefs", lambda: {"selected_sheets": ["Options 2026"], "include_unrealized": True})
     monkeypatch.setattr(
         mobile_api,
+        "load_monthly_target_band",
+        lambda: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
+    )
+    monkeypatch.setattr(
+        mobile_api,
         "_refresh_source_marker",
         lambda timing_recorder=None: {
             "source_snapshot_id": "ibkr-flex:1503002:run-1",
@@ -794,6 +799,23 @@ def test_refresh_route_records_best_effort_audit(api_harness, monkeypatch):
     assert record.status == "refreshed"
     assert record.request["selected_sheets"] == ["Options 2025"]
     assert "route_total_ms" in record.timings_ms
+
+
+def test_mobile_read_route_records_route_timing(api_harness, monkeypatch):
+    recorded = {}
+    original_record_timing = mobile_api._record_timing
+
+    def capture_timing(request, phase, elapsed_ms):
+        recorded[phase] = elapsed_ms
+        original_record_timing(request, phase, elapsed_ms)
+
+    monkeypatch.setattr(mobile_api, "_record_timing", capture_timing)
+
+    response = api_harness.client.get("/v1/mobile/dashboard")
+
+    assert response.status_code == 200
+    assert "route_total_ms" in recorded
+    assert "dto_build_ms" in recorded
 
 
 def test_refresh_audit_records_source_snapshot(monkeypatch):

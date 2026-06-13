@@ -11,6 +11,7 @@ __pycache__/
 .streamlit_user_prefs.json
 
 tmp/
+reports/
 tests/
 docs/
 scripts/*

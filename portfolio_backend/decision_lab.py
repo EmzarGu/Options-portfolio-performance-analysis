@@ -31,12 +31,13 @@ def build_decision_lab_data(
 ) -> dict[str, Any]:
     probability_matches = _combine_historical_matches(probability_matches or [], historical_enrichments or [])
     probability_matches = _enrich_probability_matches(dashboard_payload, probability_matches)
+    as_of = _as_of_date(dashboard_payload)
     ticker_situations = _ticker_situations(dashboard_payload)
     active_cycle = _active_cycle(dashboard_payload)
-    candidate_groups = recommendation_candidates(ticker_situations)
+    candidate_groups = recommendation_candidates(ticker_situations, as_of=as_of)
     if option_market_loader is not None:
         option_market_data = option_market_loader(ticker_situations, active_cycle, candidate_groups, dashboard_payload)
-    recommendation_rows = apply_option_market_candidates(candidate_groups, option_market_data or {})
+    recommendation_rows = apply_option_market_candidates(candidate_groups, option_market_data or {}, as_of=as_of)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": dashboard_payload.get("source", {}),
