@@ -332,6 +332,7 @@ def _build_dashboard_data(
     include_unrealized: bool = True,
     target_return: Optional[float] = None,
     target_floor: Optional[float] = None,
+    timing_recorder=None,
 ) -> Dict[str, Any]:
     return build_web_dashboard_data(
         as_of=as_of,
@@ -340,6 +341,7 @@ def _build_dashboard_data(
         target_floor=target_floor,
         default_target_return=_web_monthly_target_return_default(),
         default_target_floor=_web_monthly_target_floor_default(),
+        timing_recorder=timing_recorder,
     )
 
 
@@ -386,6 +388,7 @@ def _get_cached_dashboard_data(
     include_unrealized: bool = True,
     target_return: Optional[float] = None,
     target_floor: Optional[float] = None,
+    timing_recorder=None,
 ) -> Dict[str, Any]:
     ttl_seconds = _dashboard_data_cache_seconds()
     key = _dashboard_cache_key(
@@ -398,6 +401,8 @@ def _get_cached_dashboard_data(
     with _dashboard_data_cache_lock:
         cached = _dashboard_data_cache.get(key)
         if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
+            if timing_recorder is not None:
+                timing_recorder("dashboard_data_cache_hit", 1)
             return cached[1]
         key_lock = _dashboard_data_key_locks.setdefault(key, threading.Lock())
 
@@ -406,13 +411,18 @@ def _get_cached_dashboard_data(
         with _dashboard_data_cache_lock:
             cached = _dashboard_data_cache.get(key)
             if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
+                if timing_recorder is not None:
+                    timing_recorder("dashboard_data_cache_hit", 1)
                 return cached[1]
+        if timing_recorder is not None:
+            timing_recorder("dashboard_data_cache_hit", 0)
 
         payload = _build_dashboard_data(
             as_of=as_of,
             include_unrealized=include_unrealized,
             target_return=target_return,
             target_floor=target_floor,
+            timing_recorder=timing_recorder,
         )
         if ttl_seconds > 0:
             with _dashboard_data_cache_lock:
@@ -557,19 +567,7 @@ def _build_decision_lab_payload(payload: Dict[str, Any], *, force_refresh: bool 
 
 def _with_decision_lab(payload: Dict[str, Any]) -> Dict[str, Any]:
     enriched = dict(payload)
-    try:
-        enriched["decision_lab"] = _build_decision_lab_payload(payload, force_refresh=False)
-    except Exception as exc:
-        logger.warning("dashboard_decision_lab_load_failed error=%s", exc)
-        enriched["decision_lab"] = {
-            "error": str(exc),
-            "ticker_situations": [],
-            "active_cycle": {},
-            "recommendation_candidates": [],
-            "strike_quality": {},
-            "coverage_notes": [],
-            "option_market_data": {"status": {"status": "failed", "error": str(exc)}},
-        }
+    enriched["decision_lab"] = {"deferred": True}
     return enriched
 
 
@@ -760,17 +758,34 @@ def trigger_import(request: Request) -> Response:
 def dashboard_json(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    started_at = perf_counter()
+    timings: Dict[str, float] = {}
+
+    def record_timing(phase: str, elapsed_ms: float) -> None:
+        timings[phase] = round(float(elapsed_ms), 2)
+
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
+    settings_started_at = perf_counter()
     target_band = _monthly_target_band_from_request(request)
+    record_timing("target_settings_ms", (perf_counter() - settings_started_at) * 1000)
     try:
         payload = _get_cached_dashboard_data(
             include_unrealized=include_unrealized,
             target_return=target_band["target_return"],
             target_floor=target_band["target_floor"],
+            timing_recorder=record_timing,
         )
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
-    return JSONResponse(_with_decision_lab(payload))
+    decision_started_at = perf_counter()
+    response_payload = _with_decision_lab(payload)
+    record_timing("decision_lab_attach_ms", (perf_counter() - decision_started_at) * 1000)
+    record_timing("route_total_ms", (perf_counter() - started_at) * 1000)
+    logger.info(
+        "web_dashboard_api_timing %s",
+        " ".join([f"{key}={timings[key]}" for key in sorted(timings)]),
+    )
+    return JSONResponse(response_payload)
 
 
 @app.get("/api/decision-lab")

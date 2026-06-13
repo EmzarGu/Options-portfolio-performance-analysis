@@ -328,8 +328,16 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["web"]["target_return"] == 0.0225
-    assert first.json()["decision_lab"]["active_cycle"]["cycle_label"] == "June 2026"
-    assert calls == [{"as_of": None, "include_unrealized": True, "target_return": 0.0225, "target_floor": 0.01}]
+    assert first.json()["decision_lab"] == {"deferred": True}
+    assert calls == [
+        {
+            "as_of": None,
+            "include_unrealized": True,
+            "target_return": 0.0225,
+            "target_floor": 0.01,
+            "timing_recorder": calls[0]["timing_recorder"],
+        }
+    ]
     web_dashboard._clear_dashboard_data_cache()
 
 

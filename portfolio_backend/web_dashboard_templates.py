@@ -150,6 +150,9 @@ const appState = {
   assignmentQuality: null,
   assignmentQualityLoading: false,
   assignmentQualityError: "",
+  decisionLab: null,
+  decisionLabLoading: false,
+  decisionLabError: "",
   sort: {},
   renderTimer: null
 };
@@ -287,6 +290,9 @@ async function loadDashboardData(){
     appState.includeUnrealized = data.web?.include_unrealized !== false;
     appState.targetReturn = Number(data.web?.target_return ?? appState.targetReturn ?? 0.015);
     appState.targetFloor = Number(data.web?.target_floor ?? appState.targetFloor ?? 0.01);
+    appState.decisionLab = null;
+    appState.decisionLabError = "";
+    appState.decisionLabLoading = false;
     render();
   } catch (err) {
     dashboardLoaded = false;
@@ -880,7 +886,7 @@ function inventoryColumns(){
   ];
 }
 function decisionData(){
-  return data.decision_lab || {};
+  return appState.decisionLab || data.decision_lab || {};
 }
 function decisionActiveCycle(){
   return (data.monthly || {}).active_cycle || ((data.dashboard || {}).monthly_target || {}).cycle_projection || decisionData().active_cycle || {};
@@ -1046,9 +1052,45 @@ function decisionCoverage(){
   const notes = decisionData().coverage_notes || [];
   return `<div class="note-list">${notes.map(n=>`<div class="note"><strong>${safe(n.severity)}</strong><span class="muted">${safe(n.message)}</span></div>`).join("")}</div>`;
 }
+async function loadDecisionLab(){
+  if (appState.decisionLabLoading) return;
+  appState.decisionLabLoading = true;
+  appState.decisionLabError = "";
+  setUpdating(true, "Loading Decision Lab...");
+  try {
+    const response = await fetch("/api/decision-lab" + window.location.search, {
+      credentials: "same-origin",
+      headers: {"Accept": "application/json"}
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    appState.decisionLab = payload;
+    data.decision_lab = payload;
+  } catch (err) {
+    appState.decisionLabError = err && err.message || String(err);
+  } finally {
+    appState.decisionLabLoading = false;
+    setUpdating(false);
+    if (appState.active === "decision_lab") render();
+  }
+}
 function renderDecisionLab(){
-  if (!data.decision_lab || data.decision_lab.error) {
-    $("decision_lab").innerHTML = `<div class="panel"><h2>Decision Lab unavailable</h2><p class="error">${safe(data.decision_lab?.error || "Decision data has not loaded.")}</p></div>`;
+  const decision = decisionData();
+  if (decision.deferred || (!appState.decisionLab && !decision.error)) {
+    if (!appState.decisionLabLoading && !appState.decisionLabError) {
+      setTimeout(loadDecisionLab, 0);
+    }
+    $("decision_lab").innerHTML = loadingPanel(
+      "Loading Decision Lab...",
+      "",
+      appState.decisionLabError
+    );
+    const retry = $("retryDashboardLoad");
+    if (retry) retry.addEventListener("click", loadDecisionLab);
+    return;
+  }
+  if (!decision || decision.error) {
+    $("decision_lab").innerHTML = `<div class="panel"><h2>Decision Lab unavailable</h2><p class="error">${safe(decision?.error || "Decision data has not loaded.")}</p></div>`;
     return;
   }
   $("decision_lab").innerHTML = `
@@ -1857,6 +1899,7 @@ function bindControls(){
         const refreshed = await response.json();
         if (!response.ok) throw new Error(refreshed.error || `HTTP ${response.status}`);
         data.decision_lab = refreshed;
+        appState.decisionLab = refreshed;
         render();
       } catch (err) {
         optionFetch.disabled = false;

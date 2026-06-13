@@ -231,11 +231,12 @@ def build_dashboard_data(
     target_floor: Optional[float] = None,
     default_target_return: float = 0.015,
     default_target_floor: float = 0.01,
+    timing_recorder=None,
 ) -> Dict[str, Any]:
     # The web UI can switch realized/unrealized presentation without a server
     # round trip, so build the full unrealized-capable context once and include
     # both presentation views in the payload.
-    context, _ = get_web_context(as_of=as_of, include_unrealized=True)
+    context, _ = get_web_context(as_of=as_of, include_unrealized=True, timing_recorder=timing_recorder)
     state = context.state
     monthly_target_return = default_target_return if target_return is None else target_return
     monthly_target_floor = min(
