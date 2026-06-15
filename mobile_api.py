@@ -6,7 +6,7 @@ import hmac
 import logging
 import os
 from collections import OrderedDict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from inspect import Parameter, signature
 from time import perf_counter
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -64,6 +64,7 @@ DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
 DEFAULT_SOURCE_MARKER_CACHE_SECONDS = 30
+DEFAULT_IBKR_IMPORT_STALE_DAYS = 3
 PUBLIC_PATHS = {"/v1/mobile/health"}
 PRICE_ONLY_RELOAD_ENDPOINTS = [
     "/v1/mobile/dashboard",
@@ -457,6 +458,14 @@ def _source_marker_cache_seconds() -> int:
         return DEFAULT_SOURCE_MARKER_CACHE_SECONDS
 
 
+def _ibkr_import_stale_days() -> int:
+    value = os.getenv("IBKR_IMPORT_STALE_DAYS", str(DEFAULT_IBKR_IMPORT_STALE_DAYS)).strip()
+    try:
+        return max(int(float(value)), 0)
+    except ValueError:
+        return DEFAULT_IBKR_IMPORT_STALE_DAYS
+
+
 def _resolve_dependencies(source_metadata: Dict[str, Any]) -> MobileServiceDependencies:
     try:
         parameters = signature(_dependencies).parameters
@@ -586,6 +595,9 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
     latest_success_finished = str(latest_success_marker.get("finished_at") or "")
     latest_success_to_date = _parse_iso_date(latest_success_marker.get("to_date"))
     issues: List[Dict[str, Any]] = []
+    stale_issue = _ibkr_stale_import_issue(latest_success_marker, today=date.today())
+    if stale_issue is not None:
+        issues.append(stale_issue)
     try:
         try:
             from google.cloud.firestore_v1 import FieldFilter
@@ -647,10 +659,55 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
 def _parse_iso_date(value: Any) -> Optional[date]:
     if not value:
         return None
-    try:
-        return date.fromisoformat(str(value)[:10])
-    except ValueError:
+    text = str(value).strip()
+    if not text:
         return None
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    compact = text[:8]
+    if len(compact) == 8 and compact.isdigit():
+        try:
+            return datetime.strptime(compact, "%Y%m%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _ibkr_stale_import_issue(latest_success_marker: Dict[str, Any], *, today: date) -> Optional[Dict[str, Any]]:
+    stale_days = _ibkr_import_stale_days()
+    if stale_days <= 0:
+        return None
+    to_date = _parse_iso_date(latest_success_marker.get("to_date"))
+    if to_date is None:
+        return {
+            "category": "import",
+            "severity": "warning",
+            "status": "stale",
+            "from_date": latest_success_marker.get("from_date"),
+            "to_date": latest_success_marker.get("to_date"),
+            "finished_at": latest_success_marker.get("finished_at"),
+            "message": "IBKR import freshness cannot be verified: latest successful import has no valid statement end date.",
+            "action": "retry_import",
+        }
+    latest_expected = today - timedelta(days=stale_days)
+    if to_date >= latest_expected:
+        return None
+    return {
+        "category": "import",
+        "severity": "warning",
+        "status": "stale",
+        "from_date": latest_success_marker.get("from_date"),
+        "to_date": latest_success_marker.get("to_date"),
+        "finished_at": latest_success_marker.get("finished_at"),
+        "message": (
+            f"IBKR import stale: latest successful statement ends {to_date.isoformat()}, "
+            f"more than {stale_days} days behind today."
+        ),
+        "action": "retry_import",
+    }
 
 
 def _ibkr_import_issue_resolved(

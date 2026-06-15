@@ -43,6 +43,45 @@ def test_ibkr_import_issue_resolved_only_by_later_success_covering_same_date():
     )
 
 
+def test_ibkr_import_date_parser_accepts_flex_compact_dates():
+    assert mobile_api._parse_iso_date("20260612") == date(2026, 6, 12)
+    assert mobile_api._parse_iso_date("2026-06-12T17:53:56+00:00") == date(2026, 6, 12)
+    assert mobile_api._parse_iso_date("not-a-date") is None
+
+
+def test_ibkr_stale_import_issue_flags_old_latest_success(monkeypatch):
+    monkeypatch.setenv("IBKR_IMPORT_STALE_DAYS", "3")
+
+    issue = mobile_api._ibkr_stale_import_issue(
+        {
+            "from_date": "20260601",
+            "to_date": "20260604",
+            "finished_at": "2026-06-05T05:30:34+00:00",
+        },
+        today=date(2026, 6, 15),
+    )
+
+    assert issue is not None
+    assert issue["category"] == "import"
+    assert issue["status"] == "stale"
+    assert "2026-06-04" in issue["message"]
+
+
+def test_ibkr_stale_import_issue_allows_recent_latest_success(monkeypatch):
+    monkeypatch.setenv("IBKR_IMPORT_STALE_DAYS", "3")
+
+    issue = mobile_api._ibkr_stale_import_issue(
+        {
+            "from_date": "20260605",
+            "to_date": "20260612",
+            "finished_at": "2026-06-15T17:53:56+00:00",
+        },
+        today=date(2026, 6, 15),
+    )
+
+    assert issue is None
+
+
 @pytest.fixture
 def api_harness(monkeypatch):
     mobile_api._clear_context_cache()
