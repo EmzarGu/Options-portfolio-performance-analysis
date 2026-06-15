@@ -224,58 +224,6 @@ def pipeline_snapshot_id(
     return f"{source_kind}:{as_of_text}:{digest}"
 
 
-def refreshed_snapshot_id(
-    *,
-    source_snapshot_id: str,
-    as_of: Any,
-    selected_sheets: Iterable[str],
-    include_unrealized: bool,
-    cache_bust: int,
-    source_kind: str = "ibkr_flex",
-) -> str:
-    as_of_text = _date_text(as_of)
-    selected = ",".join(str(sheet) for sheet in selected_sheets)
-    raw = "|".join(
-        [
-            f"v{SNAPSHOT_SCHEMA_VERSION}",
-            "refreshed",
-            source_kind,
-            str(source_snapshot_id),
-            as_of_text,
-            selected,
-            "1" if include_unrealized else "0",
-            str(int(cache_bust)),
-        ]
-    )
-    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
-    return f"{source_kind}:refreshed:{as_of_text}:{digest}"
-
-
-def refreshed_snapshot_pointer_id(
-    *,
-    source_snapshot_id: str,
-    as_of: Any,
-    selected_sheets: Iterable[str],
-    include_unrealized: bool,
-    source_kind: str = "ibkr_flex",
-) -> str:
-    as_of_text = _date_text(as_of)
-    selected = ",".join(str(sheet) for sheet in selected_sheets)
-    raw = "|".join(
-        [
-            f"v{SNAPSHOT_SCHEMA_VERSION}",
-            "latest-refreshed",
-            source_kind,
-            str(source_snapshot_id),
-            as_of_text,
-            selected,
-            "1" if include_unrealized else "0",
-        ]
-    )
-    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
-    return f"{source_kind}:latest-refreshed:{as_of_text}:{digest}"
-
-
 def snapshot_metadata_for_context(
     *,
     source_marker: Optional[Dict[str, Any]],

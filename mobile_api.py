@@ -6,7 +6,7 @@ import hmac
 import logging
 import os
 from collections import OrderedDict
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from inspect import Parameter, signature
 from time import perf_counter
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -49,8 +49,6 @@ from portfolio_backend.pipeline import (
 from portfolio_backend.pipeline_snapshot_store import (
     get_default_pipeline_snapshot_store,
     pipeline_snapshot_id,
-    refreshed_snapshot_id,
-    refreshed_snapshot_pointer_id,
     snapshot_metadata_for_context,
 )
 
@@ -65,7 +63,6 @@ SERVICE_NAME = "options-roi-mobile-api"
 DATA_SOURCE_GOOGLE_SHEETS = "google_sheets"
 DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
-DEFAULT_REFRESH_REUSE_SECONDS = 300
 DEFAULT_SOURCE_MARKER_CACHE_SECONDS = 30
 PUBLIC_PATHS = {"/v1/mobile/health"}
 PRICE_ONLY_RELOAD_ENDPOINTS = [
@@ -452,37 +449,12 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _refresh_reuse_seconds() -> int:
-    value = os.getenv("SHARED_REFRESH_REUSE_SECONDS", str(DEFAULT_REFRESH_REUSE_SECONDS)).strip()
-    try:
-        return max(int(float(value)), 0)
-    except ValueError:
-        return DEFAULT_REFRESH_REUSE_SECONDS
-
-
 def _source_marker_cache_seconds() -> int:
     value = os.getenv("SOURCE_MARKER_CACHE_SECONDS", str(DEFAULT_SOURCE_MARKER_CACHE_SECONDS)).strip()
     try:
         return max(int(float(value)), 0)
     except ValueError:
         return DEFAULT_SOURCE_MARKER_CACHE_SECONDS
-
-
-def _parse_timestamp(value: Any) -> Optional[datetime]:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _resolve_dependencies(source_metadata: Dict[str, Any]) -> MobileServiceDependencies:
@@ -754,31 +726,6 @@ def _pipeline_snapshot_id_for_request(
     )
 
 
-def _refreshed_snapshot_ids_for_request(
-    source_marker: Optional[Dict[str, Any]],
-    request: MobilePayloadRequest,
-    *,
-    cache_bust: int,
-) -> Optional[Tuple[str, str]]:
-    source_snapshot_id = (source_marker or {}).get("source_snapshot_id")
-    if not source_snapshot_id:
-        return None
-    pointer_id = refreshed_snapshot_pointer_id(
-        source_snapshot_id=str(source_snapshot_id),
-        as_of=request.as_of,
-        selected_sheets=request.selected_sheets,
-        include_unrealized=request.include_unrealized,
-    )
-    snapshot_id = refreshed_snapshot_id(
-        source_snapshot_id=str(source_snapshot_id),
-        as_of=request.as_of,
-        selected_sheets=request.selected_sheets,
-        include_unrealized=request.include_unrealized,
-        cache_bust=cache_bust,
-    )
-    return pointer_id, snapshot_id
-
-
 def _save_pipeline_snapshot(
     context: Any,
     *,
@@ -849,125 +796,6 @@ def _load_pipeline_snapshot_context(
         source_metadata=metadata,
         base_state=snapshot.state,
     )
-
-
-def _save_refreshed_context_snapshot(
-    context: MobilePayloadContext,
-    *,
-    request: MobilePayloadRequest,
-    source_marker: Optional[Dict[str, Any]],
-    refresh_metadata: Dict[str, Any],
-    cache_bust: int,
-    timing_recorder=None,
-) -> None:
-    ids = _refreshed_snapshot_ids_for_request(source_marker, request, cache_bust=cache_bust)
-    if ids is None:
-        return
-    pointer_id, snapshot_id = ids
-    metadata = {
-        **snapshot_metadata_for_context(
-            source_marker=source_marker,
-            request=request,
-            available_sheets=getattr(context, "available_sheets", None),
-        ),
-        **dict(getattr(context, "source_metadata", {}) or {}),
-        "snapshot_kind": "refreshed_context",
-        "include_unrealized": bool(request.include_unrealized),
-        "cache_bust": int(cache_bust),
-        "refresh_scope": refresh_metadata.get("scope"),
-        "pipeline_refreshed": bool(refresh_metadata.get("pipeline_refreshed", False)),
-        "prices_refreshed": bool(refresh_metadata.get("prices_refreshed", False)),
-        "reload_endpoints": list(refresh_metadata.get("reload_endpoints") or []),
-    }
-    started_at = perf_counter()
-    try:
-        get_default_pipeline_snapshot_store().save_latest(pointer_id, snapshot_id, context.state, metadata)
-    except Exception as exc:
-        logger.warning("refreshed_context_snapshot_write_failed snapshot_id=%s error=%s", snapshot_id, exc)
-    finally:
-        if timing_recorder is not None:
-            timing_recorder("refreshed_context_snapshot_write_ms", _elapsed_ms(started_at))
-
-
-def _load_refreshed_context_snapshot(
-    *,
-    request: MobilePayloadRequest,
-    available: List[str],
-    source_marker: Optional[Dict[str, Any]],
-    timing_recorder=None,
-) -> Optional[MobilePayloadContext]:
-    ids = _refreshed_snapshot_ids_for_request(source_marker, request, cache_bust=request.cache_bust)
-    if ids is None:
-        return None
-    pointer_id, _snapshot_id = ids
-    started_at = perf_counter()
-    try:
-        snapshot = get_default_pipeline_snapshot_store().load_latest(pointer_id)
-    except Exception as exc:
-        logger.warning("refreshed_context_snapshot_load_failed pointer_id=%s error=%s", pointer_id, exc)
-        snapshot = None
-    finally:
-        if timing_recorder is not None:
-            timing_recorder("refreshed_context_snapshot_lookup_ms", _elapsed_ms(started_at))
-
-    if snapshot is None:
-        if timing_recorder is not None:
-            timing_recorder("refreshed_context_snapshot_hit", 0)
-        return None
-    if timing_recorder is not None:
-        timing_recorder("refreshed_context_snapshot_hit", 1)
-    metadata = {**_source_metadata_for_marker(source_marker), **dict(snapshot.metadata or {})}
-    metadata["refreshed_context_snapshot_id"] = snapshot.snapshot_id
-    return MobilePayloadContext(
-        state=snapshot.state,
-        request={
-            "as_of": request.as_of,
-            "include_unrealized": request.include_unrealized,
-            "selected_sheets": request.selected_sheets,
-        },
-        available_sheets=[str(sheet) for sheet in available] if available is not None else None,
-        source_metadata=metadata,
-        base_state=None,
-    )
-
-
-def _refreshed_context_age_seconds(context: MobilePayloadContext) -> Optional[float]:
-    metadata = dict(getattr(context, "source_metadata", {}) or {})
-    timestamp = _parse_timestamp(metadata.get("prices_updated_at")) or _parse_timestamp(metadata.get("created_at"))
-    if timestamp is None:
-        return None
-    return max((datetime.now(timezone.utc) - timestamp).total_seconds(), 0.0)
-
-
-def _load_recent_refreshed_context_snapshot(
-    *,
-    request: MobilePayloadRequest,
-    available: List[str],
-    source_marker: Optional[Dict[str, Any]],
-    max_age_seconds: int,
-    timing_recorder=None,
-) -> Optional[MobilePayloadContext]:
-    if max_age_seconds <= 0:
-        return None
-    context = _load_refreshed_context_snapshot(
-        request=request,
-        available=available,
-        source_marker=source_marker,
-        timing_recorder=timing_recorder,
-    )
-    if context is None:
-        return None
-    age_seconds = _refreshed_context_age_seconds(context)
-    if age_seconds is None or age_seconds > max_age_seconds:
-        if timing_recorder is not None:
-            timing_recorder("recent_refreshed_context_hit", 0)
-        return None
-    if timing_recorder is not None:
-        timing_recorder("recent_refreshed_context_hit", 1)
-        timing_recorder("recent_refreshed_context_age_ms", age_seconds * 1000)
-    context.source_metadata["refreshed_context_reused"] = True
-    context.source_metadata["refreshed_context_age_seconds"] = round(age_seconds, 3)
-    return context
 
 
 def _refresh_prices_from_cached_base(
@@ -1049,18 +877,9 @@ def _context(
     use_memory_cache = _data_source() != DATA_SOURCE_IBKR
     source_metadata: Dict[str, Any] = dict(source_metadata_override or {})
     source_marker: Optional[Dict[str, Any]] = _source_marker_from_metadata(source_metadata)
-    if _data_source() == DATA_SOURCE_IBKR and not force_rebuild:
-        if "source_snapshot_id" not in source_metadata:
-            source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
-            source_metadata.update(_source_metadata_for_marker(source_marker))
-        refreshed_context = _load_refreshed_context_snapshot(
-            request=request,
-            available=available,
-            source_marker=source_marker,
-            timing_recorder=timing_recorder,
-        )
-        if refreshed_context is not None:
-            return refreshed_context
+    if _data_source() == DATA_SOURCE_IBKR and not force_rebuild and "source_snapshot_id" not in source_metadata:
+        source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
+        source_metadata.update(_source_metadata_for_marker(source_marker))
 
     if use_memory_cache and not force_rebuild:
         started_at = perf_counter()
@@ -1161,28 +980,6 @@ def _smart_refresh_context(
         timing_recorder=timing_recorder,
     )
 
-    recent_context = _load_recent_refreshed_context_snapshot(
-        request=active_request,
-        available=active_available,
-        source_marker=source_marker,
-        max_age_seconds=_refresh_reuse_seconds(),
-        timing_recorder=timing_recorder,
-    )
-    if recent_context is not None:
-        refresh_metadata = {
-            "scope": "cached_recent",
-            "pipeline_refreshed": False,
-            "prices_refreshed": False,
-            "source_checked": True,
-            "source_changed": False,
-            "source_snapshot_id": (source_marker or {}).get("source_snapshot_id"),
-            "refreshed_context_snapshot_id": recent_context.source_metadata.get("refreshed_context_snapshot_id"),
-            "refreshed_context_age_seconds": recent_context.source_metadata.get("refreshed_context_age_seconds"),
-            "reload_endpoints": PRICE_ONLY_RELOAD_ENDPOINTS,
-        }
-        _set_active_cache_bust(resolved_cache_bust)
-        return (recent_context, resolved_cache_bust, refresh_metadata)
-
     snapshot_context = _load_pipeline_snapshot_context(
         request=active_request,
         available=active_available,
@@ -1214,14 +1011,6 @@ def _smart_refresh_context(
                 "pipeline_snapshot_id": snapshot_context.source_metadata.get("pipeline_snapshot_id"),
                 "reload_endpoints": PRICE_ONLY_RELOAD_ENDPOINTS,
             }
-            _save_refreshed_context_snapshot(
-                refreshed_context,
-                request=active_request,
-                source_marker=source_marker,
-                refresh_metadata=refresh_metadata,
-                cache_bust=resolved_cache_bust,
-                timing_recorder=timing_recorder,
-            )
             _set_active_cache_bust(resolved_cache_bust)
             return (refreshed_context, resolved_cache_bust, refresh_metadata)
 
@@ -1246,14 +1035,6 @@ def _smart_refresh_context(
         "source_snapshot_id": (source_marker or {}).get("source_snapshot_id"),
         "reload_endpoints": FULL_RELOAD_ENDPOINTS,
     }
-    _save_refreshed_context_snapshot(
-        context,
-        request=active_request,
-        source_marker=source_marker,
-        refresh_metadata=refresh_metadata,
-        cache_bust=resolved_cache_bust,
-        timing_recorder=timing_recorder,
-    )
     _set_active_cache_bust(resolved_cache_bust)
     return (context, resolved_cache_bust, refresh_metadata)
 
@@ -1275,10 +1056,6 @@ def _apply_refresh_metadata(payload: Dict[str, Any], refresh_metadata: Dict[str,
             refresh["source_snapshot_id"] = refresh_metadata["source_snapshot_id"]
         if refresh_metadata.get("pipeline_snapshot_id"):
             refresh["pipeline_snapshot_id"] = refresh_metadata["pipeline_snapshot_id"]
-        if refresh_metadata.get("refreshed_context_snapshot_id"):
-            refresh["refreshed_context_snapshot_id"] = refresh_metadata["refreshed_context_snapshot_id"]
-        if refresh_metadata.get("refreshed_context_age_seconds") is not None:
-            refresh["refreshed_context_age_seconds"] = refresh_metadata["refreshed_context_age_seconds"]
     return payload
 
 
