@@ -61,11 +61,26 @@ def main() -> int:
     payload = api.json()
     if payload.get("source", {}).get("kind") != "ibkr_flex":
         raise AssertionError(f"unexpected source: {payload.get('source')}")
-    issue_count = payload.get("dashboard", {}).get("issue_summary", {}).get("total_count")
+    dashboard = payload.get("dashboard", {})
+    issue_summary = dashboard.get("issue_summary", {})
+    freshness = dashboard.get("data_freshness", {})
+    issue_count = issue_summary.get("total_count")
+    import_issue_count = issue_summary.get("import_issue_count")
+    if import_issue_count not in (0, None):
+        raise AssertionError(f"IBKR import health warning present: {issue_summary}")
+    import_to_date = freshness.get("ibkr_import_to_date")
+    if not import_to_date:
+        import_to_date = (
+            payload.get("dashboard", {})
+            .get("data_freshness", {})
+            .get("source_modified_at")
+        )
+    if not import_to_date:
+        raise AssertionError(f"dashboard payload missing import freshness metadata: {freshness}")
     rows = payload.get("source", {}).get("row_count")
     print(
         "web_dashboard_smoke ok "
-        f"source=ibkr_flex rows={rows} actionable_issues={issue_count}"
+        f"source=ibkr_flex rows={rows} actionable_issues={issue_count} import_to_date={import_to_date}"
     )
     return 0
 

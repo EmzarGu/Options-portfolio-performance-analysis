@@ -43,8 +43,11 @@ IBKR pacing limits.
 If IBKR has not published the trailing business-day statement yet, the import
 job records a deferred run. Production issue payloads surface unresolved
 deferred/failed import attempts as actionable `import` warnings until a later
-successful import covers the same date. This keeps the dashboards honest while
-avoiding repeated automatic IBKR import attempts throughout the day.
+successful import covers the same date. If the Cloud Run job cannot start far
+enough to write a failed import record, the apps still flag stale data when the
+latest successful import `to_date` is older than `IBKR_IMPORT_STALE_DAYS`
+(default 3). This keeps the dashboards honest while avoiding repeated automatic
+IBKR import attempts throughout the day.
 
 ## Persistent Storage
 
@@ -61,13 +64,11 @@ Build/source staging buckets are lifecycle-cleaned after 7 days.
 Firestore is not just a raw-data store. Production refresh also uses
 `pipeline_snapshots` to persist the computed base accounting pipeline by IBKR
 import marker, `as_of` date, and normalized source partition. Mobile and web
-Cloud Run instances restore this shared snapshot before fetching current
+Cloud Run instances restore this shared base snapshot before fetching current
 prices. A full rebuild is expected only when the IBKR import marker changes,
 the snapshot is missing/corrupt, or the snapshot schema is intentionally bumped.
-Manual refreshes also reuse the latest successful refreshed context when it is
-recent and tied to the same IBKR import marker. This avoids duplicate web/iOS
-price refresh work when both clients refresh within the shared freshness window
-(`SHARED_REFRESH_REUSE_SECONDS`, default 300 seconds).
+Full price-refreshed context snapshots are intentionally not reused; fresh reads
+should never hide a stale IBKR import marker.
 
 ## Artifact Registry
 
@@ -97,6 +98,7 @@ iteration, prefer local browser testing and deploy to Cloud Run only at stable
 checkpoints.
 
 The production build trigger reads the repository `cloudbuild.yaml`. It creates
-one shared image and deploys it to both `options-roi-mobile-api` and
-`options-roi-web`, so a `main` deployment cannot accidentally leave the web
-dashboard on an older backend commit.
+one shared image, deploys it to both `options-roi-mobile-api` and
+`options-roi-web`, and updates the `ibkr-flex-import` job image. A `main`
+deployment therefore cannot accidentally leave the web dashboard or scheduled
+import job on an older backend commit.

@@ -114,7 +114,7 @@ def build_data_freshness(
     price_summary = getattr(state, "price_summary", {}) or {}
     missing_tickers = list(getattr(state, "missing_required_price_tickers", []) or [])
 
-    return {
+    freshness = {
         "pipeline_built_at": json_safe(pipeline_built_at or source_metadata.get("pipeline_built_at")),
         "prices_updated_at": json_safe(
             prices_updated_at
@@ -130,6 +130,16 @@ def build_data_freshness(
         },
         "source_sheets": source_sheets,
     }
+    ibkr_fields = {
+        "ibkr_import_run_id": source_metadata.get("ibkr_import_run_id"),
+        "ibkr_import_finished_at": source_metadata.get("ibkr_import_finished_at"),
+        "ibkr_import_from_date": source_metadata.get("ibkr_import_from_date"),
+        "ibkr_import_to_date": source_metadata.get("ibkr_import_to_date"),
+        "ibkr_import_health": source_metadata.get("ibkr_import_health"),
+    }
+    if any(value for value in ibkr_fields.values()):
+        freshness.update({key: json_safe(value) for key, value in ibkr_fields.items() if value is not None})
+    return freshness
 
 
 def _request_value(request: Dict[str, Any], key: str, default: Any = None) -> Any:

@@ -41,17 +41,18 @@ unrealized P&L for OTM calls or unrelated holdings.
 
 Manual refresh is source-aware and Firestore-backed. The server first checks the
 latest successful IBKR import marker. If the marker is unchanged, it restores
-the persisted base pipeline from Firestore `pipeline_snapshots`, refreshes only
-current prices, then writes a refreshed context snapshot plus latest-pointer
-metadata back to Firestore. Follow-up web and iOS reads prefer that persisted
-refreshed context instead of relying on the Cloud Run instance that handled the
-refresh. If the marker changed or no valid base snapshot exists, the server
-rebuilds the full accounting pipeline and stores both the base pipeline snapshot
-and the latest refreshed context.
+the persisted base accounting pipeline from Firestore `pipeline_snapshots` and
+refreshes current prices from that base. If the marker changed or no valid base
+snapshot exists, the server rebuilds the full accounting pipeline and stores a
+new base pipeline snapshot. The app no longer persists or reuses full
+price-refreshed contexts because those could hide stale IBKR imports across web
+and iOS clients.
 
-If another web or iOS process already wrote a refreshed context for the same
-IBKR import marker within `SHARED_REFRESH_REUSE_SECONDS` (default 300 seconds),
-manual refresh reuses that shared context instead of fetching prices again.
+The source marker also includes IBKR import health. A failed/deferred import run
+is surfaced as an actionable issue until a later successful import covers the
+same statement date. If Cloud Run cannot even start the import container, the
+apps still flag stale data when the latest successful import `to_date` is older
+than `IBKR_IMPORT_STALE_DAYS` (default 3).
 
 ## Required Runtime Config
 
@@ -65,7 +66,7 @@ IBKR_FLEX_QUERY_ID=1504277
 PIPELINE_SNAPSHOT_STORE=auto
 WEB_DASHBOARD_AUTH=1
 WEB_DASHBOARD_DATA_CACHE_SECONDS=0
-SHARED_REFRESH_REUSE_SECONDS=300
+IBKR_IMPORT_STALE_DAYS=3
 ```
 
 Secrets:
@@ -81,8 +82,8 @@ JSON cache. The production default is `0`: Firestore snapshots are the shared
 state layer, and process-local memory is not required for correctness.
 
 `PIPELINE_SNAPSHOT_STORE=auto` uses Firestore on Cloud Run. Set it to `off` only
-for emergency troubleshooting; doing so disables shared base/refreshed snapshots
-and can reintroduce slow full rebuild fallback behavior.
+for emergency troubleshooting; doing so disables shared base snapshots and can
+reintroduce slow full rebuild fallback behavior.
 
 ## Browser Authentication
 
@@ -132,7 +133,7 @@ python scripts/web_dashboard_smoke.py \
 Expected result:
 
 ```text
-web_dashboard_smoke ok source=ibkr_flex rows=<n> actionable_issues=0
+web_dashboard_smoke ok source=ibkr_flex rows=<n> actionable_issues=0 import_to_date=<YYYYMMDD>
 ```
 
 ## Deployment
@@ -152,6 +153,11 @@ only changes do not need to reinstall unchanged Python dependencies.
 The Cloud Build trigger reads this repository `cloudbuild.yaml` on `main`. This
 keeps mobile and web on the same backend commit and avoids the earlier manual
 web update step.
+
+The same build also updates Cloud Run Job `ibkr-flex-import` to the newly built
+image. This is required because Artifact Registry cleanup can delete older image
+tags; a job pinned to an old image can fail before the importer starts and
+therefore cannot write a normal failed import record.
 
 ## Rollback
 

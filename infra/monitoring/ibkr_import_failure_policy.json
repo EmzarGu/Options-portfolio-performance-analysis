@@ -1,0 +1,28 @@
+{
+  "displayName": "IBKR Flex import failures",
+  "combiner": "OR",
+  "enabled": true,
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "The `ibkr-flex-import` Cloud Run job emitted an error log. Check Cloud Run Jobs and run the import manually after fixing the image/runtime issue. The apps also flag stale successful imports when Firestore data falls behind."
+  },
+  "conditions": [
+    {
+      "displayName": "ibkr-flex-import emitted failure logs",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/ibkr_flex_import_failures\" AND resource.type=\"cloud_run_job\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {"count": 1}
+      }
+    }
+  ]
+}
