@@ -425,6 +425,29 @@ def _cached_context_for_request(request: MobilePayloadRequest) -> Any:
         return cached
 
 
+def _cached_context_for_marker(
+    key: Tuple[str, str, str, bool, Tuple[str, ...], int],
+    source_marker: Optional[Dict[str, Any]],
+    *,
+    timing_recorder=None,
+) -> Optional[Any]:
+    started_at = perf_counter()
+    with _context_cache_lock:
+        cached = _context_cache.get(key)
+        if cached is not None and (_data_source() != DATA_SOURCE_IBKR or _source_marker_matches(cached, source_marker)):
+            _context_cache.move_to_end(key)
+            if timing_recorder is not None:
+                timing_recorder("context_cache_lookup_ms", _elapsed_ms(started_at))
+                timing_recorder("context_cache_hit", 1)
+            return cached
+        if cached is not None:
+            _context_cache.pop(key, None)
+    if timing_recorder is not None:
+        timing_recorder("context_cache_lookup_ms", _elapsed_ms(started_at))
+        timing_recorder("context_cache_hit", 0)
+    return None
+
+
 def _remember_context(key: Tuple[str, str, str, bool, Tuple[str, ...], int], context: Any) -> None:
     with _context_cache_lock:
         _context_cache[key] = context
@@ -931,7 +954,7 @@ def _context(
         timing_recorder=timing_recorder,
     )
     key = _context_cache_key(request)
-    use_memory_cache = _data_source() != DATA_SOURCE_IBKR
+    use_memory_cache = True
     source_metadata: Dict[str, Any] = dict(source_metadata_override or {})
     source_marker: Optional[Dict[str, Any]] = _source_marker_from_metadata(source_metadata)
     if _data_source() == DATA_SOURCE_IBKR and not force_rebuild and "source_snapshot_id" not in source_metadata:
@@ -939,18 +962,9 @@ def _context(
         source_metadata.update(_source_metadata_for_marker(source_marker))
 
     if use_memory_cache and not force_rebuild:
-        started_at = perf_counter()
-        with _context_cache_lock:
-            cached = _context_cache.get(key)
-            if cached is not None:
-                _context_cache.move_to_end(key)
-                if timing_recorder is not None:
-                    timing_recorder("context_cache_lookup_ms", _elapsed_ms(started_at))
-                    timing_recorder("context_cache_hit", 1)
-                return cached
-        if timing_recorder is not None:
-            timing_recorder("context_cache_lookup_ms", _elapsed_ms(started_at))
-            timing_recorder("context_cache_hit", 0)
+        cached = _cached_context_for_marker(key, source_marker, timing_recorder=timing_recorder)
+        if cached is not None:
+            return cached
     elif timing_recorder is not None:
         timing_recorder("context_cache_hit", 0)
 
@@ -959,6 +973,26 @@ def _context(
         if "source_snapshot_id" not in source_metadata:
             source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
             source_metadata.update(_source_metadata_for_marker(source_marker))
+        if not force_rebuild:
+            snapshot_context = _load_pipeline_snapshot_context(
+                request=request,
+                available=available,
+                source_marker=source_marker,
+                timing_recorder=timing_recorder,
+            )
+            if snapshot_context is not None:
+                refreshed_context = _refresh_prices_from_cached_base(
+                    snapshot_context,
+                    request=request,
+                    available=available,
+                    source_marker=source_marker,
+                    timing_recorder=timing_recorder,
+                )
+                if refreshed_context is not None:
+                    if timing_recorder is not None:
+                        timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
+                    _remember_context(key, refreshed_context)
+                    return refreshed_context
         context_kwargs = {"available_sheets": available}
         if _supports_keyword(build_ibkr_mobile_payload_context, "source_metadata"):
             context_kwargs["source_metadata"] = source_metadata
@@ -1069,6 +1103,7 @@ def _smart_refresh_context(
                 "reload_endpoints": PRICE_ONLY_RELOAD_ENDPOINTS,
             }
             _set_active_cache_bust(resolved_cache_bust)
+            _remember_context(_context_cache_key(active_request), refreshed_context)
             return (refreshed_context, resolved_cache_bust, refresh_metadata)
 
     if timing_recorder is not None:
