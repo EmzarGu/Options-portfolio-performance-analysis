@@ -621,6 +621,7 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
     stale_issue = _ibkr_stale_import_issue(latest_success_marker, today=date.today())
     if stale_issue is not None:
         issues.append(stale_issue)
+    unresolved_by_range: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     try:
         try:
             from google.cloud.firestore_v1 import FieldFilter
@@ -647,28 +648,39 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
                 continue
             from_date = doc.get("from_date")
             to_date = doc.get("to_date")
+            issue_from_date = _parse_iso_date(from_date)
+            reason = str(doc.get("defer_reason") or doc.get("error_message") or status)
+            if _is_trailing_statement_unavailable_issue(
+                latest_success_to_date=latest_success_to_date,
+                issue_from_date=issue_from_date,
+                issue_to_date=issue_to_date,
+                reason=reason,
+            ):
+                continue
             label = str(to_date or from_date or "latest requested date")
             if from_date and to_date and from_date != to_date:
                 label = f"{from_date} to {to_date}"
-            reason = str(doc.get("defer_reason") or doc.get("error_message") or status)
             if reason == "trailing_statement_unavailable":
                 message = f"IBKR import deferred for {label}: statement was not available yet."
             else:
                 message = f"IBKR import {status} for {label}: {reason}"
-            issues.append(
-                {
-                    "category": "import",
-                    "severity": "warning",
-                    "status": status,
-                    "from_date": from_date,
-                    "to_date": to_date,
-                    "finished_at": finished_at,
-                    "message": message,
-                    "action": "retry_import",
-                }
-            )
+            issue = {
+                "category": "import",
+                "severity": "warning",
+                "status": status,
+                "from_date": from_date,
+                "to_date": to_date,
+                "finished_at": finished_at,
+                "message": message,
+                "action": "retry_import",
+            }
+            key = (str(from_date or ""), str(to_date or ""), _statement_unavailable_issue_key(reason) or reason)
+            previous = unresolved_by_range.get(key)
+            if previous is None or str(issue.get("finished_at") or "") > str(previous.get("finished_at") or ""):
+                unresolved_by_range[key] = issue
     except Exception as exc:
         logger.warning("ibkr_import_health_check_failed error=%s", exc)
+    issues.extend(unresolved_by_range.values())
     issues.sort(key=lambda item: str(item.get("finished_at") or ""), reverse=True)
     return {
         "status": "warning" if issues else "ok",
@@ -677,6 +689,31 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
         "latest_success_finished_at": latest_success_marker.get("finished_at"),
         "latest_success_to_date": latest_success_marker.get("to_date"),
     }
+
+
+def _statement_unavailable_issue_key(reason: str) -> Optional[str]:
+    lowered = str(reason or "").lower()
+    if reason == "trailing_statement_unavailable":
+        return "statement_unavailable"
+    if "statement is incomplete" in lowered or "statement is not available" in lowered:
+        return "statement_unavailable"
+    return None
+
+
+def _is_trailing_statement_unavailable_issue(
+    *,
+    latest_success_to_date: Optional[date],
+    issue_from_date: Optional[date],
+    issue_to_date: Optional[date],
+    reason: str,
+) -> bool:
+    if latest_success_to_date is None or issue_from_date is None or issue_to_date is None:
+        return False
+    if issue_from_date != issue_to_date:
+        return False
+    if issue_to_date != latest_success_to_date + timedelta(days=1):
+        return False
+    return _statement_unavailable_issue_key(reason) == "statement_unavailable"
 
 
 def _parse_iso_date(value: Any) -> Optional[date]:

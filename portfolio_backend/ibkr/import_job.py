@@ -270,7 +270,10 @@ def _import_range(
 
 def _is_statement_unavailable_error(error: str) -> bool:
     lowered = str(error or "").lower()
-    return "1003" in lowered and "statement is not available" in lowered
+    return (
+        ("1003" in lowered and "statement is not available" in lowered)
+        or ("1004" in lowered and "statement is incomplete" in lowered)
+    )
 
 
 def _is_deferable_trailing_unavailable(exc: Exception, date_range: DateRange, auto_target: DateRange) -> bool:

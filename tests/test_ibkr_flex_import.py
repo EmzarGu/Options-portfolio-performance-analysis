@@ -16,6 +16,7 @@ from portfolio_backend.ibkr.import_job import (
     _auto_target_range_from_args,
     _date_range_from_args,
     _is_deferable_trailing_unavailable,
+    _is_statement_unavailable_error,
     plan_missing_import_ranges,
     split_trailing_target_day,
 )
@@ -344,6 +345,12 @@ def test_auto_import_defers_only_unavailable_trailing_statement_day():
         RuntimeError("IBKR SendRequest error: 1018: Too many requests."),
         trailing,
         target,
+    )
+
+
+def test_statement_incomplete_error_is_treated_as_statement_unavailable():
+    assert _is_statement_unavailable_error(
+        "IBKR SendRequest error: 1004: Statement is incomplete at this time. Please try again shortly."
     )
 
 

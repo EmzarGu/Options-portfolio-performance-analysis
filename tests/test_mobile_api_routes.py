@@ -82,6 +82,124 @@ def test_ibkr_stale_import_issue_allows_recent_latest_success(monkeypatch):
     assert issue is None
 
 
+class _FakeDoc:
+    def __init__(self, doc_id: str, data: dict):
+        self.id = doc_id
+        self._data = data
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+class _FakeCollection:
+    def __init__(self, docs):
+        self._docs = list(docs)
+
+    def where(self, *args, **kwargs):
+        return self
+
+    def stream(self):
+        return iter(self._docs)
+
+
+class _FakeFirestoreClient:
+    def __init__(self, refresh_docs):
+        self._refresh_docs = list(refresh_docs)
+
+    def collection(self, name: str):
+        if name == "refresh_runs":
+            return _FakeCollection(self._refresh_docs)
+        return _FakeCollection([])
+
+
+def test_ibkr_import_health_suppresses_duplicate_trailing_incomplete_statement():
+    client = _FakeFirestoreClient(
+        [
+            _FakeDoc(
+                "run-1",
+                {
+                    "source": "ibkr_flex",
+                    "query_id": "1504277",
+                    "status": "failed",
+                    "from_date": "2026-06-18",
+                    "to_date": "2026-06-18",
+                    "finished_at": "2026-06-19T05:30:24Z",
+                    "error_message": (
+                        "IBKR SendRequest error: 1004: Statement is incomplete at this time. "
+                        "Please try again shortly."
+                    ),
+                },
+            ),
+            _FakeDoc(
+                "run-2",
+                {
+                    "source": "ibkr_flex",
+                    "query_id": "1504277",
+                    "status": "failed",
+                    "from_date": "2026-06-18",
+                    "to_date": "2026-06-18",
+                    "finished_at": "2026-06-19T05:50:59Z",
+                    "error_message": (
+                        "IBKR SendRequest error: 1004: Statement is incomplete at this time. "
+                        "Please try again shortly."
+                    ),
+                },
+            ),
+        ]
+    )
+
+    health = mobile_api._ibkr_import_health(
+        client,
+        "1504277",
+        {"finished_at": "2026-06-19T05:50:53Z", "to_date": "20260617"},
+    )
+
+    assert health["status"] == "ok"
+    assert health["issues"] == []
+    assert health["unresolved_count"] == 0
+
+
+def test_ibkr_import_health_collapses_duplicate_non_trailing_failures():
+    client = _FakeFirestoreClient(
+        [
+            _FakeDoc(
+                "run-1",
+                {
+                    "source": "ibkr_flex",
+                    "query_id": "1504277",
+                    "status": "failed",
+                    "from_date": "2026-06-15",
+                    "to_date": "2026-06-15",
+                    "finished_at": "2026-06-19T05:30:24Z",
+                    "error_message": "IBKR SendRequest error: 1018: Too many requests.",
+                },
+            ),
+            _FakeDoc(
+                "run-2",
+                {
+                    "source": "ibkr_flex",
+                    "query_id": "1504277",
+                    "status": "failed",
+                    "from_date": "2026-06-15",
+                    "to_date": "2026-06-15",
+                    "finished_at": "2026-06-19T05:50:59Z",
+                    "error_message": "IBKR SendRequest error: 1018: Too many requests.",
+                },
+            ),
+        ]
+    )
+
+    health = mobile_api._ibkr_import_health(
+        client,
+        "1504277",
+        {"finished_at": "2026-06-19T05:50:53Z", "to_date": "20260617"},
+    )
+
+    assert health["status"] == "warning"
+    assert health["unresolved_count"] == 1
+    assert health["issues"][0]["finished_at"] == "2026-06-19T05:50:59Z"
+
+
 @pytest.fixture
 def api_harness(monkeypatch):
     mobile_api._clear_context_cache()
