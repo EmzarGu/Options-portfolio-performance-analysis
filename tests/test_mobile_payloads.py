@@ -324,6 +324,51 @@ def _mobile_state_with_future_september():
     return state
 
 
+def _mobile_state_with_active_july_after_june_cycle_closed():
+    state = _mobile_state()
+    state.as_of = pd.Timestamp("2026-06-19")
+    state.monthly_cycles = pd.DataFrame(
+        {
+            "realized_options_pnl": [100.0, 500.0],
+            "realized_stock_pnl": [0.0, 0.0],
+            "dividends": [0.0, 0.0],
+            "total_realized_pnl": [100.0, 500.0],
+            "avg_capital": [10000.0, 20000.0],
+            "peak_capital": [12000.0, 22000.0],
+            "roac": [0.01, 0.025],
+            "ropc": [0.008333333333333333, 0.022727272727272728],
+        },
+        index=pd.to_datetime(["2026-05-31", "2026-06-30"]),
+    )
+    state.open_options = pd.DataFrame(
+        [
+            {
+                "ticker": "JULY",
+                "type": "Put",
+                "strike": 100.0,
+                "qty": 1,
+                "expiration": pd.Timestamp("2026-07-17"),
+                "trans_date": pd.Timestamp("2026-06-18"),
+                "open_price": 2.0,
+                "roll_adjusted_open_price": 2.0,
+            },
+            {
+                "ticker": "SEPT",
+                "type": "Put",
+                "strike": 90.0,
+                "qty": 1,
+                "expiration": pd.Timestamp("2026-09-18"),
+                "trans_date": pd.Timestamp("2026-06-18"),
+                "open_price": 3.0,
+                "roll_adjusted_open_price": 3.0,
+            },
+        ]
+    )
+    state.stock_prices = {"JULY": 120.0, "SEPT": 95.0}
+    state.inv_df = pd.DataFrame(columns=["ticker", "shares", "cost_per_share", "current_price", "unrealized_pnl", "source"])
+    return state
+
+
 def _mobile_state_with_future_call(*, strike: float, current_price: float):
     state = _mobile_state()
     state.open_options = pd.DataFrame(
@@ -1448,6 +1493,28 @@ def test_dashboard_and_monthly_share_canonical_current_cycle_projection():
     assert monthly["active_cycle"]["projected_cycle_pnl"] == pytest.approx(expected)
     assert monthly["current_month"]["projected_month_pnl"] == pytest.approx(expected)
     assert monthly["months"][-1]["projected_month_pnl"] == pytest.approx(expected)
+
+
+def test_mobile_dashboard_and_monthly_promote_advanced_active_cycle():
+    state = _mobile_state_with_active_july_after_june_cycle_closed()
+    request = {
+        "as_of": pd.Timestamp("2026-06-19"),
+        "include_unrealized": True,
+        "selected_sheets": ["Options 2026"],
+    }
+
+    dashboard = build_mobile_dashboard(state, request, target_return=0.02)
+    monthly = build_mobile_monthly_performance(state, request, target_return=0.02, monthly_range="ytd")
+
+    assert dashboard["monthly_target"]["month"] == "2026-07-31"
+    assert dashboard["monthly_target"]["cycle_projection"]["month"] == "2026-07-31"
+    assert dashboard["monthly_target"]["projected_month_pnl"] == pytest.approx(200.0)
+    assert monthly["active_cycle"]["month"] == "2026-07-31"
+    assert monthly["current_month"]["month"] == "2026-07-31"
+    assert monthly["current_month"]["cycle_projection"]["month"] == "2026-07-31"
+    assert monthly["current_month"]["projected_month_pnl"] == pytest.approx(200.0)
+    assert [row["month"] for row in monthly["future_months"]] == ["2026-09-30"]
+    assert [row["month"] for row in monthly["months"]] == ["2026-05-31", "2026-06-30"]
 
 
 def test_closed_month_rows_do_not_include_open_option_assignment_projection():

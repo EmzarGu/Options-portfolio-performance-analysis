@@ -664,12 +664,18 @@ def build_monthly_target(
     target_return: float = 0.015,
     target_floor: Optional[float] = None,
 ) -> Dict[str, Any]:
-    month_end, row = _current_month_row(getattr(state, "monthly_cycles", pd.DataFrame()), getattr(state, "as_of", None))
+    calendar_month_end, calendar_row = _current_month_row(
+        getattr(state, "monthly_cycles", pd.DataFrame()),
+        getattr(state, "as_of", None),
+    )
+    active_cycle = build_active_cycle_projection(state, target_return=target_return, target_floor=target_floor)
+    active_month_end = _month_end(active_cycle.get("month")) if active_cycle else None
+    month_end = active_month_end or calendar_month_end
+    row = _monthly_row_for_projection(state, month_end) if month_end is not None else calendar_row
     avg_capital = _number(row.get("avg_capital"))
     current_return = _number(row.get("roac"))
     current_pnl = _number(row.get("total_realized_pnl"))
     projection = _monthly_projection_values(state, row, month_end, target_return)
-    active_cycle = build_active_cycle_projection(state, target_return=target_return, target_floor=target_floor)
     target_pnl = avg_capital * target_return if avg_capital is not None else None
     remaining_pnl = None
     if target_pnl is not None and current_pnl is not None:
@@ -892,13 +898,22 @@ def build_future_monthly_performance_rows(
     *,
     target_return: float = 0.015,
     target_floor: Optional[float] = None,
+    exclude_month: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     rows = []
+    excluded_month = _month_end(exclude_month)
     for projection in build_future_cycle_projections(
         state,
         target_return=target_return,
         target_floor=target_floor,
     ):
+        projection_month = _month_end(projection.get("month"))
+        if (
+            excluded_month is not None
+            and projection_month is not None
+            and projection_month.to_period("M") == excluded_month.to_period("M")
+        ):
+            continue
         rows.append(
             {
                 "id": f"month:{projection.get('month')}",
@@ -927,7 +942,13 @@ def build_current_month_performance(
     target_return: float = 0.015,
     active_cycle: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    month_end, row = _current_month_row(getattr(state, "monthly_cycles", pd.DataFrame()), getattr(state, "as_of", None))
+    active_cycle = active_cycle if active_cycle is not None else build_active_cycle_projection(state, target_return=target_return)
+    active_month = _month_end(active_cycle.get("month")) if active_cycle else None
+    if active_month is not None:
+        month_end = active_month
+        row = _monthly_row_for_projection(state, month_end)
+    else:
+        month_end, row = _current_month_row(getattr(state, "monthly_cycles", pd.DataFrame()), getattr(state, "as_of", None))
     if month_end is None:
         return {
             "id": None,
@@ -1038,6 +1059,7 @@ def build_mobile_monthly_performance(
             state,
             target_return=target_return,
             target_floor=target_floor,
+            exclude_month=active_cycle.get("month") if active_cycle else None,
         ),
     }
 
