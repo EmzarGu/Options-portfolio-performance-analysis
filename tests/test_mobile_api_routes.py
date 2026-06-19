@@ -112,7 +112,7 @@ class _FakeFirestoreClient:
         return _FakeCollection([])
 
 
-def test_ibkr_import_health_suppresses_duplicate_trailing_incomplete_statement():
+def test_ibkr_import_health_collapses_duplicate_trailing_incomplete_statement():
     client = _FakeFirestoreClient(
         [
             _FakeDoc(
@@ -154,9 +154,10 @@ def test_ibkr_import_health_suppresses_duplicate_trailing_incomplete_statement()
         {"finished_at": "2026-06-19T05:50:53Z", "to_date": "20260617"},
     )
 
-    assert health["status"] == "ok"
-    assert health["issues"] == []
-    assert health["unresolved_count"] == 0
+    assert health["status"] == "warning"
+    assert health["unresolved_count"] == 1
+    assert health["issues"][0]["finished_at"] == "2026-06-19T05:50:59Z"
+    assert "2026-06-18" in health["issues"][0]["message"]
 
 
 def test_ibkr_import_health_collapses_duplicate_non_trailing_failures():

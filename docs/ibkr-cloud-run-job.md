@@ -182,7 +182,7 @@ Current job:
 Job: ibkr-flex-import
 Region: europe-west6
 Runtime service account: 595990983720-compute@developer.gserviceaccount.com
-Scheduler: ibkr-flex-import-daily, 30 7 * * *, Europe/Zurich
+Scheduler: ibkr-flex-import-daily, 45 19 * * *, Europe/Zurich
 Flex Query ID: 1504277
 Max retries: 0
 ```

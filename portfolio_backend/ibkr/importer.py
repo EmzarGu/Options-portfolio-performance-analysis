@@ -283,8 +283,8 @@ class FirestoreImportStore:
 
     def mark_latest_successful_run(self, *, query_id: str, run_doc: dict[str, Any]) -> None:
         metadata = self.client.collection("app_metadata")
-        metadata.document(f"ibkr_latest_import_{query_id}").set(run_doc, merge=True)
-        metadata.document("ibkr_latest_import").set(run_doc, merge=True)
+        metadata.document(f"ibkr_latest_import_{query_id}").set(run_doc)
+        metadata.document("ibkr_latest_import").set(run_doc)
 
     def successful_import_ranges(self, *, query_id: str) -> list[DateRange]:
         query = self.client.collection(self.import_runs_collection).where("query_id", "==", str(query_id))

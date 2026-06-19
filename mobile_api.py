@@ -648,15 +648,7 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
                 continue
             from_date = doc.get("from_date")
             to_date = doc.get("to_date")
-            issue_from_date = _parse_iso_date(from_date)
             reason = str(doc.get("defer_reason") or doc.get("error_message") or status)
-            if _is_trailing_statement_unavailable_issue(
-                latest_success_to_date=latest_success_to_date,
-                issue_from_date=issue_from_date,
-                issue_to_date=issue_to_date,
-                reason=reason,
-            ):
-                continue
             label = str(to_date or from_date or "latest requested date")
             if from_date and to_date and from_date != to_date:
                 label = f"{from_date} to {to_date}"
@@ -698,22 +690,6 @@ def _statement_unavailable_issue_key(reason: str) -> Optional[str]:
     if "statement is incomplete" in lowered or "statement is not available" in lowered:
         return "statement_unavailable"
     return None
-
-
-def _is_trailing_statement_unavailable_issue(
-    *,
-    latest_success_to_date: Optional[date],
-    issue_from_date: Optional[date],
-    issue_to_date: Optional[date],
-    reason: str,
-) -> bool:
-    if latest_success_to_date is None or issue_from_date is None or issue_to_date is None:
-        return False
-    if issue_from_date != issue_to_date:
-        return False
-    if issue_to_date != latest_success_to_date + timedelta(days=1):
-        return False
-    return _statement_unavailable_issue_key(reason) == "statement_unavailable"
 
 
 def _parse_iso_date(value: Any) -> Optional[date]:

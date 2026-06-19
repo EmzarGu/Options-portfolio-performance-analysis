@@ -9,7 +9,7 @@ Last reviewed: 2026-05-12.
 - Mobile API service: `options-roi-mobile-api`
 - Web dashboard service: `options-roi-web`
 - IBKR import job: `ibkr-flex-import`
-- IBKR import scheduler: `ibkr-flex-import-daily`, `30 7 * * *`,
+- IBKR import scheduler: `ibkr-flex-import-daily`, `45 19 * * *`,
   `Europe/Zurich`
 - IBKR import job retries: `0`, so IBKR token pacing errors are not amplified
   by immediate Cloud Run retries.
