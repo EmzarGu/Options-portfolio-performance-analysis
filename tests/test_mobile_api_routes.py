@@ -739,6 +739,68 @@ def test_ibkr_concurrent_reads_share_one_context_build(monkeypatch):
     assert all(context is contexts[0] for context in contexts)
 
 
+def test_ibkr_read_waits_for_pipeline_snapshot_when_build_lease_is_held(monkeypatch):
+    mobile_api._clear_context_cache()
+    store = MemoryPipelineSnapshotStore()
+    marker = {
+        "source_snapshot_id": "ibkr-flex:1504277:run-1",
+        "import_run_id": "run-1",
+        "finished_at": "2026-05-13T10:00:00Z",
+        "query_id": "1504277",
+    }
+    snapshot_id = pipeline_snapshot_id(
+        source_snapshot_id="ibkr-flex:1504277:run-1",
+        as_of=date(2026, 5, 13),
+        selected_sheets=["IBKR Flex"],
+    )
+    lease_id = mobile_api._pipeline_build_lease_id(snapshot_id)
+    assert store.try_acquire_build_lease(lease_id, "other-instance", ttl_seconds=30)
+
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "1504277")
+    monkeypatch.setenv("PIPELINE_BUILD_WAIT_SECONDS", "2")
+    monkeypatch.setenv("PIPELINE_BUILD_WAIT_POLL_SECONDS", "0.1")
+    monkeypatch.setattr(mobile_api, "get_default_pipeline_snapshot_store", lambda: store)
+    monkeypatch.setattr(mobile_api, "_refresh_source_marker", lambda timing_recorder=None: marker)
+    monkeypatch.setattr(
+        mobile_api,
+        "build_ibkr_mobile_payload_context",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("locked follower should not rebuild")),
+    )
+
+    def refresh_prices(context, *, request, available, source_marker, timing_recorder=None):
+        return mobile_api.MobilePayloadContext(
+            state=SimpleNamespace(name="priced-waited-snapshot"),
+            request={
+                "as_of": request.as_of,
+                "include_unrealized": request.include_unrealized,
+                "selected_sheets": request.selected_sheets,
+            },
+            available_sheets=available,
+            source_metadata={**context.source_metadata, "prices_updated_at": "2026-05-13T10:01:00+00:00"},
+            base_state=context.base_state,
+        )
+
+    monkeypatch.setattr(mobile_api, "_refresh_prices_from_cached_base", refresh_prices)
+
+    def save_snapshot_later():
+        time.sleep(0.2)
+        store.save(snapshot_id, SimpleNamespace(name="persisted-base"), {"source_snapshot_id": marker["source_snapshot_id"]})
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(save_snapshot_later)
+        context = mobile_api._context(
+            as_of=date(2026, 5, 13),
+            include_unrealized=True,
+            selected_sheets=["Options 2024", "Options 2025"],
+            cache_bust=123,
+        )
+        future.result()
+
+    assert context.state.name == "priced-waited-snapshot"
+    assert context.base_state.name == "persisted-base"
+
+
 def test_ibkr_read_cache_invalidates_when_import_marker_changes(monkeypatch):
     mobile_api._clear_context_cache()
     markers = [

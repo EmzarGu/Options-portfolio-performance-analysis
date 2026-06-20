@@ -5,10 +5,11 @@ import hashlib
 import hmac
 import logging
 import os
+import uuid
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
 from inspect import Parameter, signature
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
@@ -65,6 +66,9 @@ DATA_SOURCE_IBKR = "ibkr"
 CONTEXT_CACHE_MAX_ITEMS = 16
 DEFAULT_SOURCE_MARKER_CACHE_SECONDS = 30
 DEFAULT_IBKR_IMPORT_STALE_DAYS = 3
+DEFAULT_PIPELINE_BUILD_LEASE_SECONDS = 180
+DEFAULT_PIPELINE_BUILD_WAIT_SECONDS = 90
+DEFAULT_PIPELINE_BUILD_WAIT_POLL_SECONDS = 1.0
 PUBLIC_PATHS = {"/v1/mobile/health"}
 PRICE_ONLY_RELOAD_ENDPOINTS = [
     "/v1/mobile/dashboard",
@@ -502,6 +506,30 @@ def _ibkr_import_stale_days() -> int:
         return DEFAULT_IBKR_IMPORT_STALE_DAYS
 
 
+def _pipeline_build_lease_seconds() -> int:
+    value = os.getenv("PIPELINE_BUILD_LEASE_SECONDS", str(DEFAULT_PIPELINE_BUILD_LEASE_SECONDS)).strip()
+    try:
+        return max(int(float(value)), 1)
+    except ValueError:
+        return DEFAULT_PIPELINE_BUILD_LEASE_SECONDS
+
+
+def _pipeline_build_wait_seconds() -> int:
+    value = os.getenv("PIPELINE_BUILD_WAIT_SECONDS", str(DEFAULT_PIPELINE_BUILD_WAIT_SECONDS)).strip()
+    try:
+        return max(int(float(value)), 0)
+    except ValueError:
+        return DEFAULT_PIPELINE_BUILD_WAIT_SECONDS
+
+
+def _pipeline_build_wait_poll_seconds() -> float:
+    value = os.getenv("PIPELINE_BUILD_WAIT_POLL_SECONDS", str(DEFAULT_PIPELINE_BUILD_WAIT_POLL_SECONDS)).strip()
+    try:
+        return max(float(value), 0.1)
+    except ValueError:
+        return DEFAULT_PIPELINE_BUILD_WAIT_POLL_SECONDS
+
+
 def _resolve_dependencies(source_metadata: Dict[str, Any]) -> MobileServiceDependencies:
     try:
         parameters = signature(_dependencies).parameters
@@ -904,6 +932,71 @@ def _load_pipeline_snapshot_context(
     )
 
 
+def _load_and_refresh_pipeline_snapshot_context(
+    *,
+    request: MobilePayloadRequest,
+    available: List[str],
+    source_marker: Optional[Dict[str, Any]],
+    timing_recorder=None,
+) -> Optional[MobilePayloadContext]:
+    snapshot_context = _load_pipeline_snapshot_context(
+        request=request,
+        available=available,
+        source_marker=source_marker,
+        timing_recorder=timing_recorder,
+    )
+    if snapshot_context is None:
+        return None
+    return _refresh_prices_from_cached_base(
+        snapshot_context,
+        request=request,
+        available=available,
+        source_marker=source_marker,
+        timing_recorder=timing_recorder,
+    )
+
+
+def _wait_for_pipeline_snapshot_context(
+    *,
+    request: MobilePayloadRequest,
+    available: List[str],
+    source_marker: Optional[Dict[str, Any]],
+    timing_recorder=None,
+) -> Optional[MobilePayloadContext]:
+    wait_seconds = _pipeline_build_wait_seconds()
+    if wait_seconds <= 0:
+        return None
+    started_at = perf_counter()
+    deadline = started_at + wait_seconds
+    poll_seconds = _pipeline_build_wait_poll_seconds()
+    while perf_counter() < deadline:
+        sleep(poll_seconds)
+        context = _load_and_refresh_pipeline_snapshot_context(
+            request=request,
+            available=available,
+            source_marker=source_marker,
+            timing_recorder=timing_recorder,
+        )
+        if context is not None:
+            if timing_recorder is not None:
+                timing_recorder("pipeline_snapshot_wait_ms", _elapsed_ms(started_at))
+                timing_recorder("pipeline_snapshot_wait_hit", 1)
+            return context
+    if timing_recorder is not None:
+        timing_recorder("pipeline_snapshot_wait_ms", _elapsed_ms(started_at))
+        timing_recorder("pipeline_snapshot_wait_hit", 0)
+    return None
+
+
+def _pipeline_build_lease_id(snapshot_id: str) -> str:
+    return f"pipeline_snapshot_build:{snapshot_id}"
+
+
+def _pipeline_build_owner_id() -> str:
+    revision = os.getenv("K_REVISION") or "local"
+    return f"{revision}:{os.getpid()}:{threading.get_ident()}:{uuid.uuid4().hex}"
+
+
 def _refresh_prices_from_cached_base(
     context: MobilePayloadContext,
     *,
@@ -974,41 +1067,93 @@ def _build_context_uncached(
     timing_recorder=None,
 ):
     started_at = perf_counter()
+    build_lease_id: Optional[str] = None
+    build_lease_owner: Optional[str] = None
+    build_lease_acquired = False
     if _data_source() == DATA_SOURCE_IBKR:
         if "source_snapshot_id" not in source_metadata:
             source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
             source_metadata.update(_source_metadata_for_marker(source_marker))
         if not force_rebuild:
-            snapshot_context = _load_pipeline_snapshot_context(
+            refreshed_context = _load_and_refresh_pipeline_snapshot_context(
                 request=request,
                 available=available,
                 source_marker=source_marker,
                 timing_recorder=timing_recorder,
             )
-            if snapshot_context is not None:
-                refreshed_context = _refresh_prices_from_cached_base(
-                    snapshot_context,
-                    request=request,
-                    available=available,
-                    source_marker=source_marker,
-                    timing_recorder=timing_recorder,
-                )
-                if refreshed_context is not None:
+            if refreshed_context is not None:
+                if timing_recorder is not None:
+                    timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
+                _remember_context(key, refreshed_context)
+                return refreshed_context
+
+            snapshot_id = _pipeline_snapshot_id_for_request(source_marker, request)
+            if snapshot_id is not None:
+                build_lease_id = _pipeline_build_lease_id(snapshot_id)
+                build_lease_owner = _pipeline_build_owner_id()
+                store = get_default_pipeline_snapshot_store()
+                lease_started_at = perf_counter()
+                try:
+                    build_lease_acquired = store.try_acquire_build_lease(
+                        build_lease_id,
+                        build_lease_owner,
+                        ttl_seconds=_pipeline_build_lease_seconds(),
+                    )
+                except Exception as exc:
+                    logger.warning("pipeline_snapshot_build_lease_failed lease_id=%s error=%s", build_lease_id, exc)
+                    build_lease_acquired = True
+                if timing_recorder is not None:
+                    timing_recorder("pipeline_snapshot_build_lease_ms", _elapsed_ms(lease_started_at))
+                    timing_recorder("pipeline_snapshot_build_lease_acquired", 1 if build_lease_acquired else 0)
+
+                if not build_lease_acquired:
+                    waited_context = _wait_for_pipeline_snapshot_context(
+                        request=request,
+                        available=available,
+                        source_marker=source_marker,
+                        timing_recorder=timing_recorder,
+                    )
+                    if waited_context is not None:
+                        if timing_recorder is not None:
+                            timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
+                        _remember_context(key, waited_context)
+                        return waited_context
+                    lease_started_at = perf_counter()
+                    try:
+                        build_lease_acquired = store.try_acquire_build_lease(
+                            build_lease_id,
+                            build_lease_owner,
+                            ttl_seconds=_pipeline_build_lease_seconds(),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "pipeline_snapshot_build_lease_retry_failed lease_id=%s error=%s",
+                            build_lease_id,
+                            exc,
+                        )
+                        build_lease_acquired = True
                     if timing_recorder is not None:
-                        timing_recorder("context_build_total_ms", _elapsed_ms(started_at))
-                    _remember_context(key, refreshed_context)
-                    return refreshed_context
+                        timing_recorder("pipeline_snapshot_build_lease_retry_ms", _elapsed_ms(lease_started_at))
+                        timing_recorder("pipeline_snapshot_build_lease_retry_acquired", 1 if build_lease_acquired else 0)
         context_kwargs = {"available_sheets": available}
         if _supports_keyword(build_ibkr_mobile_payload_context, "source_metadata"):
             context_kwargs["source_metadata"] = source_metadata
         if timing_recorder is not None and _supports_timing_recorder(build_ibkr_mobile_payload_context):
             context_kwargs["timing_recorder"] = timing_recorder
-        context = build_ibkr_mobile_payload_context(
-            request,
-            _resolve_dependencies(source_metadata),
-            load_flex_report_from_env(),
-            **context_kwargs,
-        )
+        try:
+            context = build_ibkr_mobile_payload_context(
+                request,
+                _resolve_dependencies(source_metadata),
+                load_flex_report_from_env(),
+                **context_kwargs,
+            )
+        except Exception:
+            if build_lease_acquired and build_lease_id and build_lease_owner:
+                try:
+                    get_default_pipeline_snapshot_store().release_build_lease(build_lease_id, build_lease_owner)
+                except Exception as exc:
+                    logger.warning("pipeline_snapshot_build_lease_release_failed lease_id=%s error=%s", build_lease_id, exc)
+            raise
     else:
         context_kwargs = {"available_sheets": available}
         if _supports_keyword(build_mobile_payload_context, "source_metadata"):
@@ -1025,13 +1170,20 @@ def _build_context_uncached(
     if use_memory_cache:
         _remember_context(key, context)
     if _data_source() == DATA_SOURCE_IBKR:
-        _save_pipeline_snapshot(
-            context,
-            request=request,
-            available=available,
-            source_marker=source_marker or _source_marker_from_metadata(dict(getattr(context, "source_metadata", {}) or {})),
-            timing_recorder=timing_recorder,
-        )
+        try:
+            _save_pipeline_snapshot(
+                context,
+                request=request,
+                available=available,
+                source_marker=source_marker or _source_marker_from_metadata(dict(getattr(context, "source_metadata", {}) or {})),
+                timing_recorder=timing_recorder,
+            )
+        finally:
+            if build_lease_acquired and build_lease_id and build_lease_owner:
+                try:
+                    get_default_pipeline_snapshot_store().release_build_lease(build_lease_id, build_lease_owner)
+                except Exception as exc:
+                    logger.warning("pipeline_snapshot_build_lease_release_failed lease_id=%s error=%s", build_lease_id, exc)
     return context
 
 

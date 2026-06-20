@@ -112,3 +112,17 @@ def test_memory_pipeline_snapshot_store_tracks_latest_pointer():
     assert loaded.snapshot_id == "snapshot:demo:1"
     assert loaded.state is state
     assert loaded.metadata == {"kind": "refreshed"}
+
+
+def test_memory_pipeline_snapshot_store_build_lease_blocks_other_owner_until_release():
+    store = MemoryPipelineSnapshotStore()
+
+    assert store.try_acquire_build_lease("lease:demo", "owner-a", ttl_seconds=30)
+    assert not store.try_acquire_build_lease("lease:demo", "owner-b", ttl_seconds=30)
+    assert store.try_acquire_build_lease("lease:demo", "owner-a", ttl_seconds=30)
+
+    store.release_build_lease("lease:demo", "owner-b")
+    assert not store.try_acquire_build_lease("lease:demo", "owner-b", ttl_seconds=30)
+
+    store.release_build_lease("lease:demo", "owner-a")
+    assert store.try_acquire_build_lease("lease:demo", "owner-b", ttl_seconds=30)

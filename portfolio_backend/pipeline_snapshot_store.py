@@ -5,8 +5,9 @@ import gzip
 import hashlib
 import os
 import pickle
+import threading
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
@@ -39,6 +40,13 @@ class PipelineSnapshotStore:
     def save_latest(self, pointer_id: str, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
         raise NotImplementedError
 
+    def try_acquire_build_lease(self, lease_id: str, owner_id: str, *, ttl_seconds: int) -> bool:
+        _ = lease_id, owner_id, ttl_seconds
+        return True
+
+    def release_build_lease(self, lease_id: str, owner_id: str) -> None:
+        _ = lease_id, owner_id
+
 
 class DisabledPipelineSnapshotStore(PipelineSnapshotStore):
     def load(self, snapshot_id: str) -> Optional[PipelineSnapshot]:
@@ -60,6 +68,8 @@ class MemoryPipelineSnapshotStore(PipelineSnapshotStore):
     def __init__(self):
         self.snapshots: Dict[str, PipelineSnapshot] = {}
         self.latest: Dict[str, str] = {}
+        self.leases: Dict[str, Dict[str, Any]] = {}
+        self._lease_lock = threading.Lock()
 
     def load(self, snapshot_id: str) -> Optional[PipelineSnapshot]:
         return self.snapshots.get(snapshot_id)
@@ -76,6 +86,24 @@ class MemoryPipelineSnapshotStore(PipelineSnapshotStore):
     def save_latest(self, pointer_id: str, snapshot_id: str, state: Any, metadata: Dict[str, Any]) -> None:
         self.save(snapshot_id, state, metadata)
         self.latest[pointer_id] = snapshot_id
+
+    def try_acquire_build_lease(self, lease_id: str, owner_id: str, *, ttl_seconds: int) -> bool:
+        now = datetime.now(timezone.utc)
+        with self._lease_lock:
+            lease = self.leases.get(lease_id)
+            if lease and lease.get("expires_at") and lease["expires_at"] > now and lease.get("owner_id") != owner_id:
+                return False
+            self.leases[lease_id] = {
+                "owner_id": owner_id,
+                "expires_at": now + timedelta(seconds=max(int(ttl_seconds), 1)),
+            }
+            return True
+
+    def release_build_lease(self, lease_id: str, owner_id: str) -> None:
+        with self._lease_lock:
+            lease = self.leases.get(lease_id)
+            if lease and lease.get("owner_id") == owner_id:
+                self.leases.pop(lease_id, None)
 
 
 class FirestorePipelineSnapshotStore(PipelineSnapshotStore):
@@ -162,6 +190,64 @@ class FirestorePipelineSnapshotStore(PipelineSnapshotStore):
             ),
             merge=True,
         )
+
+    def try_acquire_build_lease(self, lease_id: str, owner_id: str, *, ttl_seconds: int) -> bool:
+        from google.cloud import firestore
+
+        doc_ref = self.client.collection(COLLECTION_APP_METADATA).document(str(lease_id))
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=max(int(ttl_seconds), 1))
+        transaction = self.client.transaction()
+
+        @firestore.transactional
+        def claim(txn):
+            snapshot = doc_ref.get(transaction=txn)
+            data = snapshot.to_dict() or {} if snapshot.exists else {}
+            current_expires_at = _datetime_from_firestore(data.get("expires_at"))
+            current_owner = str(data.get("owner_id") or "")
+            current_status = str(data.get("status") or "")
+            if (
+                current_status == "building"
+                and current_expires_at is not None
+                and current_expires_at > now
+                and current_owner != owner_id
+            ):
+                return False
+            txn.set(
+                doc_ref,
+                _json_safe(
+                    {
+                        "lease_id": str(lease_id),
+                        "owner_id": owner_id,
+                        "status": "building",
+                        "created_at": data.get("created_at") or now.isoformat(timespec="seconds"),
+                        "updated_at": now.isoformat(timespec="seconds"),
+                        "expires_at": expires_at,
+                    }
+                ),
+                merge=True,
+            )
+            return True
+
+        return bool(claim(transaction))
+
+    def release_build_lease(self, lease_id: str, owner_id: str) -> None:
+        doc_ref = self.client.collection(COLLECTION_APP_METADATA).document(str(lease_id))
+        try:
+            snapshot = doc_ref.get()
+            data = snapshot.to_dict() or {} if snapshot.exists else {}
+            if str(data.get("owner_id") or "") == owner_id:
+                doc_ref.set(
+                    _json_safe(
+                        {
+                            "status": "released",
+                            "released_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        }
+                    ),
+                    merge=True,
+                )
+        except Exception:
+            return
 
 
 _DEFAULT_STORE: Optional[PipelineSnapshotStore] = None
@@ -260,6 +346,23 @@ def _date_text(value: Any) -> str:
     if pd.isna(ts):
         return ""
     return ts.date().isoformat()
+
+
+def _datetime_from_firestore(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = pd.to_datetime(value, errors="coerce").to_pydatetime()
+        except Exception:
+            return None
+    if pd.isna(dt):
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _json_safe(value: Any) -> Any:
