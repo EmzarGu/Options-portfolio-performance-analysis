@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from portfolio_backend.constants import CONTRACT_MULTIPLIER
+from portfolio_backend.market_calendar import is_us_market_trading_day
 from portfolio_backend.models import (
     HoldSeg,
     OptionLot,
@@ -487,9 +488,11 @@ def _count_business_days(start: pd.Timestamp, end: pd.Timestamp) -> int:
     end = pd.to_datetime(end)
     if pd.isna(start) or pd.isna(end) or start > end:
         return 0
-    start_day = start.normalize().to_datetime64().astype("datetime64[D]")
-    end_day_exclusive = (end.normalize() + pd.Timedelta(days=1)).to_datetime64().astype("datetime64[D]")
-    return int(np.busday_count(start_day, end_day_exclusive))
+    return sum(
+        1
+        for day in pd.date_range(start.normalize(), end.normalize(), freq="D")
+        if is_us_market_trading_day(day.date())
+    )
 
 
 def _business_day_gap_ranges(sorted_dates: pd.DatetimeIndex) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
@@ -502,9 +505,10 @@ def _business_day_gap_ranges(sorted_dates: pd.DatetimeIndex) -> List[Tuple[pd.Ti
         return []
 
     counts = np.zeros(len(starts), dtype=int)
-    start_days = starts[valid].to_numpy(dtype="datetime64[D]")
-    end_days = (ends[valid] + pd.Timedelta(days=1)).to_numpy(dtype="datetime64[D]")
-    counts[valid] = np.busday_count(start_days, end_days)
+    counts[valid] = [
+        _count_business_days(pd.Timestamp(start), pd.Timestamp(end))
+        for start, end in zip(starts[valid], ends[valid])
+    ]
 
     return [
         (pd.Timestamp(start), pd.Timestamp(end))
@@ -554,6 +558,12 @@ def assess_capital_history_coverage(
 
     for seg in holding_segments:
         valuation_days = daterange_days(seg.start, seg.end)
+        if valuation_days.empty:
+            continue
+
+        valuation_days = pd.DatetimeIndex(
+            [day for day in valuation_days if is_us_market_trading_day(pd.Timestamp(day).date())]
+        )
         if valuation_days.empty:
             continue
 

@@ -1684,6 +1684,52 @@ def test_capital_history_coverage_flags_partial_tail_history():
     assert issue["end_date"] == pd.Timestamp("2024-05-28")
 
 
+def test_capital_history_coverage_allows_market_holiday_tail_gap():
+    segments = [
+        HoldSeg(
+            ticker="AAA",
+            start=pd.Timestamp("2026-06-17"),
+            end=pd.Timestamp("2026-06-20"),
+            shares=100,
+            cost_per_share=100.0,
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series(
+            [101.0, 102.0],
+            index=pd.to_datetime(["2026-06-17", "2026-06-18"]),
+        )
+    }
+
+    coverage = assess_capital_history_coverage(segments, price_history)
+
+    assert coverage["capital_history_incomplete"] is False
+    assert coverage["capital_history_coverage_issues"] == []
+
+
+def test_capital_history_coverage_allows_market_holiday_internal_gap():
+    segments = [
+        HoldSeg(
+            ticker="AAA",
+            start=pd.Timestamp("2026-06-17"),
+            end=pd.Timestamp("2026-06-23"),
+            shares=100,
+            cost_per_share=100.0,
+        )
+    ]
+    price_history = {
+        "AAA": pd.Series(
+            [101.0, 102.0, 103.0],
+            index=pd.to_datetime(["2026-06-17", "2026-06-18", "2026-06-22"]),
+        )
+    }
+
+    coverage = assess_capital_history_coverage(segments, price_history)
+
+    assert coverage["capital_history_incomplete"] is False
+    assert coverage["capital_history_coverage_issues"] == []
+
+
 def test_capital_history_coverage_allows_legitimate_initial_cost_basis_fallback():
     segments = [
         HoldSeg(
