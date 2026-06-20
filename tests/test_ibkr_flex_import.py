@@ -389,6 +389,16 @@ def test_plan_missing_import_ranges_skips_weekend_only_trailing_gap():
     assert planned == [DateRange(date(2026, 4, 27), date(2026, 5, 8))]
 
 
+def test_plan_missing_import_ranges_skips_market_holiday_trailing_gap():
+    planned = plan_missing_import_ranges(
+        target=DateRange(date(2022, 11, 1), date(2026, 6, 19)),
+        existing=[DateRange(date(2022, 11, 1), date(2026, 6, 18))],
+        recent_overlap_days=0,
+    )
+
+    assert planned == []
+
+
 def test_plan_missing_import_ranges_trims_weekend_edges_from_missing_gap():
     planned = plan_missing_import_ranges(
         target=DateRange(date(2026, 5, 2), date(2026, 5, 11)),

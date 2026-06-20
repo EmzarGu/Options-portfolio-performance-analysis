@@ -47,6 +47,7 @@ from portfolio_backend.pipeline import (
     apply_unrealized_adjusted_display,
     current_price_tickers_for_state,
 )
+from portfolio_backend.market_calendar import previous_us_market_trading_day
 from portfolio_backend.pipeline_snapshot_store import (
     get_default_pipeline_snapshot_store,
     pipeline_snapshot_id,
@@ -769,7 +770,7 @@ def _ibkr_stale_import_issue(latest_success_marker: Dict[str, Any], *, today: da
             "message": "IBKR import freshness cannot be verified: latest successful import has no valid statement end date.",
             "action": "retry_import",
         }
-    latest_expected = today - timedelta(days=stale_days)
+    latest_expected = previous_us_market_trading_day(today - timedelta(days=stale_days))
     if to_date >= latest_expected:
         return None
     return {
@@ -781,7 +782,7 @@ def _ibkr_stale_import_issue(latest_success_marker: Dict[str, Any], *, today: da
         "finished_at": latest_success_marker.get("finished_at"),
         "message": (
             f"IBKR import stale: latest successful statement ends {to_date.isoformat()}, "
-            f"more than {stale_days} days behind today."
+            f"behind the latest expected trading day {latest_expected.isoformat()}."
         ),
         "action": "retry_import",
     }

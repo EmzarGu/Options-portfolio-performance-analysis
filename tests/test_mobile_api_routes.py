@@ -84,6 +84,21 @@ def test_ibkr_stale_import_issue_allows_recent_latest_success(monkeypatch):
     assert issue is None
 
 
+def test_ibkr_stale_import_issue_uses_latest_expected_trading_day(monkeypatch):
+    monkeypatch.setenv("IBKR_IMPORT_STALE_DAYS", "1")
+
+    issue = mobile_api._ibkr_stale_import_issue(
+        {
+            "from_date": "20260618",
+            "to_date": "20260618",
+            "finished_at": "2026-06-19T20:43:57+00:00",
+        },
+        today=date(2026, 6, 20),
+    )
+
+    assert issue is None
+
+
 class _FakeDoc:
     def __init__(self, doc_id: str, data: dict):
         self.id = doc_id

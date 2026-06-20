@@ -8,6 +8,7 @@ from typing import Any, Iterable, Optional
 
 from portfolio_backend.ibkr.flex_client import DateRange, FlexClient, parse_iso_date, plan_backfill_ranges
 from portfolio_backend.ibkr.importer import FirestoreImportStore, GcsRawReportStore, IbkrImportService
+from portfolio_backend.market_calendar import is_us_market_trading_day
 
 
 SOURCE = "ibkr_flex"
@@ -96,7 +97,7 @@ def plan_missing_import_ranges(
     missing = _missing_ranges(target, covered)
     planned: list[DateRange] = []
     for date_range in missing:
-        business_range = _trim_weekend_edges(date_range)
+        business_range = _trim_non_trading_edges(date_range)
         if business_range is not None:
             planned.extend(plan_backfill_ranges(business_range.start, business_range.end, max_days=max_days))
     if recent_overlap_days > 0:
@@ -107,23 +108,27 @@ def plan_missing_import_ranges(
     return _dedupe_ranges(planned)
 
 
-def _trim_weekend_edges(date_range: DateRange) -> DateRange | None:
-    """Avoid standalone weekend gaps for Activity Flex statements.
+def _trim_non_trading_edges(date_range: DateRange) -> DateRange | None:
+    """Avoid standalone non-trading gaps for Activity Flex statements.
 
-    IBKR Activity Flex statements are business-day based. Once coverage reaches
-    a Friday, the following Saturday/Sunday should not be treated as missing
-    import coverage; otherwise the daily job repeatedly requests unavailable
-    weekend-only statements.
+    IBKR Activity Flex statements are trading-day based. Once coverage reaches
+    the last market session, weekends and market holidays should not be treated
+    as missing import coverage; otherwise the daily job repeatedly requests
+    unavailable statements.
     """
     start = date_range.start
     end = date_range.end
-    while start <= end and start.weekday() >= 5:
+    while start <= end and not is_us_market_trading_day(start):
         start += timedelta(days=1)
-    while end >= start and end.weekday() >= 5:
+    while end >= start and not is_us_market_trading_day(end):
         end -= timedelta(days=1)
     if start > end:
         return None
     return DateRange(start, end)
+
+
+def _trim_weekend_edges(date_range: DateRange) -> DateRange | None:
+    return _trim_non_trading_edges(date_range)
 
 
 def split_trailing_target_day(ranges: Iterable[DateRange], target_end: date) -> list[DateRange]:
@@ -225,6 +230,9 @@ def _import_range(
                 "started_at": started_iso,
                 "finished_at": finished_at,
                 "ibkr_import_run_id": resolved_run_id,
+                "query_id": query_id,
+                "from_date": date_range.start.isoformat() if date_range is not None else None,
+                "to_date": date_range.end.isoformat() if date_range is not None else None,
                 "raw_bucket": result.raw_report.bucket,
                 "raw_object": result.raw_report.object_name,
                 "section_counts": result.section_counts,
