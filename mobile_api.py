@@ -87,6 +87,7 @@ FULL_RELOAD_ENDPOINTS = [
 
 _context_cache_lock = threading.Lock()
 _context_cache: "OrderedDict[Tuple[str, str, str, bool, Tuple[str, ...], int], Any]" = OrderedDict()
+_context_build_locks: Dict[Tuple[str, str, str, bool, Tuple[str, ...], int], threading.Lock] = {}
 _active_cache_bust = 1
 _source_marker_cache_lock = threading.Lock()
 _source_marker_cache: Dict[str, tuple[float, Optional[Dict[str, Any]]]] = {}
@@ -448,6 +449,17 @@ def _cached_context_for_marker(
     return None
 
 
+def _context_build_lock_for_key(
+    key: Tuple[str, str, str, bool, Tuple[str, ...], int],
+) -> threading.Lock:
+    with _context_cache_lock:
+        lock = _context_build_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _context_build_locks[key] = lock
+        return lock
+
+
 def _remember_context(key: Tuple[str, str, str, bool, Tuple[str, ...], int], context: Any) -> None:
     with _context_cache_lock:
         _context_cache[key] = context
@@ -466,6 +478,7 @@ def _clear_context_cache() -> None:
     global _active_cache_bust
     with _context_cache_lock:
         _context_cache.clear()
+        _context_build_locks.clear()
         _active_cache_bust = 1
 
 
@@ -949,38 +962,17 @@ def _refresh_prices_from_cached_base(
     )
 
 
-def _context(
+def _build_context_uncached(
     *,
-    as_of: Optional[date],
-    include_unrealized: bool,
-    selected_sheets: Optional[List[str]],
-    cache_bust: Optional[int],
-    force_rebuild: bool = False,
+    request: MobilePayloadRequest,
+    available: List[str],
+    key: Tuple[str, str, str, bool, Tuple[str, ...], int],
+    use_memory_cache: bool,
+    force_rebuild: bool,
+    source_metadata: Dict[str, Any],
+    source_marker: Optional[Dict[str, Any]],
     timing_recorder=None,
-    source_metadata_override: Optional[Dict[str, Any]] = None,
 ):
-    request, available = _common_request(
-        as_of=as_of,
-        include_unrealized=include_unrealized,
-        selected_sheets=selected_sheets,
-        cache_bust=_resolve_cache_bust(cache_bust),
-        timing_recorder=timing_recorder,
-    )
-    key = _context_cache_key(request)
-    use_memory_cache = True
-    source_metadata: Dict[str, Any] = dict(source_metadata_override or {})
-    source_marker: Optional[Dict[str, Any]] = _source_marker_from_metadata(source_metadata)
-    if _data_source() == DATA_SOURCE_IBKR and not force_rebuild and "source_snapshot_id" not in source_metadata:
-        source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
-        source_metadata.update(_source_metadata_for_marker(source_marker))
-
-    if use_memory_cache and not force_rebuild:
-        cached = _cached_context_for_marker(key, source_marker, timing_recorder=timing_recorder)
-        if cached is not None:
-            return cached
-    elif timing_recorder is not None:
-        timing_recorder("context_cache_hit", 0)
-
     started_at = perf_counter()
     if _data_source() == DATA_SOURCE_IBKR:
         if "source_snapshot_id" not in source_metadata:
@@ -1041,6 +1033,59 @@ def _context(
             timing_recorder=timing_recorder,
         )
     return context
+
+
+def _context(
+    *,
+    as_of: Optional[date],
+    include_unrealized: bool,
+    selected_sheets: Optional[List[str]],
+    cache_bust: Optional[int],
+    force_rebuild: bool = False,
+    timing_recorder=None,
+    source_metadata_override: Optional[Dict[str, Any]] = None,
+):
+    request, available = _common_request(
+        as_of=as_of,
+        include_unrealized=include_unrealized,
+        selected_sheets=selected_sheets,
+        cache_bust=_resolve_cache_bust(cache_bust),
+        timing_recorder=timing_recorder,
+    )
+    key = _context_cache_key(request)
+    use_memory_cache = True
+    source_metadata: Dict[str, Any] = dict(source_metadata_override or {})
+    source_marker: Optional[Dict[str, Any]] = _source_marker_from_metadata(source_metadata)
+    if _data_source() == DATA_SOURCE_IBKR and not force_rebuild and "source_snapshot_id" not in source_metadata:
+        source_marker = _refresh_source_marker(timing_recorder=timing_recorder)
+        source_metadata.update(_source_metadata_for_marker(source_marker))
+
+    if use_memory_cache and not force_rebuild:
+        cached = _cached_context_for_marker(key, source_marker, timing_recorder=timing_recorder)
+        if cached is not None:
+            return cached
+    elif timing_recorder is not None:
+        timing_recorder("context_cache_hit", 0)
+
+    build_lock = _context_build_lock_for_key(key)
+    lock_started_at = perf_counter()
+    with build_lock:
+        if timing_recorder is not None:
+            timing_recorder("context_build_lock_wait_ms", _elapsed_ms(lock_started_at))
+        if use_memory_cache and not force_rebuild:
+            cached = _cached_context_for_marker(key, source_marker, timing_recorder=timing_recorder)
+            if cached is not None:
+                return cached
+        return _build_context_uncached(
+            request=request,
+            available=available,
+            key=key,
+            use_memory_cache=use_memory_cache,
+            force_rebuild=force_rebuild,
+            source_metadata=source_metadata,
+            source_marker=source_marker,
+            timing_recorder=timing_recorder,
+        )
 
 
 def _smart_refresh_context(
