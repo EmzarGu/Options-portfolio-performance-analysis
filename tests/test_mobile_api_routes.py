@@ -120,12 +120,15 @@ class _FakeCollection:
 
 
 class _FakeFirestoreClient:
-    def __init__(self, refresh_docs):
+    def __init__(self, refresh_docs, import_docs=None):
         self._refresh_docs = list(refresh_docs)
+        self._import_docs = list(import_docs or [])
 
     def collection(self, name: str):
         if name == "refresh_runs":
             return _FakeCollection(self._refresh_docs)
+        if name == "ibkr_import_runs":
+            return _FakeCollection(self._import_docs)
         return _FakeCollection([])
 
 
@@ -216,6 +219,85 @@ def test_ibkr_import_health_collapses_duplicate_non_trailing_failures():
     assert health["status"] == "warning"
     assert health["unresolved_count"] == 1
     assert health["issues"][0]["finished_at"] == "2026-06-19T05:50:59Z"
+
+
+def test_ibkr_import_health_suppresses_failed_retry_when_range_already_imported():
+    client = _FakeFirestoreClient(
+        [
+            _FakeDoc(
+                "failed-later",
+                {
+                    "source": "ibkr_flex",
+                    "query_id": "1504277",
+                    "status": "failed",
+                    "from_date": "2026-06-15",
+                    "to_date": "2026-06-18",
+                    "finished_at": "2026-06-20T17:45:15Z",
+                    "error_message": (
+                        "IBKR SendRequest error: 1001: Statement could not be generated at this time. "
+                        "Please try again shortly."
+                    ),
+                },
+            ),
+            _FakeDoc(
+                "older-range-failed-later",
+                {
+                    "source": "ibkr_flex",
+                    "query_id": "1504277",
+                    "status": "failed",
+                    "from_date": "2026-06-06",
+                    "to_date": "2026-06-12",
+                    "finished_at": "2026-06-20T17:45:09Z",
+                    "error_message": (
+                        "IBKR SendRequest error: 1001: Statement could not be generated at this time. "
+                        "Please try again shortly."
+                    ),
+                },
+            ),
+        ],
+        [
+            _FakeDoc(
+                "success-older",
+                {
+                    "query_id": "1504277",
+                    "status": "succeeded",
+                    "from_date": "20260605",
+                    "to_date": "20260612",
+                    "finished_at": "2026-06-19T20:43:43Z",
+                },
+            ),
+            _FakeDoc(
+                "success-first-part",
+                {
+                    "query_id": "1504277",
+                    "status": "succeeded",
+                    "from_date": "20260615",
+                    "to_date": "20260617",
+                    "finished_at": "2026-06-19T20:43:50Z",
+                },
+            ),
+            _FakeDoc(
+                "success-last-day",
+                {
+                    "query_id": "1504277",
+                    "status": "succeeded",
+                    "from_date": "20260618",
+                    "to_date": "20260618",
+                    "finished_at": "2026-06-19T20:43:57Z",
+                },
+            ),
+        ],
+    )
+
+    health = mobile_api._ibkr_import_health(
+        client,
+        "1504277",
+        {"finished_at": "2026-06-19T20:43:57Z", "to_date": "20260618"},
+    )
+
+    assert health["status"] == "ok"
+    assert health["unresolved_count"] == 0
+    assert health["issues"] == []
 
 
 @pytest.fixture

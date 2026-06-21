@@ -666,6 +666,7 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
     """
     latest_success_finished = str(latest_success_marker.get("finished_at") or "")
     latest_success_to_date = _parse_iso_date(latest_success_marker.get("to_date"))
+    successful_imports = _ibkr_successful_import_docs(client, query_id)
     stale_issue = _ibkr_stale_import_issue(latest_success_marker, today=date.today())
     unresolved_by_range: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     try:
@@ -684,8 +685,15 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
             if doc_query_id != str(query_id):
                 continue
             finished_at = str(doc.get("finished_at") or "")
+            issue_from_date = _parse_iso_date(doc.get("from_date"))
             issue_to_date = _parse_iso_date(doc.get("to_date"))
-            if _ibkr_import_issue_resolved(
+            if _ibkr_import_issue_resolved_by_import_ranges(
+                successful_imports,
+                query_id=str(query_id),
+                issue_finished_at=finished_at,
+                issue_from_date=issue_from_date,
+                issue_to_date=issue_to_date,
+            ) or _ibkr_import_issue_resolved(
                 latest_success_finished=latest_success_finished,
                 latest_success_to_date=latest_success_to_date,
                 issue_finished_at=finished_at,
@@ -729,6 +737,29 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
         "latest_success_finished_at": latest_success_marker.get("finished_at"),
         "latest_success_to_date": latest_success_marker.get("to_date"),
     }
+
+
+def _ibkr_successful_import_docs(client, query_id: str) -> List[Dict[str, Any]]:
+    try:
+        try:
+            from google.cloud.firestore_v1 import FieldFilter
+
+            docs = (
+                client.collection("ibkr_import_runs")
+                .where(filter=FieldFilter("query_id", "==", str(query_id)))
+                .stream()
+            )
+        except Exception:
+            docs = client.collection("ibkr_import_runs").where("query_id", "==", str(query_id)).stream()
+        successful: List[Dict[str, Any]] = []
+        for snap in docs:
+            doc = snap.to_dict() or {}
+            if str(doc.get("status")) == "succeeded" and str(doc.get("query_id") or query_id) == str(query_id):
+                successful.append(dict(doc))
+        return successful
+    except Exception as exc:
+        logger.warning("ibkr_successful_import_lookup_failed error=%s", exc)
+        return []
 
 
 def _statement_unavailable_issue_key(reason: str) -> Optional[str]:
@@ -805,6 +836,61 @@ def _ibkr_import_issue_resolved(
         if issue_to_date is None or latest_success_to_date is None:
             return True
         return latest_success_to_date >= issue_to_date
+    return False
+
+
+def _ibkr_import_issue_resolved_by_import_ranges(
+    successful_imports: List[Dict[str, Any]],
+    *,
+    query_id: str,
+    issue_finished_at: str,
+    issue_from_date: Optional[date],
+    issue_to_date: Optional[date],
+) -> bool:
+    if not issue_finished_at:
+        return False
+    issue_start = issue_from_date or issue_to_date
+    issue_end = issue_to_date or issue_from_date
+    if issue_start is None or issue_end is None:
+        return False
+    if issue_start > issue_end:
+        issue_start, issue_end = issue_end, issue_start
+
+    intervals: List[Tuple[date, date]] = []
+    for doc in successful_imports:
+        if str(doc.get("status")) != "succeeded":
+            continue
+        if str(doc.get("query_id") or query_id) != str(query_id):
+            continue
+        finished_at = str(doc.get("finished_at") or "")
+        if not finished_at:
+            continue
+        run_start = _parse_iso_date(doc.get("from_date")) or _parse_iso_date(doc.get("to_date"))
+        run_end = _parse_iso_date(doc.get("to_date")) or run_start
+        if run_start is None or run_end is None:
+            continue
+        if run_start > run_end:
+            run_start, run_end = run_end, run_start
+        if run_end < issue_start or run_start > issue_end:
+            continue
+        intervals.append((run_start, run_end))
+
+    if not intervals:
+        return False
+    intervals.sort(key=lambda pair: pair[0])
+    covered_until: Optional[date] = None
+    for start, end in intervals:
+        if covered_until is None:
+            if start > issue_start:
+                return False
+            covered_until = end
+        elif start <= covered_until + timedelta(days=1):
+            if end > covered_until:
+                covered_until = end
+        else:
+            return False
+        if covered_until >= issue_end:
+            return True
     return False
 
 
