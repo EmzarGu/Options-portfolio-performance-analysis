@@ -1001,6 +1001,7 @@ def test_ibkr_refresh_reprices_base_snapshot_instead_of_reusing_recent_full_cont
 def test_ibkr_config_reports_single_source_partition(api_harness, monkeypatch):
     monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
     monkeypatch.setattr(mobile_api, "_available_sheets", lambda: ["IBKR Flex"])
+    monkeypatch.setattr(mobile_api, "previous_us_market_trading_day", lambda value: date(2026, 6, 18))
 
     response = api_harness.client.get("/v1/mobile/config")
 
@@ -1009,12 +1010,29 @@ def test_ibkr_config_reports_single_source_partition(api_harness, monkeypatch):
         "available_sheets": ["IBKR Flex"],
         "prefs": {"selected_sheets": ["IBKR Flex"], "include_unrealized": True},
         "default_sheets": ["IBKR Flex"],
-        "as_of_default": date.today(),
+        "as_of_default": date(2026, 6, 18),
         "source_kind": "ibkr_flex",
         "source_name": "IBKR Flex",
         "supports_selected_sheets": False,
         "monthly_target_band": {"target_floor": 0.0125, "target_return": 0.0175, "source": "test"},
     }
+
+
+def test_ibkr_common_request_defaults_to_latest_market_day(api_harness, monkeypatch):
+    monkeypatch.setenv("OPTIONS_DATA_SOURCE", "ibkr")
+    monkeypatch.setattr(mobile_api, "_available_sheets", lambda: ["IBKR Flex"])
+    monkeypatch.setattr(mobile_api, "previous_us_market_trading_day", lambda value: date(2026, 6, 18))
+
+    request, available = mobile_api._common_request(
+        as_of=None,
+        include_unrealized=True,
+        selected_sheets=None,
+        cache_bust=1,
+    )
+
+    assert available == ["IBKR Flex"]
+    assert request.as_of == date(2026, 6, 18)
+    assert request.selected_sheets == ["IBKR Flex"]
 
 
 def test_ibkr_routes_build_from_persisted_local_json_store(tmp_path, monkeypatch):

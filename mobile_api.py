@@ -395,13 +395,20 @@ def _common_request(
     return (
         MobilePayloadRequest(
             sheet_id="ibkr-flex" if _data_source() == DATA_SOURCE_IBKR else dashboard_app.SHEET_ID,
-            as_of=as_of or date.today(),
+            as_of=as_of or _default_as_of_date(),
             selected_sheets=selected,
             include_unrealized=include_unrealized,
             cache_bust=cache_bust,
         ),
         available,
     )
+
+
+def _default_as_of_date() -> date:
+    today = date.today()
+    if _data_source() == DATA_SOURCE_IBKR:
+        return previous_us_market_trading_day(today)
+    return today
 
 
 def _resolve_cache_bust(cache_bust: Optional[int]) -> int:
@@ -659,10 +666,7 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
     """
     latest_success_finished = str(latest_success_marker.get("finished_at") or "")
     latest_success_to_date = _parse_iso_date(latest_success_marker.get("to_date"))
-    issues: List[Dict[str, Any]] = []
     stale_issue = _ibkr_stale_import_issue(latest_success_marker, today=date.today())
-    if stale_issue is not None:
-        issues.append(stale_issue)
     unresolved_by_range: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     try:
         try:
@@ -714,7 +718,9 @@ def _ibkr_import_health(client, query_id: str, latest_success_marker: Dict[str, 
                 unresolved_by_range[key] = issue
     except Exception as exc:
         logger.warning("ibkr_import_health_check_failed error=%s", exc)
-    issues.extend(unresolved_by_range.values())
+    issues: List[Dict[str, Any]] = list(unresolved_by_range.values())
+    if stale_issue is not None and not issues:
+        issues.append(stale_issue)
     issues.sort(key=lambda item: str(item.get("finished_at") or ""), reverse=True)
     return {
         "status": "warning" if issues else "ok",
@@ -1435,7 +1441,7 @@ def get_mobile_config() -> Dict[str, Any]:
         available,
         prefs,
         default_sheets=available if _data_source() == DATA_SOURCE_IBKR else dashboard_app.SHEETS,
-        as_of_default=date.today(),
+        as_of_default=_default_as_of_date(),
         source_kind="ibkr_flex" if _data_source() == DATA_SOURCE_IBKR else "google_sheet",
         source_name="IBKR Flex" if _data_source() == DATA_SOURCE_IBKR else "Google Sheets",
         supports_selected_sheets=_data_source() != DATA_SOURCE_IBKR,
