@@ -287,6 +287,7 @@ def build_dashboard_data(
                 "row_count": int(len(getattr(state, "df_opts", []))),
                 "sheet_counts": _frame_records(getattr(state, "sheet_counts", None)),
             },
+            "source_metadata": _json_safe(getattr(context, "source_metadata", {}) or {}),
             "dashboard": dashboard,
             "positions": positions,
             "open_shorts": open_shorts,

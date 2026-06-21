@@ -22,6 +22,7 @@ from google.oauth2 import id_token as google_id_token
 from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
 from portfolio_backend.decision_lab import build_decision_lab_data
 from portfolio_backend.decision_lab_templates import DECISION_LAB_HTML
+from portfolio_backend.derived_payload_cache import derived_payload_key, load_derived_payload, save_derived_payload
 from portfolio_backend.gcp import firestore_client
 from portfolio_backend.app_settings import (
     default_monthly_target_band,
@@ -53,7 +54,7 @@ COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 DEFAULT_SESSION_DAYS = 90
 DEFAULT_DASHBOARD_DATA_CACHE_SECONDS = 0
-DEFAULT_ASSIGNMENT_QUALITY_CACHE_SECONDS = 300
+DEFAULT_LAB_MEMORY_CACHE_SECONDS = 21600
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -66,6 +67,9 @@ _dashboard_data_key_locks: Dict[tuple, threading.Lock] = {}
 _assignment_quality_cache_lock = threading.Lock()
 _assignment_quality_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
 _assignment_quality_key_locks: Dict[tuple, threading.Lock] = {}
+_decision_lab_cache_lock = threading.Lock()
+_decision_lab_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
+_decision_lab_key_locks: Dict[tuple, threading.Lock] = {}
 _probability_history_cache_lock = threading.Lock()
 _probability_history_cache: tuple[float, list[dict[str, Any]]] | None = None
 _option_history_cache_lock = threading.Lock()
@@ -380,6 +384,63 @@ def _clear_dashboard_data_cache() -> None:
     with _assignment_quality_cache_lock:
         _assignment_quality_cache.clear()
         _assignment_quality_key_locks.clear()
+    with _decision_lab_cache_lock:
+        _decision_lab_cache.clear()
+        _decision_lab_key_locks.clear()
+
+
+def _lab_memory_cache_seconds() -> int:
+    raw = os.getenv("WEB_LAB_MEMORY_CACHE_SECONDS", str(DEFAULT_LAB_MEMORY_CACHE_SECONDS))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_LAB_MEMORY_CACHE_SECONDS
+
+
+def _payload_source_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = payload.get("source_metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    dashboard = payload.get("dashboard") or {}
+    request = dashboard.get("request") or {}
+    return {
+        "source_snapshot_id": request.get("source_snapshot_id"),
+        "as_of": request.get("as_of"),
+        "generated_at": payload.get("generated_at"),
+    }
+
+
+def _lab_source_cache_key(payload: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = _payload_source_metadata(payload)
+    return {
+        "source_snapshot_id": metadata.get("source_snapshot_id"),
+        "ibkr_import_run_id": metadata.get("ibkr_import_run_id"),
+        "pipeline_snapshot_id": metadata.get("pipeline_snapshot_id"),
+        "as_of": ((payload.get("dashboard") or {}).get("request") or {}).get("as_of"),
+        "price_updated_at": ((payload.get("dashboard") or {}).get("data_freshness") or {}).get("prices_updated_at"),
+    }
+
+
+def _memory_cache_get(cache: Dict[tuple, tuple[float, Dict[str, Any]]], key: tuple, ttl_seconds: int) -> Optional[Dict[str, Any]]:
+    cached = cache.get(key)
+    if ttl_seconds > 0 and cached and time() - cached[0] <= ttl_seconds:
+        return cached[1]
+    return None
+
+
+def _memory_cache_put(
+    cache: Dict[tuple, tuple[float, Dict[str, Any]]],
+    key_locks: Dict[tuple, threading.Lock],
+    key: tuple,
+    payload: Dict[str, Any],
+    *,
+    max_items: int,
+) -> None:
+    cache[key] = (time(), payload)
+    while len(cache) > max_items:
+        oldest_key = min(cache, key=lambda cache_key: cache[cache_key][0])
+        cache.pop(oldest_key, None)
+        key_locks.pop(oldest_key, None)
 
 
 def _get_cached_dashboard_data(
@@ -434,39 +495,71 @@ def _get_cached_dashboard_data(
         return payload
 
 
-def _assignment_quality_cache_seconds() -> int:
-    raw = os.getenv("WEB_ASSIGNMENT_QUALITY_CACHE_SECONDS", str(DEFAULT_ASSIGNMENT_QUALITY_CACHE_SECONDS))
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_ASSIGNMENT_QUALITY_CACHE_SECONDS
+def _assignment_quality_cache_key(payload: Dict[str, Any], *, as_of: Optional[date] = None) -> str:
+    return derived_payload_key(
+        "assignment_quality",
+        {
+            "source": _lab_source_cache_key(payload),
+            "as_of": as_of.isoformat() if as_of else None,
+        },
+    )
 
 
-def _get_cached_assignment_quality_data(*, as_of: Optional[date] = None) -> Dict[str, Any]:
-    ttl_seconds = _assignment_quality_cache_seconds()
-    key = (as_of.isoformat() if as_of else "",)
-    now = time()
+def _decision_lab_cache_key(payload: Dict[str, Any]) -> str:
+    web = payload.get("web") or {}
+    return derived_payload_key(
+        "decision_lab",
+        {
+            "source": _lab_source_cache_key(payload),
+            "include_unrealized": bool(web.get("include_unrealized")),
+            "target_floor": round(float(web.get("target_floor") or _web_monthly_target_floor_default()), 8),
+            "target_return": round(float(web.get("target_return") or _web_monthly_target_return_default()), 8),
+        },
+    )
+
+
+def _get_cached_assignment_quality_data(
+    *,
+    source_payload: Optional[Dict[str, Any]] = None,
+    as_of: Optional[date] = None,
+    force_refresh: bool = False,
+) -> Dict[str, Any]:
+    if source_payload is None:
+        source_payload = _get_cached_dashboard_data(as_of=as_of, include_unrealized=True)
+    ttl_seconds = _lab_memory_cache_seconds()
+    persistent_key = _assignment_quality_cache_key(source_payload, as_of=as_of)
+    key = (persistent_key,)
     with _assignment_quality_cache_lock:
-        cached = _assignment_quality_cache.get(key)
-        if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
-            return cached[1]
+        cached = _memory_cache_get(_assignment_quality_cache, key, ttl_seconds)
+        if cached is not None and not force_refresh:
+            return cached
         key_lock = _assignment_quality_key_locks.setdefault(key, threading.Lock())
 
     with key_lock:
-        now = time()
         with _assignment_quality_cache_lock:
-            cached = _assignment_quality_cache.get(key)
-            if ttl_seconds > 0 and cached and now - cached[0] <= ttl_seconds:
-                return cached[1]
+            cached = _memory_cache_get(_assignment_quality_cache, key, ttl_seconds)
+            if cached is not None and not force_refresh:
+                return cached
+        if not force_refresh:
+            persistent = load_derived_payload(persistent_key)
+            if persistent is not None:
+                logger.info("assignment_quality_derived_cache_hit key=%s source=firestore", persistent_key)
+                with _assignment_quality_cache_lock:
+                    _memory_cache_put(_assignment_quality_cache, _assignment_quality_key_locks, key, persistent, max_items=4)
+                return persistent
 
         payload = build_web_assignment_quality_data(as_of=as_of)
-        if ttl_seconds > 0:
-            with _assignment_quality_cache_lock:
-                _assignment_quality_cache[key] = (time(), payload)
-                while len(_assignment_quality_cache) > 4:
-                    oldest_key = min(_assignment_quality_cache, key=lambda cache_key: _assignment_quality_cache[cache_key][0])
-                    _assignment_quality_cache.pop(oldest_key, None)
-                    _assignment_quality_key_locks.pop(oldest_key, None)
+        save_derived_payload(
+            persistent_key,
+            payload,
+            metadata={
+                "namespace": "assignment_quality",
+                "source_snapshot_id": _lab_source_cache_key(source_payload).get("source_snapshot_id"),
+                "as_of": as_of.isoformat() if as_of else None,
+            },
+        )
+        with _assignment_quality_cache_lock:
+            _memory_cache_put(_assignment_quality_cache, _assignment_quality_key_locks, key, payload, max_items=4)
         return payload
 
 
@@ -563,6 +656,47 @@ def _build_decision_lab_payload(payload: Dict[str, Any], *, force_refresh: bool 
         historical_enrichments=historical_enrichments,
         option_market_loader=_decision_option_loader(force_refresh=force_refresh),
     )
+
+
+def _get_cached_decision_lab_payload(payload: Dict[str, Any], *, force_refresh: bool = False) -> Dict[str, Any]:
+    ttl_seconds = _lab_memory_cache_seconds()
+    persistent_key = _decision_lab_cache_key(payload)
+    key = (persistent_key,)
+    with _decision_lab_cache_lock:
+        cached = _memory_cache_get(_decision_lab_cache, key, ttl_seconds)
+        if cached is not None and not force_refresh:
+            return cached
+        key_lock = _decision_lab_key_locks.setdefault(key, threading.Lock())
+
+    with key_lock:
+        with _decision_lab_cache_lock:
+            cached = _memory_cache_get(_decision_lab_cache, key, ttl_seconds)
+            if cached is not None and not force_refresh:
+                return cached
+        if not force_refresh:
+            persistent = load_derived_payload(persistent_key)
+            if persistent is not None:
+                logger.info("decision_lab_derived_cache_hit key=%s source=firestore", persistent_key)
+                with _decision_lab_cache_lock:
+                    _memory_cache_put(_decision_lab_cache, _decision_lab_key_locks, key, persistent, max_items=4)
+                return persistent
+
+        payload_out = _build_decision_lab_payload(payload, force_refresh=force_refresh)
+        save_derived_payload(
+            persistent_key,
+            payload_out,
+            metadata={
+                "namespace": "decision_lab",
+                "source_snapshot_id": _lab_source_cache_key(payload).get("source_snapshot_id"),
+                "option_source": ((payload_out.get("option_market_data") or {}).get("status") or {}).get("source"),
+                "option_last_fetched_at": ((payload_out.get("option_market_data") or {}).get("status") or {}).get(
+                    "last_fetched_at"
+                ),
+            },
+        )
+        with _decision_lab_cache_lock:
+            _memory_cache_put(_decision_lab_cache, _decision_lab_key_locks, key, payload_out, max_items=4)
+        return payload_out
 
 
 def _with_decision_lab(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -792,6 +926,7 @@ def dashboard_json(request: Request) -> JSONResponse:
 def decision_lab_json(request: Request) -> JSONResponse:
     if not _is_authenticated(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    started_at = perf_counter()
     include_unrealized = _truthy_query(request.query_params.get("include_unrealized"), True)
     target_band = _monthly_target_band_from_request(request)
     try:
@@ -800,7 +935,9 @@ def decision_lab_json(request: Request) -> JSONResponse:
             target_return=target_band["target_return"],
             target_floor=target_band["target_floor"],
         )
-        return JSONResponse(_build_decision_lab_payload(payload, force_refresh=False))
+        response_payload = _get_cached_decision_lab_payload(payload, force_refresh=False)
+        logger.info("web_decision_lab_timing total_ms=%.2f", (perf_counter() - started_at) * 1000)
+        return JSONResponse(response_payload)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
@@ -811,7 +948,8 @@ def assignment_quality_json(request: Request) -> JSONResponse:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     started_at = perf_counter()
     try:
-        payload = _get_cached_assignment_quality_data()
+        source_payload = _get_cached_dashboard_data(include_unrealized=True)
+        payload = _get_cached_assignment_quality_data(source_payload=source_payload)
     except Exception as exc:
         logger.warning("assignment_quality_payload_failed error=%s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -832,7 +970,7 @@ def decision_lab_options_refresh(request: Request) -> JSONResponse:
             target_floor=target_band["target_floor"],
         )
         _clear_dashboard_data_cache()
-        return JSONResponse(_build_decision_lab_payload(payload, force_refresh=True))
+        return JSONResponse(_get_cached_decision_lab_payload(payload, force_refresh=True))
     except Exception as exc:
         logger.warning("decision_lab_option_refresh_failed error=%s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)

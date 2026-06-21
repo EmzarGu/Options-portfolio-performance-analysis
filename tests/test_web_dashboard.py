@@ -203,16 +203,38 @@ def test_web_dashboard_has_assignment_quality_renderer():
 
 def test_assignment_quality_payload_is_lazy_loaded(monkeypatch):
     monkeypatch.setattr(web_dashboard, "_is_authenticated", lambda request: True)
+    monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
     monkeypatch.setattr(
         web_dashboard,
         "_get_cached_assignment_quality_data",
-        lambda: {"summary": {"lots": 2}, "by_ticker": []},
+        lambda **_: {"summary": {"lots": 2}, "by_ticker": []},
     )
 
     response = TestClient(web_dashboard.app).get("/api/assignment-quality")
 
     assert response.status_code == 200
     assert response.json()["summary"]["lots"] == 2
+
+
+def test_assignment_quality_payload_reuses_persisted_derived_cache(monkeypatch):
+    web_dashboard._clear_dashboard_data_cache()
+    source_payload = _fake_dashboard_data()
+    source_payload["source_metadata"] = {"source_snapshot_id": "source-1", "pipeline_snapshot_id": "pipe-1"}
+    calls = []
+
+    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: {"summary": {"lots": 3}})
+    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: calls.append("save"))
+    monkeypatch.setattr(
+        web_dashboard,
+        "build_web_assignment_quality_data",
+        lambda **_: (_ for _ in ()).throw(AssertionError("should reuse persisted payload")),
+    )
+
+    data = web_dashboard._get_cached_assignment_quality_data(source_payload=source_payload)
+
+    assert data["summary"]["lots"] == 3
+    assert calls == []
+    web_dashboard._clear_dashboard_data_cache()
 
 
 def test_web_dashboard_does_not_add_extra_benchmark_baseline_label():
@@ -383,6 +405,8 @@ def test_decision_lab_renders_shell_when_auth_disabled(monkeypatch):
 
 def test_decision_lab_api_builds_real_data_model(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: None)
+    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         web_dashboard,
         "_monthly_target_band_from_request",
@@ -430,8 +454,31 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
     assert data["active_cycle"]["portfolio_put_exposure"] == 0
 
 
+def test_decision_lab_payload_reuses_persisted_derived_cache(monkeypatch):
+    web_dashboard._clear_dashboard_data_cache()
+    source_payload = _fake_dashboard_data()
+    source_payload["source_metadata"] = {"source_snapshot_id": "source-2", "pipeline_snapshot_id": "pipe-2"}
+    saved = []
+
+    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: {"summary": {"action_item_count": 7}})
+    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: saved.append(True))
+    monkeypatch.setattr(
+        web_dashboard,
+        "_build_decision_lab_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should reuse persisted payload")),
+    )
+
+    data = web_dashboard._get_cached_decision_lab_payload(source_payload)
+
+    assert data["summary"]["action_item_count"] == 7
+    assert saved == []
+    web_dashboard._clear_dashboard_data_cache()
+
+
 def test_decision_lab_option_refresh_uses_force_loader(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
+    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: None)
+    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         web_dashboard,
         "_monthly_target_band_from_request",
