@@ -341,7 +341,10 @@ def _existing_contracts_for_universe(
 ) -> tuple[list[OptionMarketContract], set[str]]:
     docs = []
     for request in universe.requests:
-        docs.extend(store.load_contracts(request))
+        request_docs = store.load_contracts(request)
+        if not request_docs:
+            request_docs = store.load_latest_contracts_for_chain(request)
+        docs.extend(request_docs)
     contracts = []
     request_ids: set[str] = set()
     seen = set()

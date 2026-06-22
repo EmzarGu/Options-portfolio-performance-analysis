@@ -27,6 +27,9 @@ class OptionMarketStore(Protocol):
     def load_contracts(self, request: OptionChainRequest) -> list[dict[str, Any]]:
         ...
 
+    def load_latest_contracts_for_chain(self, request: OptionChainRequest) -> list[dict[str, Any]]:
+        ...
+
     def load_latest_successful_fetch_run(self, *, universe_key: str, provider: str) -> Optional[dict[str, Any]]:
         ...
 
@@ -98,6 +101,17 @@ class MemoryOptionMarketStore:
             for doc in self.contracts.values()
             if str(doc.get("request_id")) == request.request_id
         ]
+
+    def load_latest_contracts_for_chain(self, request: OptionChainRequest) -> list[dict[str, Any]]:
+        candidates = [
+            doc
+            for doc in self.contracts.values()
+            if str(doc.get("provider") or "").lower() == request.provider.lower()
+            and str(doc.get("ticker") or "").upper() == request.ticker.upper()
+            and str(doc.get("expiry") or "")[:10] == request.expiry.isoformat()
+            and str(doc.get("put_call") or "").upper() == request.put_call.upper()
+        ]
+        return _latest_contract_group(candidates)
 
     def load_latest_successful_fetch_run(self, *, universe_key: str, provider: str) -> Optional[dict[str, Any]]:
         candidates = [
@@ -206,6 +220,22 @@ class LocalJsonOptionMarketStore:
             if str(doc.get("request_id")) == request.request_id:
                 docs.append(doc)
         return docs
+
+    def load_latest_contracts_for_chain(self, request: OptionChainRequest) -> list[dict[str, Any]]:
+        root = self.root_dir / "option_market_contracts"
+        if not root.exists():
+            return []
+        candidates = []
+        for path in sorted(root.glob("*.json")):
+            doc = _read_json(path)
+            if (
+                str(doc.get("provider") or "").lower() == request.provider.lower()
+                and str(doc.get("ticker") or "").upper() == request.ticker.upper()
+                and str(doc.get("expiry") or "")[:10] == request.expiry.isoformat()
+                and str(doc.get("put_call") or "").upper() == request.put_call.upper()
+            ):
+                candidates.append(doc)
+        return _latest_contract_group(candidates)
 
     def load_latest_successful_fetch_run(self, *, universe_key: str, provider: str) -> Optional[dict[str, Any]]:
         root = self.root_dir / "option_market_fetch_runs"
@@ -367,6 +397,27 @@ class FirestoreOptionMarketStore:
             query = self.client.collection(self.contracts_collection).where("request_id", "==", request.request_id)
         return [snap.to_dict() or {} for snap in query.stream()]
 
+    def load_latest_contracts_for_chain(self, request: OptionChainRequest) -> list[dict[str, Any]]:
+        try:
+            from google.cloud.firestore_v1 import FieldFilter
+
+            query = (
+                self.client.collection(self.contracts_collection)
+                .where(filter=FieldFilter("provider", "==", request.provider.lower()))
+                .where(filter=FieldFilter("ticker", "==", request.ticker.upper()))
+                .where(filter=FieldFilter("expiry", "==", request.expiry.isoformat()))
+                .where(filter=FieldFilter("put_call", "==", request.put_call.upper()))
+            )
+        except Exception:
+            query = (
+                self.client.collection(self.contracts_collection)
+                .where("provider", "==", request.provider.lower())
+                .where("ticker", "==", request.ticker.upper())
+                .where("expiry", "==", request.expiry.isoformat())
+                .where("put_call", "==", request.put_call.upper())
+            )
+        return _latest_contract_group([snap.to_dict() or {} for snap in query.stream()])
+
     def load_latest_successful_fetch_run(self, *, universe_key: str, provider: str) -> Optional[dict[str, Any]]:
         provider_key = provider.lower()
         try:
@@ -509,6 +560,26 @@ class FirestoreOptionMarketStore:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _latest_contract_group(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not docs:
+        return []
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for doc in docs:
+        request_id = str(doc.get("request_id") or "")
+        if not request_id:
+            continue
+        groups.setdefault(request_id, []).append(doc)
+    if not groups:
+        return []
+    latest_request_id = max(
+        groups,
+        key=lambda request_id: max(
+            str(doc.get("updated_at") or doc.get("trade_date") or "") for doc in groups[request_id]
+        ),
+    )
+    return groups[latest_request_id]
 
 
 def _chunks(items: list[Any], size: int):

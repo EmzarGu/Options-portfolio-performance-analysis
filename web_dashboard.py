@@ -510,6 +510,7 @@ def _decision_lab_cache_key(payload: Dict[str, Any]) -> str:
     return derived_payload_key(
         "decision_lab",
         {
+            "decision_lab_cache_version": 2,
             "source": _lab_source_cache_key(payload),
             "include_unrealized": bool(web.get("include_unrealized")),
             "target_floor": round(float(web.get("target_floor") or _web_monthly_target_floor_default()), 8),

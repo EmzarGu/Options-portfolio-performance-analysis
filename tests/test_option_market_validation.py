@@ -240,6 +240,48 @@ def test_decision_option_data_reuses_latest_successful_fetch_without_provider_ca
     assert data.contracts[0].mark == pytest.approx(1.25)
 
 
+def test_decision_option_data_reuses_latest_chain_when_request_date_changes_without_provider_call():
+    store = MemoryOptionMarketStore()
+    candidate_groups = [
+        {
+            "ticker": "AAA",
+            "category": "Recover with covered call",
+            "contract_requests": [{"expiry": "2026-06-18", "put_call": "CALL"}],
+            "candidates": [],
+        }
+    ]
+    old_universe = build_decision_option_universe(candidate_groups, as_of=date(2026, 5, 25))
+    old_request = old_universe.requests[0]
+    store.save_chain_snapshot(
+        OptionMarketFetchResult(
+            request=old_request,
+            contracts=[_contract(old_request, put_call="CALL", strike=100, mark=1.25, delta=0.2)],
+            raw_pages=[],
+            fetched_at="2026-05-25T00:00:00+00:00",
+            latency_ms=10,
+            status_code=200,
+        )
+    )
+    new_universe = build_decision_option_universe(candidate_groups, as_of=date(2026, 5, 26))
+
+    class Provider:
+        configured = True
+
+        def fetch_chain(self, _request):
+            raise AssertionError("stored latest chain should be reused until manual refresh")
+
+    data = load_or_fetch_decision_option_data(
+        store=store,
+        universe=new_universe,
+        provider_client=Provider(),
+    )
+
+    assert data.status["source"] == "stored_partial"
+    assert data.status["contract_count"] == 1
+    assert data.contracts[0].request_id == old_request.request_id
+    assert data.contracts[0].mark == pytest.approx(1.25)
+
+
 def test_decision_option_refresh_fetches_even_when_contracts_are_already_stored():
     store = MemoryOptionMarketStore()
     candidate_groups = [
