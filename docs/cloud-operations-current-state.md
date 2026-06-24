@@ -9,8 +9,12 @@ Last reviewed: 2026-05-12.
 - Mobile API service: `options-roi-mobile-api`
 - Web dashboard service: `options-roi-web`
 - IBKR import job: `ibkr-flex-import`
-- IBKR import scheduler: `ibkr-flex-import-daily`, `45 19 * * *`,
-  `Europe/Zurich`
+- IBKR import schedulers:
+  - `ibkr-flex-import-morning`, `15 7 * * *`, `Europe/Zurich`
+  - `ibkr-flex-import-daily`, `45 19 * * *`, `Europe/Zurich`
+  The morning run makes the prior business-day Flex statement available before
+  normal app use when IBKR has published it. The evening run remains a catch-up
+  for late statement publication and recent-row corrections.
 - IBKR import job retries: `0`, so IBKR token pacing errors are not amplified
   by immediate Cloud Run retries.
 - Manual IBKR import trigger:
