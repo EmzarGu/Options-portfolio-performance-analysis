@@ -93,32 +93,18 @@ def test_capped_holding_and_call_create_one_ticker_situation():
     assert candidate["current_state"]["cost_basis"] == pytest.approx(42.5)
 
 
-def test_active_cycle_promotes_next_open_expiry_and_splits_exposure():
+def test_active_cycle_uses_canonical_monthly_projection():
     payload = _base_payload()
-    payload["positions"]["open_option_shorts"] = [
-        {
-            "ticker": "BEN",
-            "option_type": "Put",
-            "strike": 29.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 31.0,
-            "accounting_open_premium": 230.0,
-            "strategy_premium_collected": 230.0,
-        },
-        {
-            "ticker": "ATI",
-            "option_type": "Put",
-            "strike": 145.0,
-            "expiration": "2026-07-17",
-            "days_to_expiration": 53,
-            "quantity": -1,
-            "current_price": 140.0,
-            "accounting_open_premium": 286.0,
-            "strategy_premium_collected": 286.0,
-        },
-    ]
+    canonical = {
+        "cycle": "2026-06",
+        "cycle_put_exposure": 2900.0,
+        "portfolio_put_exposure": 17400.0,
+        "portfolio_itm_put_exposure": 14500.0,
+        "projected_cycle_pnl": 300.0,
+        "target_return": 0.02,
+        "target_floor": 0.01,
+    }
+    payload["monthly"]["active_cycle"] = canonical
 
     data = build_decision_lab_data(payload)
 
@@ -126,47 +112,31 @@ def test_active_cycle_promotes_next_open_expiry_and_splits_exposure():
     assert data["active_cycle"]["cycle_put_exposure"] == 2900.0
     assert data["active_cycle"]["portfolio_put_exposure"] == 17400.0
     assert data["active_cycle"]["portfolio_itm_put_exposure"] == 14500.0
+    assert data["active_cycle"]["projected_cycle_pnl"] == pytest.approx(300.0)
 
 
-def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
+def test_active_cycle_can_use_dashboard_canonical_projection():
     payload = _base_payload()
-    payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
-    payload["positions"]["open_option_shorts"] = [
-        {
-            "ticker": "CROX",
-            "option_type": "Call",
-            "strike": 105.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 110.0,
-            "accounting_open_premium": 100.0,
-            "strategy_premium_collected": 100.0,
-        },
-        {
-            "ticker": "BEN",
-            "option_type": "Put",
-            "strike": 29.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 31.0,
-            "accounting_open_premium": 200.0,
-            "strategy_premium_collected": 200.0,
-        },
-    ]
-    payload["monthly"]["future_months"] = [
-        {
-            "month": "2026-06-30",
-            "projected_month_pnl": 300.0,
-            "open_expiring_incremental_premium": 300.0,
-        }
-    ]
+    canonical = {
+        "cycle": "2026-06",
+        "projected_cycle_pnl": 300.0,
+        "open_premium_collected": 300.0,
+        "itm_put_unrealized_loss": 0.0,
+        "covered_call_upside_foregone": -500.0,
+        "target_base": 300000.0,
+        "target_pnl": 6000.0,
+        "projected_return_roac": 0.001,
+        "cycle_put_exposure": 2900.0,
+        "open_ticker_count": 2,
+        "target_return": 0.02,
+        "target_floor": 0.01,
+    }
+    payload["dashboard"]["monthly_target"] = {"cycle_projection": canonical}
 
     data = build_decision_lab_data(payload)
     cycle = data["active_cycle"]
 
-    assert cycle["projected_pnl"] == pytest.approx(300.0)
+    assert cycle["projected_cycle_pnl"] == pytest.approx(300.0)
     assert "open_option_net" not in cycle
     assert cycle["open_premium_collected"] == pytest.approx(300.0)
     assert cycle["itm_put_unrealized_loss"] == pytest.approx(0.0)
@@ -178,10 +148,8 @@ def test_active_cycle_uses_dashboard_month_target_basis_not_put_exposure():
     assert cycle["open_ticker_count"] == 2
 
 
-def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row():
+def test_active_cycle_does_not_recalculate_when_canonical_projection_is_missing():
     payload = _base_payload()
-    payload["dashboard"]["request"] = {"as_of": "2026-06-01"}
-    payload["dashboard"]["monthly_target"] = {"target_return": 0.015}
     payload["positions"]["open_option_shorts"] = [
         {
             "ticker": "BEN",
@@ -195,93 +163,47 @@ def test_active_cycle_uses_latest_monthly_capital_when_current_cycle_has_no_row(
             "strategy_premium_collected": 200.0,
         },
     ]
-    payload["monthly"]["months"] = [
-        {"month": "2026-04-30", "avg_capital": 250000.0},
-        {"month": "2026-05-31", "avg_capital": 300000.0},
-    ]
-
     cycle = build_decision_lab_data(payload)["active_cycle"]
 
-    assert cycle["cycle"] == "2026-06"
-    assert cycle["target_base"] == pytest.approx(300000.0)
-    assert cycle["target_pnl"] == pytest.approx(4500.0)
-    assert cycle["projected_return_roac"] == pytest.approx(200.0 / 300000.0)
+    assert cycle == {}
 
 
-def test_active_cycle_excludes_broad_stock_unrealized_from_projected_pnl():
+def test_active_cycle_preserves_canonical_stock_context_without_recalculation():
     payload = _base_payload()
-    payload["dashboard"]["snapshot"] = {"current_stock_unrealized_pnl": 150.0}
-    payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
-    payload["positions"]["open_option_shorts"] = [
-        {
-            "ticker": "BEN",
-            "option_type": "Put",
-            "strike": 29.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 31.0,
-            "accounting_open_premium": 200.0,
-            "strategy_premium_collected": 200.0,
-        },
-    ]
+    payload["monthly"]["active_cycle"] = {
+        "cycle": "2026-06",
+        "open_premium_collected": 200.0,
+        "stock_unrealized_pnl": 150.0,
+        "projected_cycle_pnl": 200.0,
+        "target_return": 0.02,
+        "target_floor": 0.01,
+    }
 
     cycle = build_decision_lab_data(payload)["active_cycle"]
 
     assert cycle["open_premium_collected"] == pytest.approx(200.0)
     assert cycle["stock_unrealized_pnl"] == pytest.approx(150.0)
-    assert cycle["projected_pnl"] == pytest.approx(200.0)
+    assert cycle["projected_cycle_pnl"] == pytest.approx(200.0)
 
 
-def test_active_cycle_adds_only_itm_option_assignment_components_to_projected_pnl():
+def test_active_cycle_preserves_canonical_itm_components():
     payload = _base_payload()
-    payload["dashboard"]["monthly_target"] = {"target_return": 0.02, "target_pnl": 6000.0}
-    payload["positions"]["inventory"] = [
-        {"ticker": "CALL", "shares": 100, "cost_per_share": 45.0},
-        {"ticker": "OTMC", "shares": 100, "cost_per_share": 30.0},
-    ]
-    payload["positions"]["open_option_shorts"] = [
-        {
-            "ticker": "PUT",
-            "option_type": "Put",
-            "strike": 100.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 80.0,
-            "accounting_open_premium": 200.0,
-            "strategy_premium_collected": 200.0,
-        },
-        {
-            "ticker": "CALL",
-            "option_type": "Call",
-            "strike": 50.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 60.0,
-            "accounting_open_premium": 100.0,
-            "strategy_premium_collected": 100.0,
-        },
-        {
-            "ticker": "OTMC",
-            "option_type": "Call",
-            "strike": 70.0,
-            "expiration": "2026-06-18",
-            "days_to_expiration": 24,
-            "quantity": -1,
-            "current_price": 60.0,
-            "accounting_open_premium": 50.0,
-            "strategy_premium_collected": 50.0,
-        },
-    ]
+    payload["monthly"]["active_cycle"] = {
+        "cycle": "2026-06",
+        "open_premium_collected": 350.0,
+        "itm_put_unrealized_loss": -2000.0,
+        "itm_call_stock_pnl": 500.0,
+        "projected_cycle_pnl": -1150.0,
+        "target_return": 0.02,
+        "target_floor": 0.01,
+    }
 
     cycle = build_decision_lab_data(payload)["active_cycle"]
 
     assert cycle["open_premium_collected"] == pytest.approx(350.0)
     assert cycle["itm_put_unrealized_loss"] == pytest.approx(-2000.0)
     assert cycle["itm_call_stock_pnl"] == pytest.approx(500.0)
-    assert cycle["projected_pnl"] == pytest.approx(-1150.0)
+    assert cycle["projected_cycle_pnl"] == pytest.approx(-1150.0)
 
 
 def test_missing_option_data_does_not_emit_provider_candidates():

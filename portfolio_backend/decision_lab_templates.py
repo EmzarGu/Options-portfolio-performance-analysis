@@ -97,7 +97,7 @@ function cycleBlock(data){
     ["Open premium collected", c.open_premium_collected],
     ["ITM call stock P&L", c.itm_call_stock_pnl],
     ["ITM put assignment P&L", c.itm_put_unrealized_loss],
-    ["Projected cycle P&L", c.projected_pnl],
+    ["Projected cycle P&L", c.projected_cycle_pnl],
     ["Target P&L", c.target_pnl],
     ["Remaining", c.remaining_to_target],
   ];

@@ -221,7 +221,8 @@ def test_ibkr_import_health_collapses_duplicate_non_trailing_failures():
     assert health["issues"][0]["finished_at"] == "2026-06-19T05:50:59Z"
 
 
-def test_ibkr_import_health_suppresses_failed_retry_when_range_already_imported():
+def test_ibkr_import_health_suppresses_failed_retry_when_range_already_imported(monkeypatch):
+    monkeypatch.setenv("IBKR_IMPORT_STALE_DAYS", "0")
     client = _FakeFirestoreClient(
         [
             _FakeDoc(

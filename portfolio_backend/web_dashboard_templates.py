@@ -137,8 +137,8 @@ const appState = {
   active: "dashboard",
   range: "YTD",
   includeUnrealized: data.web?.include_unrealized !== false,
-  targetReturn: Number(data.web?.target_return ?? data.monthly?.target_return ?? 0.015),
-  targetFloor: Number(data.web?.target_floor ?? data.monthly?.target_floor ?? 0.01),
+  targetReturn: data.web?.target_return ?? data.monthly?.target_return ?? null,
+  targetFloor: data.web?.target_floor ?? data.monthly?.target_floor ?? null,
   openRisk: "all",
   openType: "all",
   openSearch: "",
@@ -217,6 +217,7 @@ const cls = (v) => numeric(v) === null ? "" : Number(v) < 0 ? "neg" : Number(v) 
 const moneynessCls = (v) => numeric(v) === null ? "" : Number(v) > 0 ? "neg" : Number(v) < 0 ? "pos" : "";
 const bandTone = (value, floor=targetFloor(), target=targetReturn()) => {
   if (numeric(value) === null) return "";
+  if (numeric(floor) === null || numeric(target) === null) return cls(value);
   const v = Number(value);
   if (v < 0) return "neg";
   if (v < Number(floor || 0)) return "warn-text";
@@ -288,8 +289,8 @@ async function loadDashboardData(){
     data = await response.json();
     dashboardLoaded = true;
     appState.includeUnrealized = data.web?.include_unrealized !== false;
-    appState.targetReturn = Number(data.web?.target_return ?? appState.targetReturn ?? 0.015);
-    appState.targetFloor = Number(data.web?.target_floor ?? appState.targetFloor ?? 0.01);
+    appState.targetReturn = data.web?.target_return ?? appState.targetReturn ?? null;
+    appState.targetFloor = data.web?.target_floor ?? appState.targetFloor ?? null;
     appState.decisionLab = null;
     appState.decisionLabError = "";
     appState.decisionLabLoading = false;
@@ -525,41 +526,27 @@ function initCharts(){
   });
   pendingCharts = [];
 }
-function targetReturn(){ return numeric(appState.targetReturn) ?? numeric(data.monthly?.target_return) ?? 0.015; }
-function targetFloor(){ return Math.min(targetReturn(), numeric(appState.targetFloor) ?? 0.01); }
-function targetCapital(row){
-  const rowTarget = numeric(row.target_return ?? data.monthly?.target_return);
-  const targetPnl = numeric(row.target_pnl);
-  if (numeric(row.avg_capital) !== null) return numeric(row.avg_capital);
-  if (numeric(row.average_capital) !== null) return numeric(row.average_capital);
-  if (rowTarget && targetPnl !== null) return targetPnl / rowTarget;
-  return null;
+function targetReturn(){ return numeric(appState.targetReturn) ?? numeric(data.monthly?.target_return); }
+function targetFloor(){
+  const target = targetReturn();
+  const floor = numeric(appState.targetFloor) ?? numeric(data.monthly?.target_floor);
+  if (floor === null) return null;
+  return target === null ? floor : Math.min(target, floor);
 }
 function displayMonthPnl(row){
-  const explicit = numeric(row.projected_month_pnl);
-  if (explicit !== null) return explicit;
-  return numeric(row.realized_month_pnl) ?? numeric(row.total_realized_pnl);
+  return numeric(row.projected_month_pnl);
 }
 function displayMonthReturn(row){
-  const capital = targetCapital(row);
-  const pnl = displayMonthPnl(row);
-  if (capital && pnl !== null) return pnl / capital;
-  return numeric(row.projected_return_roac) ?? numeric(row.return_roac);
+  return numeric(row.projected_return_roac);
 }
 function displayTargetPnl(row){
-  const capital = targetCapital(row);
-  return capital === null ? numeric(row.target_pnl) : capital * targetReturn();
+  return numeric(row.target_pnl);
 }
 function displayRemainingToTarget(row){
-  const targetPnl = displayTargetPnl(row);
-  const pnl = displayMonthPnl(row);
-  if (targetPnl === null || pnl === null) return numeric(row.projected_remaining_pnl);
-  return Math.max(targetPnl - pnl, 0);
+  return numeric(row.projected_remaining_pnl);
 }
 function displayTargetStatus(row){
-  const ret = displayMonthReturn(row);
-  if (ret === null) return row.monthly_target_status || "n/a";
-  return ret >= targetReturn() ? "Beat Target" : "Below Target";
+  return row.monthly_target_status || "n/a";
 }
 function lineChart(title, rows, xKey, yKey, seriesKey, yFormat=fmtDec){
   let clean = (rows || []).filter(r => numeric(get(r,yKey)) !== null && get(r,xKey));
@@ -715,13 +702,6 @@ function monthlyReturnTargetChart(title, rows){
     plugins: [targetBandPlugin]
   }, footer);
 }
-function growthFromReturns(rows){
-  let growth=1;
-  return rangeFiltered(rows || [],"month").sort((a,b)=>String(a.month).localeCompare(String(b.month))).map(row => {
-    growth *= (1 + (numeric(row.return) || 0));
-    return {month: row.month, Series: "Strategy", Growth: growth};
-  });
-}
 function openShortRows(){
   const rows = data.positions.open_option_shorts || data.open_shorts.items || [];
   const q = appState.openSearch.trim().toUpperCase();
@@ -740,19 +720,6 @@ function openShortRows(){
     return riskOk && typeOk && (!q || text.includes(q)) && m !== null;
   });
 }
-function openShortProjectedPnl(row){
-  if (!row || row.missing_price) return null;
-  const strike = numeric(row.strike);
-  const current = numeric(row.current_price);
-  const qty = Math.abs(numeric(row.quantity) || 0);
-  const premium = numeric(row.accounting_open_premium) || 0;
-  if (strike === null || current === null || !qty) return premium;
-  const type = String(row.option_type || "").toLowerCase();
-  const intrinsic = type.includes("call")
-    ? Math.max(current - strike, 0) * 100 * qty
-    : Math.max(strike - current, 0) * 100 * qty;
-  return premium - intrinsic;
-}
 function openShortColumns(){
   return [
     {key:"ticker",label:"Ticker",format:(v,r)=>`${dot(r)}<strong>${safe(v)}</strong>`},
@@ -765,7 +732,7 @@ function openShortColumns(){
     {key:"quantity",label:"Qty",num:true},
     {key:"accounting_open_premium",label:"Open premium",value:r=>numeric(r.accounting_open_premium) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
     {key:"strategy_premium_collected",label:"Strategy premium",value:r=>numeric(r.strategy_premium_collected) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
-    {key:"projected_pnl",label:"Projected P&L",value:openShortProjectedPnl,format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"projected_pnl",label:"Projected P&L",format:v=>fmtMoney(v,2),num:true,className:cls},
     {key:"covered_status",label:"Backing",format:labelize}
   ];
 }
@@ -797,78 +764,24 @@ function monthlyRows(){
   return (data.monthly.months || []).map(row => ({...(cycles.get(fmtDate(row.month)) || {}), ...row}));
 }
 function monthlyChartRows(){
-  const rows = monthlyRows();
-  const activeCycle = decisionActiveCycle();
-  const activeMonth = activeCycle.cycle ? `${activeCycle.cycle}-01` : null;
-  const activeRow = activeCycleMonthlyRow(activeCycle);
-  let foundActive = false;
-  const merged = rows.map(row => {
-    if (activeMonth && activeRow && fmtDate(row.month).slice(0,7) === fmtDate(activeMonth).slice(0,7)) {
-      foundActive = true;
-      return {...row, ...activeRow};
-    }
-    return row;
-  });
-  if (activeRow && !foundActive) merged.push(activeRow);
-  return merged.filter(Boolean).sort((a,b)=>String(a.month).localeCompare(String(b.month)));
-}
-function activeCycleMonthlyRow(c){
-  if (!c || !c.cycle) return null;
-  const projected = numeric(c.projected_pnl ?? c.projected_cycle_pnl ?? c.projected_month_pnl);
-  const projectedReturn = numeric(c.projected_return_roac);
-  return {
-    month: `${c.cycle}-01`,
-    realized_options_pnl: c.realized_cycle_pnl,
-    realized_stock_pnl: c.itm_call_stock_pnl,
-    dividends: 0,
-    total_realized_pnl: projected,
-    avg_capital: c.target_base,
-    peak_capital: c.target_base,
-    return_roac: projectedReturn,
-    return_ropc: projectedReturn,
-    projected_month_pnl: projected,
-    projected_return_roac: projectedReturn,
-    target_pnl: c.target_pnl,
-    projected_remaining_pnl: c.remaining_to_target,
-    monthly_target_status: c.monthly_target_status || (projectedReturn >= (c.target_return ?? targetReturn()) ? "Beat Target" : "Below Target"),
-    is_active_cycle_projection: true
-  };
+  return monthlyRows();
 }
 function futureCycleRows(){
-  const active = decisionActiveCycle();
-  const activeMonth = active.cycle ? fmtDate(`${active.cycle}-01`).slice(0,7) : null;
   return (data.monthly.future_months || []).map(row => {
-    const month = fmtDate(row.month);
-    if (activeMonth && month.slice(0,7) === activeMonth) {
-      return {
-        month: row.month,
-        open_ticker_count: active.open_ticker_count ?? row.open_ticker_count ?? row.open_option_count,
-        open_option_count: active.open_contract_count ?? row.open_option_count,
-        realized_cycle_pnl: active.realized_cycle_pnl,
-        open_premium_collected: active.open_premium_collected,
-        stock_unrealized_pnl: active.stock_unrealized_pnl,
-        itm_call_stock_pnl: active.itm_call_stock_pnl,
-        itm_put_unrealized_loss: active.itm_put_unrealized_loss,
-        projected_cycle_pnl: active.projected_pnl ?? active.projected_cycle_pnl,
-        target_pnl: active.target_pnl,
-        remaining_to_target: active.remaining_to_target,
-        projected_return_roac: active.projected_return_roac,
-      };
-    }
     const cycle = row.cycle_projection || {};
     return {
       month: row.month,
-      open_ticker_count: row.open_ticker_count ?? row.open_option_count,
+      open_ticker_count: row.open_ticker_count,
       open_option_count: row.open_option_count,
-      realized_cycle_pnl: cycle.realized_cycle_pnl ?? 0,
-      open_premium_collected: cycle.open_premium_collected ?? row.open_expiring_incremental_premium ?? row.open_expiring_option_premium,
-      stock_unrealized_pnl: cycle.stock_unrealized_pnl ?? null,
-      itm_call_stock_pnl: cycle.itm_call_stock_pnl ?? null,
-      itm_put_unrealized_loss: cycle.itm_put_unrealized_loss ?? null,
-      projected_cycle_pnl: cycle.projected_cycle_pnl ?? row.projected_month_pnl,
-      target_pnl: cycle.target_pnl ?? row.target_pnl ?? null,
-      remaining_to_target: cycle.remaining_to_target ?? row.projected_remaining_pnl ?? null,
-      projected_return_roac: cycle.projected_return_roac ?? row.projected_return_roac ?? null,
+      realized_cycle_pnl: cycle.realized_cycle_pnl,
+      open_premium_collected: cycle.open_premium_collected,
+      stock_unrealized_pnl: cycle.stock_unrealized_pnl,
+      itm_call_stock_pnl: cycle.itm_call_stock_pnl,
+      itm_put_unrealized_loss: cycle.itm_put_unrealized_loss,
+      projected_cycle_pnl: cycle.projected_cycle_pnl,
+      target_pnl: cycle.target_pnl,
+      remaining_to_target: cycle.remaining_to_target,
+      projected_return_roac: cycle.projected_return_roac,
     };
   });
 }
@@ -889,7 +802,7 @@ function decisionData(){
   return appState.decisionLab || data.decision_lab || {};
 }
 function decisionActiveCycle(){
-  return (data.monthly || {}).active_cycle || ((data.dashboard || {}).monthly_target || {}).cycle_projection || decisionData().active_cycle || {};
+  return (data.monthly || {}).active_cycle || ((data.dashboard || {}).monthly_target || {}).cycle_projection || {};
 }
 function activeCycleWaterfall(c){
   const parts = [
@@ -897,7 +810,7 @@ function activeCycleWaterfall(c){
     ["Open premium collected", c.open_premium_collected],
     ["ITM call stock P&L", c.itm_call_stock_pnl],
     ["ITM put assignment P&L", c.itm_put_unrealized_loss],
-    ["Projected cycle P&L", c.projected_pnl ?? c.projected_cycle_pnl],
+    ["Projected cycle P&L", c.projected_cycle_pnl],
     ["Target P&L", c.target_pnl],
     ["Remaining", c.remaining_to_target],
   ];
@@ -1159,7 +1072,7 @@ function renderMonthly(){
       {key:"peak_capital",label:"Peak capital",format:fmtMoney,num:true},
       {key:"return_roac",label:"RoAC",format:fmtPct,num:true,className:cls},
       {key:"return_ropc",label:"RoPC",format:fmtPct,num:true,className:cls},
-      {key:"open_expiring_incremental_premium",label:"Open premium",format:fmtMoney,num:true,className:cls},
+      {key:"open_premium_collected",label:"Open premium",format:fmtMoney,num:true,className:cls},
       {key:"projected_month_pnl",label:"Projected P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
       {key:"projected_return_roac",label:"Projected RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:v=>bandTone(v, targetFloor(), targetReturn())}
     ], {title:"Monthly table", wide:true})}
@@ -1450,7 +1363,7 @@ function renderAssignmentQuality(){
     <div class="toolbar">
       <label><span class="control-label">Assignment cohort</span><select id="assignmentYear">${years.map(y=>`<option value="${safe(y)}" ${String(y)===String(appState.assignmentYear)?"selected":""}>${safe(y==="all"?"Full period":y)}</option>`).join("")}</select></label>
       <label><span class="control-label">Hold exit horizon</span><select id="assignmentHorizon">${(controls.horizons || ["to_as_of"]).map(h=>`<option value="${safe(h)}" ${String(h)===String(appState.assignmentHorizon)?"selected":""}>${safe(assignmentHorizonLabel(h))}</option>`).join("")}</select></label>
-      ${badge(`Redeployment assumption ${fmtPct(controls.opportunity_monthly_rate ?? 0.015)} monthly, compounded`, "blue")}
+      ${badge(`Redeployment assumption ${fmtPct(controls.opportunity_monthly_rate)} monthly, compounded`, "blue")}
     </div>
     <div class="grid metrics">
       ${card("Actual path P&L", fmtMoney(summary.actual_total_pnl), "Assigned put + post-assignment options + stock P&L", cls(summary.actual_total_pnl))}
@@ -1458,7 +1371,7 @@ function renderAssignmentQuality(){
       ${card("Wheel advantage", fmtMoney(summary.delta_actual_minus_hold), "Actual path minus hold counterfactual", assignmentDeltaCls(summary.delta_actual_minus_hold, summary))}
       ${card("Ticker win rate", fmtPct(summary.actual_beat_hold_rate), "Share of selected rows where wheel beat hold")}
     </div>
-    <div class="panel"><p>${safe(modeNote)} The hold counterfactual subtracts estimated redeployment income lost: assigned strike notional compounded at ${fmtPct(controls.opportunity_monthly_rate ?? 0.015)} per month. Strike notional is cumulative context, not peak dollars held at one time.</p></div>
+    <div class="panel"><p>${safe(modeNote)} The hold counterfactual subtracts estimated redeployment income lost: assigned strike notional compounded at ${fmtPct(controls.opportunity_monthly_rate)} per month. Strike notional is cumulative context, not peak dollars held at one time.</p></div>
     <div style="height:12px"></div>
     <div class="grid two-even">${assignmentOutcomeChart(summary)}${assignmentTickerDeltaChart(tickerRows)}</div>
     <div style="height:12px"></div>
@@ -1544,20 +1457,8 @@ function renderTickers(){
 function expectancyByYearRows(){
   return (data.tables.expectancy_by_year || []).filter(r => appState.expectancyYear === "all" || String(r.Year) === appState.expectancyYear);
 }
-function maxDrawdownFromReturns(rows){
-  let growth = 1, peak = 1, maxDd = 0;
-  (rows || []).filter(r => numeric(r.return) !== null).sort((a,b)=>String(a.month).localeCompare(String(b.month))).forEach(r => {
-    growth *= (1 + (numeric(r.return) || 0));
-    peak = Math.max(peak, growth);
-    maxDd = Math.min(maxDd, growth / peak - 1);
-  });
-  return maxDd;
-}
 function benchmarkMetricRows(){
-  const rows = (data.tables.benchmark_metrics || []).map(r => ({...r}));
-  const strategy = rows.find(r => String(r.Series) === "My Strategy");
-  if (strategy) strategy["Max Drawdown"] = maxDrawdownFromReturns(data.charts.monthly_returns || []);
-  return rows;
+  return data.tables.benchmark_metrics || [];
 }
 function expectancyTrendChart(){
   const rows = data.tables.expectancy_by_year || [];

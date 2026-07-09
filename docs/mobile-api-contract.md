@@ -104,6 +104,7 @@ Premium fields in `items` use explicit accounting names:
 - `accounting_open_premium`: open option premium not already recognized in realized P&L. This is the only open-short premium value that may feed projected P&L.
 - `realized_premium_already_booked`: strategy premium already recognized in realized P&L, usually from prior roll accounting.
 - `strategy_premium_collected`: total strategy premium context for the open lot: `accounting_open_premium + realized_premium_already_booked`.
+- `projected_pnl`: backend-computed expiry P&L for the open short contract: accounting open premium less current intrinsic value. Clients do not recompute it.
 
 ```json
 {
@@ -160,8 +161,7 @@ Premium fields in `items` use explicit accounting names:
     "realized_month_pnl": 3210.0,
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
-    "open_expiring_option_premium": 5200.0,
-    "open_expiring_incremental_premium": 5200.0,
+    "open_premium_collected": 5200.0,
     "includes_open_premium": true,
     "projection_basis": "realized_plus_open_premium",
     "projected_month_pnl": 8410.0,
@@ -234,9 +234,9 @@ Fields:
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
-- `monthly_target.open_expiring_option_premium`: alias for `open_expiring_incremental_premium`. It is the additive open premium that is safe to add to realized P&L without double-counting same-expiration roll credits already recognized in realized roll economics.
+- `monthly_target.open_premium_collected`: accounting open premium assigned to the active cycle. It is safe to add to realized P&L without double-counting same-expiration roll credits already recognized in realized roll economics.
 - `monthly_target.projected_month_pnl`: canonical active-cycle projection and must match `monthly_target.cycle_projection.projected_cycle_pnl`.
-- `monthly_target.cycle_projection`: the canonical active-cycle object used by web and mobile. It includes the active cycle label/month, expiries, open ticker/contract counts, realized cycle P&L, additive open premium, ITM put assignment P&L for puts expiring in the cycle, ITM covered-call stock P&L for calls expiring in the cycle, projected cycle P&L, target/remaining values, put exposure, ITM put signal, and covered-call upside signal. Broad held-stock unrealized P&L is reported separately and is not added to cycle target P&L unless the open ITM call would realize that stock sale in the cycle.
+- `monthly_target.cycle_projection`: the canonical active-cycle object used by web and mobile. It includes the active cycle label/month, expiries, open ticker/contract counts, realized cycle P&L, additive open premium, ITM put assignment P&L for puts expiring in the cycle, linked stock unrealized P&L for covered calls expiring in the cycle, projected cycle P&L, target/remaining values, put exposure, ITM put signal, and covered-call upside signal. Linked stock uses current price for OTM calls and is capped at strike for ITM calls.
 - `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
 - `monthly_target.*`: null for return/P&L fields if the required monthly capital denominator or source value is unavailable.
 - `open_option_short_preview`: sorted by moneyness risk, limited to 3-5 rows.
@@ -314,6 +314,7 @@ Response:
       "accounting_open_premium": 605.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 605.0,
+      "projected_pnl": -15.0,
       "covered_status": "covered",
       "risk_label": "In the money",
       "missing_price": false
@@ -336,6 +337,7 @@ Response:
       "accounting_open_premium": 344.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 344.0,
+      "projected_pnl": 344.0,
       "covered_status": "cash_secured",
       "risk_label": "Expires this week",
       "missing_price": false
@@ -346,15 +348,17 @@ Response:
       "id": "month:2026-06-30",
       "month": "2026-06-30",
       "open_option_count": 3,
-      "open_expiring_option_premium": 2600.0,
-      "open_expiring_incremental_premium": 2600.0,
-      "projected_month_pnl": 2600.0,
-      "projected_return_roac": null,
-      "projected_return_ropc": null,
-      "target_pnl": null,
-      "projected_remaining_pnl": null,
-      "includes_open_premium": true,
-      "projection_basis": "realized_plus_open_premium"
+      "cycle_projection": {
+        "month": "2026-06-30",
+        "open_premium_collected": 2600.0,
+        "projected_cycle_pnl": 2600.0,
+        "projected_return_roac": null,
+        "projected_return_ropc": null,
+        "target_pnl": null,
+        "remaining_to_target": null,
+        "includes_open_premium": true,
+        "projection_basis": "realized_plus_open_premium"
+      }
     }
   ]
 }
@@ -668,8 +672,7 @@ Response:
     "realized_month_pnl": 3210.0,
     "realized_options_pnl": 3210.0,
     "realized_stock_pnl": 0.0,
-    "open_expiring_option_premium": 5200.0,
-    "open_expiring_incremental_premium": 5200.0,
+    "open_premium_collected": 5200.0,
     "projected_month_pnl": 8410.0,
     "projected_return_roac": 0.016,
     "projected_return_ropc": 0.0131,
@@ -697,8 +700,7 @@ Response:
       "target_return": 0.015,
       "status": "beat",
       "realized_month_pnl": 11840.0,
-      "open_expiring_option_premium": 0.0,
-      "open_expiring_incremental_premium": 0.0,
+      "open_premium_collected": 0.0,
       "includes_open_premium": false,
       "projection_basis": "realized_only",
       "projected_month_pnl": 11840.0,
@@ -722,8 +724,7 @@ Response:
       "target_return": 0.015,
       "status": "miss",
       "realized_month_pnl": -3920.0,
-      "open_expiring_option_premium": 2500.0,
-      "open_expiring_incremental_premium": 2500.0,
+      "open_premium_collected": 2500.0,
       "includes_open_premium": true,
       "projection_basis": "realized_plus_open_premium",
       "projected_month_pnl": -1420.0,
@@ -742,13 +743,12 @@ Nullability:
 - Month row `id` is mandatory and must follow the stable row ID rules above.
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
-- `open_expiring_incremental_premium` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting. For same-expiration rolls, replacement premium can be netted into the realized roll event, so this incremental field may be zero even while a rolled replacement remains open.
-- `open_expiring_option_premium` is an alias of `open_expiring_incremental_premium`.
+- `open_premium_collected` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting. For same-expiration rolls, replacement premium can be netted into the realized roll event, so this field may be zero even while a rolled replacement remains open.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
 - `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
 - `projected_month_pnl` for the active/current month is the canonical active-cycle projected P&L and matches `active_cycle.projected_cycle_pnl`. Closed historical months remain realized-only. Future rows use their own `cycle_projection.projected_cycle_pnl` when open option exposure exists.
 - `active_cycle` contains the canonical active-cycle projection for the current managed option cycle.
-- `cycle_projection` on `current_month`, active month rows, and `future_months` contains the same projection shape for that expiration month. Current and future open months both use cycle-scoped option lots, linked stock inventory, and prices through the shared accounting projection. Projection P&L is `realized_cycle_pnl + open_premium_collected + itm_put_unrealized_loss + itm_call_stock_pnl`; OTM call stock unrealized P&L stays outside this sum.
+- `cycle_projection` on `current_month`, active month rows, and `future_months` contains the same projection shape for that expiration month. Current and future open months both use cycle-scoped option lots, linked stock inventory, and prices through the shared accounting projection. Projection P&L is `realized_cycle_pnl + open_premium_collected + itm_put_unrealized_loss + stock_unrealized_pnl`. Linked stock uses current price for OTM calls and is capped at strike for ITM calls.
 - `projected_return_roac`, `projected_remaining_pnl`, and `monthly_target_status` are derived from the same projected value shown in `projected_month_pnl`.
 - `target_pnl`, `remaining_pnl`, and `projected_remaining_pnl` are `null` if `avg_capital` is unavailable.
 - `future_months` contains future expiration months for currently open short options. Future rows include `cycle_projection` so web and mobile can display the same open-premium projection, target P&L, remaining P&L, and projected RoAC when the latest monthly capital denominator is available.

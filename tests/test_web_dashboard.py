@@ -41,7 +41,6 @@ def _fake_dashboard_data():
                 "month": "2026-05-31",
                 "target_return": 0.015,
                 "realized_month_pnl": 100.0,
-                "open_expiring_incremental_premium": 25.0,
                 "projected_month_pnl": 125.0,
                 "projected_return_roac": 0.02,
                 "monthly_target_status": "beat",
@@ -54,6 +53,14 @@ def _fake_dashboard_data():
         "tickers": {"items": []},
         "monthly": {
             "target_return": 0.015,
+            "active_cycle": {
+                "cycle": "2026-05",
+                "projected_cycle_pnl": 125.0,
+                "projected_return_roac": 0.02,
+                "target_return": 0.015,
+                "target_floor": 0.01,
+                "portfolio_put_exposure": 0.0,
+            },
             "current_month": {},
             "months": [],
             "future_months": [],
@@ -250,6 +257,16 @@ def test_web_dashboard_uses_standard_monthly_projection_terms():
     assert "Projected cycle P&L" in DASHBOARD_HTML
     assert "ITM call stock P&L" in DASHBOARD_HTML
     assert "ITM put assignment P&L" in DASHBOARD_HTML
+
+
+def test_web_dashboard_does_not_recalculate_backend_financial_values():
+    assert "function targetCapital" not in DASHBOARD_HTML
+    assert "function openShortProjectedPnl" not in DASHBOARD_HTML
+    assert "function activeCycleMonthlyRow" not in DASHBOARD_HTML
+    assert "function maxDrawdownFromReturns" not in DASHBOARD_HTML
+    assert "function growthFromReturns" not in DASHBOARD_HTML
+    assert "row.projected_month_pnl ?? row.total_realized_pnl" not in DASHBOARD_HTML
+    assert "row.projected_return_roac ??" not in DASHBOARD_HTML
 
 
 def test_web_dashboard_monthly_table_uses_projected_roac_band_colors():

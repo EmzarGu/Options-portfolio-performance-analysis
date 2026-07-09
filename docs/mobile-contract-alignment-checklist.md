@@ -10,4 +10,7 @@ Use this as acceptance criteria when implementing either the backend DTO builder
 - Issues use typed shape: `category`, `severity`, `message`, `tickers`, and `action`.
 - Monthly target fields are explicit: `target_return`, `target_floor`, `target_basis`, `return_metric`, `target_pnl`, and `remaining_pnl`.
 - Mobile and web use the same shared monthly target band setting; request query parameters are temporary overrides, not persistent client state.
+- Active and future cycle fields come from `portfolio_backend/cycle_projection.py`; payload assemblers and clients do not recreate the formulas.
+- `open_premium_collected` is the only cycle-level additive premium field. Legacy aliases are rejected by contract tests.
+- Web and iOS display missing canonical financial fields as unavailable rather than substituting a different metric.
 - Partial refresh returns `refresh.status: "partial"` with freshness details; invalid requests use the standard error envelope.

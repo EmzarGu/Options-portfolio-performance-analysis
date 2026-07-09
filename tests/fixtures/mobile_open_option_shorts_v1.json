@@ -88,6 +88,7 @@
       "accounting_open_premium": 200.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 200.0,
+      "projected_pnl": -1800.0,
       "covered_status": "cash_secured",
       "risk_label": "In the money",
       "missing_price": false
@@ -110,6 +111,7 @@
       "accounting_open_premium": 200.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 200.0,
+      "projected_pnl": -1800.0,
       "covered_status": "cash_secured",
       "risk_label": "In the money",
       "missing_price": false
@@ -132,6 +134,7 @@
       "accounting_open_premium": 150.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 150.0,
+      "projected_pnl": -850.0,
       "covered_status": "covered",
       "risk_label": "In the money",
       "missing_price": false
@@ -154,6 +157,7 @@
       "accounting_open_premium": 200.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 200.0,
+      "projected_pnl": 200.0,
       "covered_status": "cash_secured",
       "risk_label": "Clear",
       "missing_price": false
@@ -176,6 +180,7 @@
       "accounting_open_premium": 75.0,
       "realized_premium_already_booked": 0.0,
       "strategy_premium_collected": 75.0,
+      "projected_pnl": null,
       "covered_status": "cash_secured",
       "risk_label": "Missing price",
       "missing_price": true

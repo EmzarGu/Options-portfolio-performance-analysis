@@ -156,7 +156,9 @@ Rules:
 - Option moneyness and banding match the contract.
 - Stable IDs survive sorting/filtering and duplicate lots.
 - Missing prices serialize as null plus `missing_price: true`.
-- Monthly target status and remaining P&L match 1.5% target rules.
+- Monthly target status and remaining P&L match the persisted shared target-band rules.
+- Dashboard, current monthly performance, and active-cycle projection expose the same month, projected P&L, target, remaining amount, and projected RoAC.
+- DTOs contain no duplicate aliases for the same accounting concept.
 - Error envelope covers invalid dates, unknown sheets, no selected sheets, backend unavailable, and price provider unavailable.
 
 ## Route Layer Notes

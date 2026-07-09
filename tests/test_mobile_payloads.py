@@ -849,11 +849,10 @@ def test_mobile_dashboard_composes_launch_payload_contract():
         "realized_month_pnl": 100.0,
         "realized_options_pnl": 100.0,
         "realized_stock_pnl": 0.0,
-        "open_expiring_option_premium": 625.0,
-        "open_expiring_incremental_premium": 625.0,
+        "open_premium_collected": 625.0,
         "projected_month_pnl": -2775.0,
         "projected_return_roac": -0.2775,
-        "projected_return_ropc": -0.2775,
+        "projected_return_ropc": -0.23125,
         "projected_remaining_pnl": 2925.0,
         "monthly_target_status": "below_target",
         "includes_open_premium": True,
@@ -1270,8 +1269,7 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
         "target_return": 0.015,
         "status": "beat",
         "realized_month_pnl": 300.0,
-        "open_expiring_option_premium": 0.0,
-        "open_expiring_incremental_premium": 0.0,
+        "open_premium_collected": 0.0,
         "includes_open_premium": False,
         "projection_basis": "realized_only",
         "projected_month_pnl": 300.0,
@@ -1294,8 +1292,7 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
         "realized_stock_pnl",
         "dividends",
         "total_realized_pnl",
-        "open_expiring_option_premium",
-        "open_expiring_incremental_premium",
+        "open_premium_collected",
     ]} == {
         "id": "month:2026-05-31",
         "month": "2026-05-31",
@@ -1303,10 +1300,11 @@ def test_monthly_performance_rows_emit_mobile_contract_shape():
         "realized_stock_pnl": 0.0,
         "dividends": 0.0,
         "total_realized_pnl": 100.0,
-        "open_expiring_option_premium": 625.0,
-        "open_expiring_incremental_premium": 625.0,
+        "open_premium_collected": 625.0,
     }
     deprecated = {
+        "open_expiring_option_premium",
+        "open_expiring_incremental_premium",
         "open_expiring_roll_adjusted_premium",
         "open_expiring_intrinsic_value_gap",
         "open_expiring_option_unrealized_pnl",
@@ -1333,7 +1331,7 @@ def test_monthly_performance_rows_support_ranges_and_missing_capital():
     assert rows[1]["return_roac"] is None
     assert rows[1]["status"] == "unavailable"
     assert rows[1]["projected_return_roac"] is None
-    assert rows[1]["projected_return_ropc"] == pytest.approx(0.06041666666666667)
+    assert rows[1]["projected_return_ropc"] == pytest.approx(-0.23125)
     assert rows[1]["monthly_target_status"] == "unavailable"
 
     with pytest.raises(ValueError):
@@ -1344,12 +1342,18 @@ def test_future_monthly_performance_rows_emit_open_expiry_months():
     rows = build_future_monthly_performance_rows(_mobile_state_with_future_september(), target_return=0.015)
 
     assert [row["id"] for row in rows] == ["month:2026-06-30", "month:2026-09-30"]
-    assert rows[0]["projected_month_pnl"] == pytest.approx(200.0)
-    assert rows[0]["projected_return_roac"] == pytest.approx(0.02)
-    assert rows[0]["target_pnl"] == pytest.approx(150.0)
     assert rows[0]["cycle_projection"]["projected_cycle_pnl"] == pytest.approx(200.0)
-    assert rows[1]["projected_month_pnl"] == pytest.approx(300.0)
-    assert rows[1]["projected_return_roac"] == pytest.approx(0.03)
+    assert rows[0]["cycle_projection"]["projected_return_roac"] == pytest.approx(0.02)
+    assert rows[0]["cycle_projection"]["target_pnl"] == pytest.approx(150.0)
+    assert rows[1]["cycle_projection"]["projected_cycle_pnl"] == pytest.approx(300.0)
+    assert rows[1]["cycle_projection"]["projected_return_roac"] == pytest.approx(0.03)
+    assert set(rows[0]) == {
+        "id",
+        "month",
+        "open_option_count",
+        "open_ticker_count",
+        "cycle_projection",
+    }
     assert "open_expiring_roll_adjusted_premium" not in rows[1]
     assert "open_expiring_roll_adjusted_premium" not in rows[1]["cycle_projection"]
 
@@ -1369,7 +1373,7 @@ def test_future_call_cycle_caps_stock_pnl_at_itm_call_strike_and_not_put_loss():
     assert projection["covered_call_upside_foregone"] == pytest.approx(-1000.0)
 
 
-def test_future_call_cycle_keeps_otm_stock_unrealized_out_of_projected_pnl():
+def test_future_call_cycle_includes_otm_stock_unrealized_in_projected_pnl():
     rows = build_future_monthly_performance_rows(
         _mobile_state_with_future_call(strike=70.0, current_price=60.0),
         target_return=0.015,
@@ -1378,7 +1382,7 @@ def test_future_call_cycle_keeps_otm_stock_unrealized_out_of_projected_pnl():
     projection = rows[0]["cycle_projection"]
     assert projection["itm_call_stock_pnl"] == pytest.approx(0.0)
     assert projection["stock_unrealized_pnl"] == pytest.approx(1500.0)
-    assert projection["projected_cycle_pnl"] == pytest.approx(0.0)
+    assert projection["projected_cycle_pnl"] == pytest.approx(1500.0)
     assert projection["itm_put_unrealized_loss"] == pytest.approx(0.0)
     assert projection["covered_call_upside_foregone"] == pytest.approx(0.0)
 
@@ -1395,7 +1399,7 @@ def test_future_put_cycle_uses_open_premium_when_put_is_otm():
     assert projection["projected_cycle_pnl"] == pytest.approx(200.0)
 
 
-def test_future_put_cycle_reduces_projected_pnl_by_itm_assignment_gap():
+def test_future_put_cycle_adds_assignment_gap_when_put_is_itm():
     rows = build_future_monthly_performance_rows(
         _mobile_state_with_future_put(strike=100.0, current_price=80.0),
         target_return=0.015,
@@ -1447,13 +1451,12 @@ def test_mobile_monthly_performance_composes_contract_payload():
         "realized_month_pnl": 100.0,
         "realized_options_pnl": 100.0,
         "realized_stock_pnl": 0.0,
-        "open_expiring_option_premium": 625.0,
-        "open_expiring_incremental_premium": 625.0,
+        "open_premium_collected": 625.0,
         "includes_open_premium": True,
         "projection_basis": "realized_plus_open_premium",
         "projected_month_pnl": -2775.0,
         "projected_return_roac": -0.2775,
-        "projected_return_ropc": -0.2775,
+        "projected_return_ropc": -0.23125,
         "target_pnl": 150.0,
         "remaining_pnl": 50.0,
         "projected_remaining_pnl": 2925.0,
@@ -1493,6 +1496,16 @@ def test_dashboard_and_monthly_share_canonical_current_cycle_projection():
     assert monthly["active_cycle"]["projected_cycle_pnl"] == pytest.approx(expected)
     assert monthly["current_month"]["projected_month_pnl"] == pytest.approx(expected)
     assert monthly["months"][-1]["projected_month_pnl"] == pytest.approx(expected)
+    for field in (
+        "month",
+        "open_premium_collected",
+        "projected_return_roac",
+        "projected_return_ropc",
+        "target_pnl",
+        "projected_remaining_pnl",
+        "monthly_target_status",
+    ):
+        assert dashboard["monthly_target"][field] == monthly["current_month"][field]
 
 
 def test_mobile_dashboard_and_monthly_promote_advanced_active_cycle():

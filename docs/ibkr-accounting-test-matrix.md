@@ -18,6 +18,8 @@ test. If a case is not covered, it is not production-ready.
 7. A non-wheel call roll chain stays non-wheel until it is closed.
 8. Identical open contracts display as one position, while execution lots stay
    separate for audit and realized P&L matching.
+9. Active and future cycle projections value linked assigned stock at current
+   price for OTM calls and cap it at strike for ITM calls.
 
 ## Required Case Coverage
 
@@ -34,6 +36,8 @@ test. If a case is not covered, it is not production-ready.
 | CALL-POOL-001 | Several calls share one original assigned put inventory pool | Multiple calls can match one prior put assignment up to available shares. Do not over-allocate beyond available assignment-derived inventory. | `test_ibkr_multiple_calls_can_share_one_prior_assigned_put_inventory_pool`; `test_ibkr_wheel_call_filter_does_not_reuse_same_shares_for_overlapping_calls` | Covered |
 | CALL-PRORATE-001 | Call quantity exceeds assignment-derived shares | Include only covered quantity, prorate premium/fees, exclude uncovered quantity with warning. | `test_ibkr_wheel_options_dataframe_preserves_prorated_call_execution` | Covered |
 | CALL-DISPLAY-001 | IBKR has multiple fills for same open contract | Display one open position by ticker/type/strike/expiration with summed quantity and weighted-average open price. Keep execution lots separate. | `test_build_open_options_frame_groups_same_contract_lots` | Covered |
+| CYCLE-CALL-001 | Assigned stock has a call expiring in the projected cycle | Use current stock P&L while the call is OTM and cap stock P&L at strike while the call is ITM. Apply the same rule to active and future months. | `test_future_call_cycle_includes_otm_stock_unrealized_in_projected_pnl`; `test_future_call_cycle_caps_stock_pnl_at_itm_call_strike_and_not_put_loss` | Covered |
+| CYCLE-PUT-001 | Short put expires in the projected cycle | Add accounting open premium while OTM. If ITM, also add `(current - strike) * contracts * 100` assignment P&L. | `test_future_put_cycle_uses_open_premium_when_put_is_otm`; `test_future_put_cycle_adds_assignment_gap_when_put_is_itm` | Covered |
 | ROLL-CALL-001 | Same-order call roll | If close and replacement share IBKR execution group, net replacement credit into old close event and keep replacement open with zero unrecognized premium. Preserve roll-adjusted open premium separately for display/reconciliation. | `test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_counting_replacement`; `test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized_premium` | Covered |
 | ROLL-CALL-002 | Same-day unrelated call close/open | Do not net unless IBKR execution group proves a roll. | `test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open` | Covered |
 | ROLL-CALL-003 | Non-wheel call roll chain | Exclude close and replacement when the original call was non-wheel. Replacement must not enter wheel P&L later. | `test_ibkr_wheel_call_filter_keeps_excluded_roll_chain_out_of_wheel_pnl` | Covered |
