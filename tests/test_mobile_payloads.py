@@ -1373,7 +1373,7 @@ def test_future_call_cycle_caps_stock_pnl_at_itm_call_strike_and_not_put_loss():
     assert projection["covered_call_upside_foregone"] == pytest.approx(-1000.0)
 
 
-def test_future_call_cycle_includes_otm_stock_unrealized_in_projected_pnl():
+def test_future_call_cycle_keeps_otm_stock_unrealized_out_of_projected_pnl():
     rows = build_future_monthly_performance_rows(
         _mobile_state_with_future_call(strike=70.0, current_price=60.0),
         target_return=0.015,
@@ -1382,9 +1382,21 @@ def test_future_call_cycle_includes_otm_stock_unrealized_in_projected_pnl():
     projection = rows[0]["cycle_projection"]
     assert projection["itm_call_stock_pnl"] == pytest.approx(0.0)
     assert projection["stock_unrealized_pnl"] == pytest.approx(1500.0)
-    assert projection["projected_cycle_pnl"] == pytest.approx(1500.0)
+    assert projection["projected_cycle_pnl"] == pytest.approx(0.0)
     assert projection["itm_put_unrealized_loss"] == pytest.approx(0.0)
     assert projection["covered_call_upside_foregone"] == pytest.approx(0.0)
+
+
+def test_future_call_cycle_does_not_import_old_otm_inventory_loss():
+    rows = build_future_monthly_performance_rows(
+        _mobile_state_with_future_call(strike=70.0, current_price=40.0),
+        target_return=0.015,
+    )
+
+    projection = rows[0]["cycle_projection"]
+    assert projection["stock_unrealized_pnl"] == pytest.approx(-500.0)
+    assert projection["itm_call_stock_pnl"] == pytest.approx(0.0)
+    assert projection["projected_cycle_pnl"] == pytest.approx(0.0)
 
 
 def test_future_put_cycle_uses_open_premium_when_put_is_otm():

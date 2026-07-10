@@ -211,12 +211,13 @@ Recommended defaults:
     quantity is included. Manual stock sells with no assignment-derived
     inventory are treated as unrelated portfolio activity and excluded from the
     wheel dashboard.
-14. Active and future cycle projections use one rule for assigned stock linked
-    to calls expiring in that cycle. If a call is OTM, project the linked stock
-    at current market price. If a call is ITM, cap the linked stock at the call
-    strike. Stock without a call in that expiry month is not assigned to that
-    cycle. The cycle projection is realized cycle P&L plus accounting open
-    premium, ITM put assignment P&L, and this linked assigned-stock P&L.
+14. Active and future cycle projections include assigned-stock P&L only when an
+    ITM covered call expiring in that cycle would dispose of the linked shares.
+    The stock P&L is then capped at the call strike. An OTM call leaves the
+    shares open, so its existing inventory gain or loss remains an exposure and
+    is not assigned to that cycle. The cycle projection is realized cycle P&L
+    plus accounting open premium, ITM put assignment P&L, and ITM covered-call
+    stock P&L.
 
 ## Open Decisions
 

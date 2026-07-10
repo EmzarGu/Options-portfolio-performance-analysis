@@ -67,12 +67,14 @@ projected cycle P&L
   = realized cycle P&L
   + accounting open premium for that expiry month
   + ITM put assignment P&L
-  + linked assigned-stock P&L
+  + ITM covered-call stock P&L
 ```
 
-Linked assigned-stock P&L uses current price for OTM covered calls and is capped
-at strike for ITM covered calls. Stock inventory without an open call in that
-expiry month remains outside the cycle projection.
+Linked assigned-stock unrealized P&L remains available as a separate exposure
+field. It enters projected cycle P&L only when an ITM covered call would dispose
+of the shares in that cycle, in which case stock P&L is capped at the call
+strike. OTM calls do not assign an old inventory gain or loss to the current
+cycle.
 
 ## Client contract invariants
 

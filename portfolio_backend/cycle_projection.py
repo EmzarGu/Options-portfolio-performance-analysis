@@ -318,8 +318,8 @@ def build_cycle_projection(
     projected_cycle_pnl = projection["projected_month_pnl"]
     if projected_cycle_pnl is not None and itm_put_assignment_pnl is not None:
         projected_cycle_pnl += itm_put_assignment_pnl
-    if projected_cycle_pnl is not None and stock_unrealized_pnl is not None:
-        projected_cycle_pnl += stock_unrealized_pnl
+    if projected_cycle_pnl is not None and itm_call_stock_pnl is not None:
+        projected_cycle_pnl += itm_call_stock_pnl
 
     target_base = (
         projection["target_pnl"] / target_return
