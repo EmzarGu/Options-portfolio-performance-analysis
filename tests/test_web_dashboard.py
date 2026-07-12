@@ -198,6 +198,24 @@ def test_web_dashboard_keeps_backend_rebased_benchmark_growth_series():
     assert "trimFiniteGrowthRows" not in DASHBOARD_HTML
 
 
+def test_web_dashboard_uses_one_semantic_visual_system():
+    assert "--band-negative:var(--color-negative)" in DASHBOARD_HTML
+    assert "--band-below:var(--color-attention)" in DASHBOARD_HTML
+    assert "--band-target:var(--color-positive)" in DASHBOARD_HTML
+    assert "--band-above:var(--color-info)" in DASHBOARD_HTML
+    assert 'Number(v) < 0 ? "risk-otm-text"' in DASHBOARD_HTML
+    assert 'projected < 0 ? "bad" : projected < floor ? "warn" : projected <= target ? "good" : "blue"' in DASHBOARD_HTML
+    assert 'c.key === "ticker" ? "sticky-col"' in DASHBOARD_HTML
+    assert ".pill.low,.pill.blue" in DASHBOARD_HTML
+    assert "border-radius:var(--radius-control)" in DASHBOARD_HTML
+
+
+def test_web_dashboard_uses_shared_chart_palette():
+    assert 'backgroundColor: values.map(v => v >= 0 ? theme.positive : theme.negative)' in DASHBOARD_HTML
+    assert 'value < 0 ? theme.negative : value < floor ? theme.attention : value <= target ? theme.positive : theme.info' in DASHBOARD_HTML
+    assert 'backgroundColor:theme.benchmark' in DASHBOARD_HTML
+
+
 def test_web_dashboard_has_assignment_quality_renderer():
     assert '["assignment_quality","Assignment Quality Lab"]' in DASHBOARD_HTML
     assert 'id="assignment_quality"' in DASHBOARD_HTML
