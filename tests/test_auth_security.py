@@ -78,7 +78,7 @@ def test_known_fallback_cookie_never_bypasses_missing_config(path, method):
 
 def configure_web(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "test-password")
-    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "independent-test-session-secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "independent-test-session-secret-long-enough-for-validation")
 
 
 def test_web_requires_dedicated_secret(monkeypatch):
@@ -107,7 +107,7 @@ def test_session_expiry_tampering_future_timestamp_and_secret_rotation(monkeypat
         assert not web_auth._valid_session(token)
     with patch("itsdangerous.timed.time.time", return_value=999999999):
         assert not web_auth._valid_session(token)
-    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "rotated-independent-test-secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "rotated-independent-test-secret-long-enough-for-validation")
     assert not web_auth._valid_session(token)
 
 
@@ -131,3 +131,47 @@ def test_google_session_rechecks_allowlist(monkeypatch):
     assert web_auth._valid_session(token)
     monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "different@example.com")
     assert not web_auth._valid_session(token)
+
+
+@pytest.mark.parametrize("runtime", ["K_SERVICE", "CLOUD_RUN_JOB"])
+def test_cloud_password_route_and_existing_password_sessions_disabled(monkeypatch, runtime):
+    configure_web(monkeypatch)
+    old_token = web_auth._session_token()
+    monkeypatch.setenv(runtime, "production")
+    monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "test-client")
+    monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "allowed@example.com")
+    monkeypatch.setenv("WEB_PASSWORD_FALLBACK_VISIBLE", "1")
+    with TestClient(web_dashboard.app, base_url="https://testserver") as client:
+        response = client.post("/login", data={"password": "test-password"}, follow_redirects=False)
+        assert response.status_code == 403
+        assert "set-cookie" not in response.headers
+        assert 'name="password"' not in client.get("/login").text
+        client.cookies.set(web_auth.COOKIE_NAME, old_token)
+        assert client.get("/api/dashboard").status_code == 401
+        assert web_auth._valid_session(web_auth._session_token(email="allowed@example.com", auth_method="google"))
+
+
+def test_cloud_password_only_configuration_fails_startup(monkeypatch):
+    configure_web(monkeypatch)
+    monkeypatch.setenv("K_SERVICE", "production")
+    with pytest.raises(RuntimeError, match="Google sign-in"):
+        with TestClient(web_dashboard.app):
+            pass
+
+
+@pytest.mark.parametrize("secret", ["", " ", "x" * 31, " " + "x" * 31 + " "])
+def test_short_cookie_secret_rejected(monkeypatch, secret):
+    configure_web(monkeypatch)
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", secret)
+    assert not web_auth._auth_configured()
+    assert TestClient(web_dashboard.app).get("/login").status_code == 503
+    with pytest.raises(RuntimeError, match="32 characters"):
+        web_auth._session_token()
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_api_documentation_not_served_even_with_credentials(monkeypatch, path):
+    configure_web(monkeypatch)
+    monkeypatch.setenv("MOBILE_API_KEY", "test-key")
+    assert TestClient(web_dashboard.app).get(path).status_code == 404
+    assert TestClient(mobile_api.app).get(path, headers={"x-api-key": "test-key"}).status_code == 404

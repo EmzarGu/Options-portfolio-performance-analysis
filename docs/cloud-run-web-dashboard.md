@@ -84,10 +84,12 @@ IBKR_IMPORT_STALE_DAYS=3
 Secrets:
 
 ```text
-WEB_DASHBOARD_PASSWORD=web-dashboard-password:latest
+WEB_DASHBOARD_COOKIE_SECRET=options-roi-web-cookie-secret:1
 ```
 
-The browser dashboard uses a dedicated dashboard password. The mobile API key is not shown to users and is not accepted as the browser login password.
+Production requires Google sign-in and an email allowlist. The cookie signing
+secret must contain at least 32 characters and be generated randomly. Password
+login is disabled on Cloud Run, including previously issued password sessions.
 
 `WEB_DASHBOARD_DATA_CACHE_SECONDS` controls an optional in-process dashboard
 JSON cache. The production default is `0`: Firestore snapshots are the shared
@@ -99,7 +101,8 @@ reintroduce slow full rebuild fallback behavior.
 
 ## Browser Authentication
 
-The dashboard supports Google Sign-In plus a dashboard-password fallback. Sessions are signed with an HTTP-only cookie and default to 90 days.
+Production uses Google Sign-In. Sessions are signed with an HTTP-only, Secure
+cookie and default to 90 days. Password login is available only locally.
 
 Google Sign-In environment variables:
 
@@ -109,8 +112,9 @@ WEB_AUTH_ALLOWED_EMAILS=<allowed-google-email-1>,<allowed-google-email-2>
 WEB_SESSION_DAYS=90
 ```
 
-When Google Sign-In is configured, the password fallback is hidden by default.
-Set `WEB_PASSWORD_FALLBACK_VISIBLE=1` only for emergency troubleshooting.
+`WEB_PASSWORD_FALLBACK_VISIBLE` only controls the local development UI and cannot
+enable production password access. Production recovery requires repairing Google
+configuration or rolling back to a verified revision through Cloud Run IAM.
 
 The login page uses a first-party redirect link to `/auth/google/start`, which
 then redirects to Google OAuth. This avoids embedded-browser iframe issues with

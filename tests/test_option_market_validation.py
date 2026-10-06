@@ -34,6 +34,26 @@ from portfolio_backend.option_market.validation import (
 )
 
 
+def test_malformed_stored_contracts_report_degradation_without_raw_data(monkeypatch, caplog):
+    from types import SimpleNamespace
+    from portfolio_backend.option_market import decision_data as module
+
+    valid = SimpleNamespace(bid=1.0, ask=1.1, delta=0.3)
+    def decode(doc):
+        if doc.get("bad"):
+            raise ValueError("sensitive-stored-record")
+        return valid
+    monkeypatch.setattr(module, "contract_from_dict", decode)
+    store = SimpleNamespace(load_contracts_by_request_ids=lambda _: [{}, {"bad": True}])
+    contracts = module._contracts_from_store(store, {"request_ids": ["test"]})
+    status = module._status_from_run({"status": "succeeded"}, contracts, source="stored")
+    assert contracts == [valid]
+    assert status["invalid_record_count"] == 1
+    assert status["contract_count"] == 1
+    assert "stored_option_contracts_invalid" in caplog.text
+    assert "sensitive-stored-record" not in caplog.text
+
+
 def _trade_row(**overrides):
     attrs = {
         "assetCategory": "OPT",

@@ -55,7 +55,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Options ROI Mobile API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Options ROI Mobile API", version="0.1.0", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.INFO)
 MONTHLY_RANGES = {"3m", "6m", "ytd", "1y", "since_inception"}

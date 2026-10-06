@@ -486,40 +486,59 @@ def fetch_price_history_yf(
     return history, errors, summary
 
 
+class BenchmarkReturns(dict):
+    """Aligned series with safe diagnostics, compatible with existing dict callers."""
+
+    def __init__(self):
+        super().__init__()
+        self.errors: List[str] = []
+
+
 def align_benchmarks_monthly(
     tickers: Dict[str, str],
     idx: pd.DatetimeIndex,
     yf_module,
 ) -> Dict[str, pd.Series]:
     """Return benchmark monthly returns aligned to the strategy month-end index."""
-    if yf_module is None or len(idx) == 0:
-        return {}
+    aligned = BenchmarkReturns()
+    if len(idx) == 0:
+        return aligned
+    if yf_module is None:
+        aligned.errors.append("Benchmark history unavailable: price provider is not installed.")
+        logger.warning("benchmark_price_provider_unavailable")
+        return aligned
     start = idx.min() - pd.DateOffset(months=2)
     end = idx.max() + pd.DateOffset(days=1)
     try:
-        price_history, _errors, _summary = fetch_price_history_yf(
+        price_history, errors, _summary = fetch_price_history_yf(
             set(tickers.values()),
             pd.to_datetime(start).normalize(),
             pd.to_datetime(end).normalize(),
             yf_module,
         )
     except Exception as exc:
-        logger.warning("benchmark_price_history_fetch_failed error=%s", exc)
-        return {}
-    aligned = {}
+        logger.warning("benchmark_price_history_fetch_failed error_type=%s", type(exc).__name__)
+        aligned.errors.append("Benchmark history unavailable: price history could not be loaded.")
+        return aligned
+    if errors:
+        logger.warning("benchmark_price_history_warnings count=%d", len(errors))
+        aligned.errors.append(f"Benchmark history provider reported {len(errors)} warning(s); some series may be incomplete.")
     for name, ticker in tickers.items():
         try:
             px = price_history.get(ticker)
             if px is None:
+                logger.warning("benchmark_price_history_missing ticker=%s", ticker)
                 continue
             px = px.dropna()
             if px.empty:
+                logger.warning("benchmark_price_history_empty ticker=%s", ticker)
                 continue
             monthly_px = px.resample("ME").last()
             monthly_ret = monthly_px.pct_change(fill_method=None)
             monthly_ret = monthly_ret.reindex(idx)
             aligned[name] = monthly_ret
-        except Exception:
+        except Exception as exc:
+            logger.warning("benchmark_alignment_failed ticker=%s error_type=%s", ticker, type(exc).__name__)
             continue
     return aligned
 

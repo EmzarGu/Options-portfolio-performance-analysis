@@ -13,5 +13,6 @@ reports
 docs
 archive
 *.log
+release-rollback.json
 .streamlit_user_prefs.json
 tmp-shop-research.json

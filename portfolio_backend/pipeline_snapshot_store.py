@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import gzip
 import hashlib
+import logging
 import os
 import pickle
 import threading
@@ -12,11 +13,13 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 
+logger = logging.getLogger(__name__)
 
 COLLECTION_PIPELINE_SNAPSHOTS = "pipeline_snapshots"
 COLLECTION_APP_METADATA = "app_metadata"
 CHUNK_SUBCOLLECTION = "chunks"
-SNAPSHOT_SCHEMA_VERSION = 8
+# Rebuild older snapshots so benchmark availability diagnostics reach both UIs.
+SNAPSHOT_SCHEMA_VERSION = 9
 CHUNK_SIZE = 700_000
 
 
@@ -246,7 +249,8 @@ class FirestorePipelineSnapshotStore(PipelineSnapshotStore):
                     ),
                     merge=True,
                 )
-        except Exception:
+        except Exception as exc:
+            logger.warning("pipeline_snapshot_lease_release_failed error_type=%s", type(exc).__name__)
             return
 
 
@@ -275,7 +279,8 @@ def get_default_pipeline_snapshot_store() -> PipelineSnapshotStore:
                 database=os.getenv("FIRESTORE_DATABASE", "(default)"),
             )
             return _DEFAULT_STORE
-        except Exception:
+        except Exception as exc:
+            logger.warning("pipeline_snapshot_store_unavailable fallback=disabled error_type=%s", type(exc).__name__)
             _DEFAULT_STORE = DisabledPipelineSnapshotStore()
             return _DEFAULT_STORE
 

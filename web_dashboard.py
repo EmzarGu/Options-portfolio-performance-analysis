@@ -28,7 +28,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 logger = logging.getLogger("uvicorn.error")
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -97,6 +98,8 @@ def login_page() -> HTMLResponse:
 
 @app.post("/login")
 async def login(request: Request) -> Response:
+    if web_auth._cloud_runtime():
+        return HTMLResponse(web_auth._login_html("Use Google sign-in to open the dashboard."), status_code=403)
     if not web_auth._auth_enabled():
         return RedirectResponse(url="/", status_code=303)
     expected = web_auth._dashboard_password()

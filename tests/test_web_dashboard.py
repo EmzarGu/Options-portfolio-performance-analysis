@@ -13,7 +13,7 @@ from portfolio_backend.web_dashboard_templates import DASHBOARD_HTML
 @pytest.fixture(autouse=True)
 def explicit_test_cookie_secret(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
-    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "test-only-cookie-signing-secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "test-only-cookie-signing-secret-long-enough-for-validation")
 
 
 def _embedded_dashboard_data(html: str):
@@ -623,7 +623,7 @@ def test_web_dashboard_login_rejects_wrong_password(monkeypatch):
 def test_web_dashboard_login_page_renders_google_sign_in_when_configured(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.delenv("WEB_DASHBOARD_PASSWORD", raising=False)
-    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret-long-enough-for-validation")
     monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
     monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
     client = TestClient(web_dashboard.app, base_url="https://testserver")
@@ -670,7 +670,7 @@ def test_web_dashboard_google_start_uses_public_https_redirect(monkeypatch):
 def test_web_dashboard_login_page_requires_google_allowlist(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "1")
     monkeypatch.delenv("WEB_DASHBOARD_PASSWORD", raising=False)
-    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "cookie-secret-long-enough-for-validation")
     monkeypatch.setenv("WEB_GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com")
     monkeypatch.delenv("WEB_AUTH_ALLOWED_EMAILS", raising=False)
     client = TestClient(web_dashboard.app, base_url="https://testserver")

@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import time
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -28,11 +30,12 @@ def run(*args, parse=False):
     return json.loads(result.stdout) if parse else result.stdout.strip()
 
 
-def check_url(url, expected):
+def check_url(url, expected, *, method="GET"):
     """Allow cold-start time while requiring the expected HTTP status."""
     for attempt in range(6):
         try:
-            with urllib.request.urlopen(url, timeout=30) as response:
+            request = urllib.request.Request(url, method=method)
+            with urllib.request.urlopen(request, timeout=30) as response:
                 status = response.status
         except urllib.error.HTTPError as exc:
             status = exc.code
@@ -43,6 +46,17 @@ def check_url(url, expected):
         if attempt < 5:
             time.sleep(5)
     raise RuntimeError(f"Verification failed: {url} expected={expected} actual={status}")
+
+
+def save_rollback_snapshot(services, jobs):
+    """Keep full recovery configuration in a unique ignored, owner-only location."""
+    Path("tmp").mkdir(exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="release-", dir="tmp"))
+    path = directory / "release-rollback.json"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        json.dump({"services": services, "jobs": jobs}, handle, indent=2)
+    return path
 
 
 def main():
@@ -59,7 +73,8 @@ def main():
     image = args.image.rsplit(":", 1)[0] + "@" + digest
     before_services = {name: run("run", "services", "describe", name, *scope, "--format=json", parse=True) for name in SERVICES}
     before_jobs = {name: run("run", "jobs", "describe", name, *scope, "--format=json", parse=True) for name in JOBS}
-    Path("release-rollback.json").write_text(json.dumps({"services": before_services, "jobs": before_jobs}, indent=2))
+    rollback_path = save_rollback_snapshot(before_services, before_jobs)
+    print(f"Rollback configuration saved: {rollback_path}", flush=True)
     promoted, updated_jobs, staged = [], [], {}
     try:
         for name, (module, health, protected) in SERVICES.items():
@@ -83,6 +98,9 @@ def main():
             check_url(candidate["url"] + protected, 401)
             if module == "web_dashboard":
                 check_url(candidate["url"] + "/login", 200)
+                check_url(candidate["url"] + "/login", 403, method="POST")
+            for path in ("/docs", "/redoc", "/openapi.json"):
+                check_url(candidate["url"] + path, 404 if module == "web_dashboard" else 401)
             print(f"Verified staged revision: {name} {revision}", flush=True)
         for name, revision in staged.items():
             # Record before the mutation so partial successes are rolled back too.

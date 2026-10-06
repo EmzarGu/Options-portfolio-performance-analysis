@@ -18,3 +18,4 @@ reviews/
 tmp-shop-research.json
 .pytest_cache/
 .ruff_cache/
+release-rollback.json

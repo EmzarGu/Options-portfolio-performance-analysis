@@ -78,6 +78,20 @@ def test_firestore_pipeline_snapshot_store_round_trips_chunked_state():
     assert loaded.state.text == state.text
 
 
+def test_snapshot_store_initialization_failure_warns_without_credentials(monkeypatch, caplog):
+    from portfolio_backend import pipeline_snapshot_store as module
+
+    monkeypatch.setattr(module, "_DEFAULT_STORE", None)
+    monkeypatch.setenv("PIPELINE_SNAPSHOT_STORE", "firestore")
+    def unavailable(**kwargs):
+        raise RuntimeError("synthetic-sensitive-credential")
+    monkeypatch.setattr(module, "FirestorePipelineSnapshotStore", unavailable)
+    assert isinstance(module.get_default_pipeline_snapshot_store(), module.DisabledPipelineSnapshotStore)
+    assert "pipeline_snapshot_store_unavailable" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "synthetic-sensitive-credential" not in caplog.text
+
+
 def test_firestore_pipeline_snapshot_store_tracks_latest_pointer():
     client = _FakeFirestoreClient()
     store = FirestorePipelineSnapshotStore(client=client)

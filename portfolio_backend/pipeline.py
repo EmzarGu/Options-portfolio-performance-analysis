@@ -301,6 +301,12 @@ def build_base_pipeline(
         benchmark_tickers,
         strat_rets.index if not strat_rets.empty else pd.DatetimeIndex([]),
     )
+    issues.extend(getattr(aligned_bench_returns, "errors", []))
+    if not strat_rets.empty:
+        for name in benchmark_tickers:
+            series = aligned_bench_returns.get(name)
+            if series is None or series.dropna().empty:
+                issues.append(f"Benchmark unavailable: {name}; comparison data is missing.")
     benchmark_metrics_rows = []
     strat_for_metrics = strat_rets.tail(12) if not strat_rets.empty else strat_rets
     strat_full = calculate_performance_metrics(strat_rets)

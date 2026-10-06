@@ -749,6 +749,12 @@ def _coverage_notes(
         notes.append({"severity": "status", "message": "Historical risk proxy: unavailable."})
     option_status = option_market_data.get("status") or {}
     if option_status:
+        invalid_count = int(option_status.get("invalid_record_count") or 0)
+        if invalid_count:
+            notes.append({
+                "severity": "warning",
+                "message": f"Option data is incomplete: {invalid_count} stored contract record(s) could not be read and were excluded.",
+            })
         source = option_status.get("source") or "none"
         provider = option_status.get("provider") or "n/a"
         contract_count = option_status.get("contract_count") or 0

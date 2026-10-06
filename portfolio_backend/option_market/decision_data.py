@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 import os
+import logging
 from time import monotonic
 from typing import Any, Callable, Optional, Protocol
 
@@ -18,6 +19,16 @@ from portfolio_backend.option_market.models import (
     stable_hash,
 )
 from portfolio_backend.option_market.store import OptionMarketStore
+
+logger = logging.getLogger(__name__)
+
+
+class StoredContracts(list):
+    """Decoded contracts with a count of discarded malformed cache records."""
+
+    def __init__(self):
+        super().__init__()
+        self.invalid_record_count = 0
 
 
 @dataclass(frozen=True)
@@ -175,6 +186,7 @@ def load_or_fetch_decision_option_data(
                 "provider": universe.provider,
                 "source": "none",
                 "status": "not_fetched",
+                "invalid_record_count": getattr(stored_contracts, "invalid_record_count", 0),
                 "message": "Option candidates are unavailable. Use Fetch option data to request an update; portfolio analysis remains available.",
                 "contract_count": 0,
                 "request_count": len(universe.requests),
@@ -361,12 +373,15 @@ def _contracts_from_store(store: OptionMarketStore, run_doc: Optional[dict[str, 
     if not run_doc:
         return []
     docs = store.load_contracts_by_request_ids([str(item) for item in run_doc.get("request_ids", []) if item])
-    contracts = []
+    contracts = StoredContracts()
     for doc in docs:
         try:
             contracts.append(contract_from_dict(doc))
         except Exception:
+            contracts.invalid_record_count += 1
             continue
+    if contracts.invalid_record_count:
+        logger.warning("stored_option_contracts_invalid source=run count=%d", contracts.invalid_record_count)
     return contracts
 
 
@@ -380,7 +395,7 @@ def _existing_contracts_for_universe(
         if not request_docs:
             request_docs = store.load_latest_contracts_for_chain(request)
         docs.extend(request_docs)
-    contracts = []
+    contracts = StoredContracts()
     request_ids: set[str] = set()
     seen = set()
     for doc in docs:
@@ -398,6 +413,7 @@ def _existing_contracts_for_universe(
         try:
             contract = contract_from_dict(doc)
         except Exception:
+            contracts.invalid_record_count += 1
             continue
         if doc.get("updated_at"):
             raw = dict(contract.raw or {})
@@ -406,6 +422,8 @@ def _existing_contracts_for_universe(
         contracts.append(contract)
         if contract.request_id:
             request_ids.add(contract.request_id)
+    if contracts.invalid_record_count:
+        logger.warning("stored_option_contracts_invalid source=universe count=%d", contracts.invalid_record_count)
     return contracts, request_ids
 
 
@@ -433,6 +451,7 @@ def _coverage_from_contracts(contracts: list[OptionMarketContract]) -> dict[str,
     greek_count = sum(1 for contract in contracts if contract.delta is not None)
     return {
         "contract_count": len(contracts),
+        "invalid_record_count": getattr(contracts, "invalid_record_count", 0),
         "quote_coverage_count": quote_count,
         "quote_coverage_rate": quote_count / len(contracts) if contracts else None,
         "greek_coverage_count": greek_count,

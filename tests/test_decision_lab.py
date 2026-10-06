@@ -871,6 +871,14 @@ def test_strike_quality_missing_attribution_is_none_not_zero():
     assert put_bucket["attribution_rate"] == pytest.approx(0.0)
 
 
+def test_invalid_option_records_have_visible_coverage_warning():
+    data = build_decision_lab_data(_base_payload(), option_market_data={
+        "contracts": [], "status": {"invalid_record_count": 2, "contract_count": 0},
+    })
+    assert any(note["severity"] == "warning" and "2 stored contract" in note["message"]
+               for note in data["coverage_notes"])
+
+
 def test_coverage_notes_are_compact_status_lines():
     payload = _base_payload()
     payload["dashboard"]["data_freshness"] = {"price_coverage": {"stocks_requested": 3, "stocks_fetched": 2, "missing_count": 1}}

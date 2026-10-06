@@ -20,6 +20,7 @@ from portfolio_backend.web_dashboard_templates import BASE_CSS, LOGIN_TEMPLATE
 COOKIE_NAME = "options_roi_web_session"
 OAUTH_STATE_COOKIE_NAME = "options_roi_google_state"
 DEFAULT_SESSION_DAYS = 90
+MIN_COOKIE_SECRET_LENGTH = 32
 
 
 def _truthy_env(name: str, default: bool) -> bool:
@@ -49,13 +50,13 @@ def _allowed_google_emails() -> set[str]:
 
 
 def _cookie_secret_configured() -> bool:
-    return bool(os.getenv("WEB_DASHBOARD_COOKIE_SECRET", "").strip())
+    return len(os.getenv("WEB_DASHBOARD_COOKIE_SECRET", "").strip()) >= MIN_COOKIE_SECRET_LENGTH
 
 
 def _cookie_secret() -> str:
     secret = os.getenv("WEB_DASHBOARD_COOKIE_SECRET", "").strip()
-    if not secret:
-        raise RuntimeError("WEB_DASHBOARD_COOKIE_SECRET must be explicitly configured.")
+    if not _cookie_secret_configured():
+        raise RuntimeError("WEB_DASHBOARD_COOKIE_SECRET must contain at least 32 characters.")
     return secret
 
 
@@ -64,7 +65,12 @@ def _google_auth_configured() -> bool:
 
 
 def _auth_configured() -> bool:
-    return bool(_cookie_secret_configured() and (_dashboard_password() or _google_auth_configured()))
+    return bool(_cookie_secret_configured() and (_password_login_enabled() or _google_auth_configured()))
+
+
+def _password_login_enabled() -> bool:
+    """Password access is local only; Cloud Run always requires Google sign-in."""
+    return bool(not _cloud_runtime() and _dashboard_password())
 
 
 def _password_fallback_visible() -> bool:
@@ -103,7 +109,7 @@ def _session_info(token: str) -> Optional[Dict[str, Any]]:
         return None
     if info["auth"] == "google" and info.get("email") not in _allowed_google_emails():
         return None
-    if info["auth"] == "key" and not _dashboard_password():
+    if info["auth"] == "key" and not _password_login_enabled():
         return None
     return info
 
@@ -190,7 +196,7 @@ def _cloud_runtime() -> bool:
 def validate_configuration() -> None:
     """Refuse cloud startup with disabled or incomplete authentication."""
     if _cloud_runtime() and (not _auth_enabled() or not _auth_configured()):
-        raise RuntimeError("Production web authentication and a dedicated cookie secret are required.")
+        raise RuntimeError("Production requires Google sign-in, an email allowlist and a cookie secret of at least 32 characters.")
 
 
 def _google_redirect_uri(request: Request) -> str:
@@ -205,7 +211,7 @@ def _configuration_error_html() -> str:
     return """<!doctype html>
 <html><head><title>Options ROI</title><style>{css}</style></head>
 <body><main class="login"><h1>Dashboard is not configured</h1>
-<p>Set WEB_GOOGLE_CLIENT_ID with WEB_AUTH_ALLOWED_EMAILS and a cookie secret, or set WEB_DASHBOARD_PASSWORD with a separate WEB_DASHBOARD_COOKIE_SECRET.</p></main></body></html>""".format(
+<p>Configure Google sign-in, an allowed email address and a cookie secret of at least 32 characters. Password login is available only in local development.</p></main></body></html>""".format(
         css=BASE_CSS
     )
 
@@ -213,7 +219,7 @@ def _configuration_error_html() -> str:
 def _login_html(error: str = "") -> str:
     safe_error = error.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     google_signin = _google_signin_html()
-    show_fallback = bool(_dashboard_password() and (not google_signin or _password_fallback_visible()))
+    show_fallback = bool(_password_login_enabled() and (not google_signin or _password_fallback_visible()))
     fallback_open = "false" if google_signin else "true"
     fallback_label = "Use dashboard password instead" if google_signin else "Use dashboard password"
     fallback_html = ""

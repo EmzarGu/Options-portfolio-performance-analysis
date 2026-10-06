@@ -54,6 +54,28 @@ def clear_shared_dividend_cache():
     clear_dividend_history_cache()
 
 
+def test_benchmark_failure_diagnostics_are_preserved_and_sanitized(monkeypatch, caplog):
+    def fail(*args):
+        raise RuntimeError("sensitive-provider-response")
+    monkeypatch.setattr(data_sources, "fetch_price_history_yf", fail)
+    result = data_sources.align_benchmarks_monthly({"Test": "TEST"}, pd.date_range("2026-01-31", periods=2, freq="ME"), object())
+    assert result == {}
+    assert result.errors == ["Benchmark history unavailable: price history could not be loaded."]
+    assert "benchmark_price_history_fetch_failed" in caplog.text
+    assert "sensitive-provider-response" not in caplog.text
+
+
+def test_benchmark_partial_failure_keeps_valid_returns(monkeypatch, caplog):
+    idx = pd.date_range("2026-01-31", periods=3, freq="ME")
+    monkeypatch.setattr(data_sources, "fetch_price_history_yf", lambda *args: (
+        {"GOOD": pd.Series([100.0, 110.0, 121.0], index=idx)}, ["unavailable"], {}))
+    result = data_sources.align_benchmarks_monthly({"Good": "GOOD", "Missing": "MISSING"}, idx, object())
+    assert result["Good"].dropna().tolist() == pytest.approx([0.1, 0.1])
+    assert "Missing" not in result
+    assert result.errors
+    assert "benchmark_price_history_missing ticker=MISSING" in caplog.text
+
+
 def _segments_builder(segments):
     return lambda stock_txns, as_of: segments
 

@@ -37,14 +37,19 @@ and [mobile runbook](docs/mobile-api-local-runbook.md). Keep credentials outside
 
 - Mobile requires `MOBILE_API_KEY`. An explicitly local test server may set
   `ALLOW_INSECURE_LOCAL_AUTH=1`; this has no effect on Cloud Run.
-- Web requires `WEB_DASHBOARD_COOKIE_SECRET` plus a dashboard password or the
-  configured Google client ID/email allowlist. The cookie secret is independent
-  of the password. Use a randomly generated secret of at least 32 bytes.
+- Production web requires Google sign-in with a configured client ID and email
+  allowlist. Password login and existing password sessions are rejected on Cloud
+  Run, even if a password or the fallback-visibility flag remains configured.
+  Password login is available only in local development.
+- `WEB_DASHBOARD_COOKIE_SECRET` must contain at least 32 characters after trimming.
+  Generate it from at least 32 random bytes; length validation alone does not
+  establish randomness. It must be independent of any local dashboard password.
 - `WEB_DASHBOARD_AUTH=0` is for local development only. Cloud startup rejects it.
 - Sessions and OAuth state use separate expiring signatures. Legacy cookies are
   rejected, so the security upgrade requires a one-time login.
 - `/health` and `/v1/mobile/health` are public reachability probes; they do not
   fetch portfolio data or call market-data providers.
+- Swagger, ReDoc and OpenAPI HTTP endpoints are disabled for both services.
 
 ## Deployment and rollback
 
@@ -54,17 +59,25 @@ then independently checks the production image. Production contains neither
 Streamlit nor pytest and runs as UID 10001. A failing stage prevents deployment.
 
 `scripts/deploy_verified.py` resolves the tested image digest, stages both web
-and mobile without moving traffic, checks health/login/access denial, promotes
+and mobile without moving traffic, checks health/login/access denial, verifies
+that production password login and documentation are unavailable, promotes
 verified revisions, and updates the IBKR and historical import jobs to that
 same digest. Commands and HTTP probes are explicit. Existing source/provider,
 scaling and schedule settings are preserved. No job is executed by deployment.
 Partial promotion failures trigger restoration of previous service traffic and
 job images. Failed rollback is reported as a build failure, never success.
+Full rollback configuration is written to a unique `tmp/release-*/release-rollback.json`
+with directory mode 0700 and file mode 0600. It is excluded from Git and image
+builds. Copy it only to private recovery storage if it must survive a build worker.
 
 The web secret must exist as Secret Manager `options-roi-web-cookie-secret`
 version 1, accessible to the web runtime identity. Rotation requires adding a
 version, updating the deployment reference, testing and redeploying. Mobile-key
 rotation must be coordinated with the iOS client before retiring the old key.
+Record the services and client versions affected, schedule the change, update the
+Secret Manager binding and iOS configuration together, then verify an authenticated
+read and rejection of the retired key. Keep the previous version available for
+rollback until verification passes; never put key values in Git or build logs.
 
 After release, check authenticated web/mobile payloads, both Decision Lab views,
 target image digests, and import-job health. Use saved revisions and immutable
@@ -88,6 +101,9 @@ instances. Derived payloads publish complete content-addressed generations, with
 cache entry rebuilds from source. Provider failures retain the existing snapshot
 behavior, and daily-price fallbacks are explicitly reported as unavailable live
 quotes.
+Missing benchmarks appear in the shared issues list. Invalid stored option
+contracts produce a count in Decision Lab coverage warnings; snapshot-store
+initialization and lease-release failures emit sanitized operational warnings.
 
 Raw exports, personal research and full private reconciliation evidence remain
 local and are excluded from Git and build uploads. Public regression fixtures

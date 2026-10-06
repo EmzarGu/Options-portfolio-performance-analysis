@@ -138,7 +138,7 @@ def test_pagination_stops_at_shared_deadline(monkeypatch):
 
 
 def test_authenticated_uncached_route_survives_outage_and_refresh(monkeypatch):
-    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "test-only-session-secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "test-only-session-secret-long-enough-for-validation")
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "test-password")
     payload = _base_payload()
     payload["positions"]["inventory"] = [

@@ -5,6 +5,22 @@ import pytest
 from scripts import deploy_verified as deploy
 
 
+def test_rollback_config_is_private_unique_and_complete(monkeypatch, tmp_path):
+    import json
+    import stat
+
+    monkeypatch.chdir(tmp_path)
+    services = {"web": {"private_configuration": "synthetic-secret"}}
+    first = deploy.save_rollback_snapshot(services, {"job": "image"})
+    second = deploy.save_rollback_snapshot(services, {})
+    assert first != second
+    assert first.parts[0] == "tmp"
+    assert stat.S_IMODE(first.stat().st_mode) == 0o600
+    assert stat.S_IMODE(first.parent.stat().st_mode) == 0o700
+    assert json.loads(first.read_text()) == {"services": services, "jobs": {"job": "image"}}
+    assert not (tmp_path / "release-rollback.json").exists()
+
+
 @pytest.mark.parametrize("fail_at", ["candidate", "second_promotion", None])
 def test_release_order_and_rollback(monkeypatch, tmp_path, fail_at):
     monkeypatch.chdir(tmp_path)
@@ -33,7 +49,7 @@ def test_release_order_and_rollback(monkeypatch, tmp_path, fail_at):
         if kind == "jobs" and action == "update":
             promoted.add(name)
     monkeypatch.setattr(deploy, "run", run)
-    def check(url, expected):
+    def check(url, expected, **kwargs):
         if fail_at == "candidate" and url.startswith("https://candidate"):
             raise RuntimeError("candidate failed")
     monkeypatch.setattr(deploy, "check_url", check)

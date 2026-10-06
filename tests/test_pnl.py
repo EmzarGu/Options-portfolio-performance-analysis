@@ -419,7 +419,10 @@ def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
         price_refresh_token=("reference-summary", 0),
     )
 
-    assert state["issues"] == []
+    assert state["issues"] == [
+        f"Benchmark unavailable: {name}; comparison data is missing."
+        for name in ("Cboe BXM", "PUTW ETF", "SCHD ETF")
+    ]
     assert state["price_summary"] == {"stocks_requested": 2, "stocks_fetched": 2}
     assert len(state["open_options"]) == 1
     assert len(state["inv_df"]) == 2
