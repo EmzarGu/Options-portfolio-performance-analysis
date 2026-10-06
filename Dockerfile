@@ -15,6 +15,7 @@ USER 10001:10001
 CMD ["sh", "-c", "exec uvicorn mobile_api:app --host 0.0.0.0 --port ${PORT:-8080}"]
 
 FROM runtime AS test
+ENV GOOGLE_APPLICATION_CREDENTIALS=/tmp/nonexistent-test-credentials.json
 USER root
 COPY requirements-dev.txt requirements-streamlit.txt ./
 RUN python -m pip install --no-deps -r requirements-dev.txt && python -m pip check

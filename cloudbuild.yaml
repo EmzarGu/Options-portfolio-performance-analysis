@@ -10,7 +10,7 @@ steps:
     args: [build, --target, test, --build-arg, 'APP_BUILD_VERSION=${COMMIT_SHA}', -t, 'options-tests:${COMMIT_SHA}', .]
   - id: Test
     name: gcr.io/cloud-builders/docker
-    args: [run, --rm, 'options-tests:${COMMIT_SHA}']
+    args: [run, --rm, --network=none, 'options-tests:${COMMIT_SHA}']
   - id: Lint
     name: gcr.io/cloud-builders/docker
     args: [run, --rm, 'options-tests:${COMMIT_SHA}', python, -m, ruff, check, --no-cache, --select, 'E9,F63,F7,F82', portfolio_backend, mobile_api.py, web_dashboard.py, data_sources.py]

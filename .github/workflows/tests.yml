@@ -13,7 +13,7 @@ jobs:
       - name: Build test image from locked runtime
         run: docker build --target test --build-arg APP_BUILD_VERSION=${{ github.sha }} -t options-test .
       - name: Regression suite
-        run: docker run --rm options-test
+        run: docker run --rm --network=none options-test
       - name: Focused lint
         run: docker run --rm options-test python -m ruff check --no-cache --select E9,F63,F7,F82 portfolio_backend mobile_api.py web_dashboard.py data_sources.py
       - name: Verify production image independently

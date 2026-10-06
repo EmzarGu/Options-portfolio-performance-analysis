@@ -32,6 +32,9 @@ image rather than guessed from the local Python 3.12 environment. Tests and
 Streamlit dependencies are separate; the production smoke test verifies their
 absence and checks all production entry-point imports as a non-root user.
 
+Container tests have no network and an intentionally unavailable ADC credential
+path, preventing accidental calls to production storage or market providers.
+
 Cloud Build gates deployment on regression tests, focused lint and the exact
 production-image smoke check. GitHub Actions repeats those checks for pull
 requests. Both build contexts include tests but exclude credentials and private
