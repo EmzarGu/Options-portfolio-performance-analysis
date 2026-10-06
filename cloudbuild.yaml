@@ -13,7 +13,7 @@ steps:
     args: [run, --rm, 'options-tests:${COMMIT_SHA}']
   - id: Lint
     name: gcr.io/cloud-builders/docker
-    args: [run, --rm, 'options-tests:${COMMIT_SHA}', python, -m, ruff, check, --select, 'E9,F63,F7,F82', portfolio_backend, mobile_api.py, web_dashboard.py, data_sources.py]
+    args: [run, --rm, 'options-tests:${COMMIT_SHA}', python, -m, ruff, check, --no-cache, --select, 'E9,F63,F7,F82', portfolio_backend, mobile_api.py, web_dashboard.py, data_sources.py]
   - id: BuildProduction
     name: gcr.io/cloud-builders/docker
     args: [build, --target, production, --build-arg, 'APP_BUILD_VERSION=${COMMIT_SHA}', -t, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}', .]
