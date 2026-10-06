@@ -34,6 +34,8 @@ from data_sources import (
     option_sheet_names_from_excel_bytes,
 )
 
+from portfolio_backend import data_runtime
+
 logger = logging.getLogger(__name__)
 from portfolio_backend.calculations import (
     assess_capital_history_coverage,
@@ -180,86 +182,15 @@ CURRENT_UNREALIZED_SNAPSHOT_LABEL = "Current unrealized snapshot"
 # Secrets / credentials
 # ------------------------------------------------------------
 def _load_credentials():
-    def parse(raw_val):
-        if isinstance(raw_val, dict):
-            return raw_val
-        if isinstance(raw_val, str):
-            txt = raw_val.strip()
-            for triple in ('"""', "'''"):
-                if txt.startswith(triple) and txt.endswith(triple):
-                    txt = txt[len(triple) : -len(triple)]
-                    txt = txt.strip()
-            # 1) normal JSON
-            try:
-                return json.loads(txt)
-            except json.JSONDecodeError:
-                # If TOML basic string expanded \n into real newlines inside private_key,
-                # re-escape newlines inside that value and retry.
-                try:
-                    import re
-
-                    def _fix_pk(match):
-                        val = match.group(1)
-                        val_fixed = val.replace("\r\n", "\n").replace("\n", "\\n")
-                        return f'"private_key": "{val_fixed}"'
-
-                    txt_esc = re.sub(r'"private_key"\s*:\s*"(.*?)"', _fix_pk, txt, flags=re.DOTALL)
-                    return json.loads(txt_esc)
-                except Exception:
-                    pass
-            # 2) single-quoted JSON (naive)
-            try:
-                return json.loads(txt.replace("'", '"'))
-            except Exception:
-                pass
-            # 3) literal_eval for TOML-ish dicts
-            try:
-                import ast
-
-                val = ast.literal_eval(txt)
-                if isinstance(val, dict):
-                    return val
-            except Exception:
-                pass
-        raise RuntimeError("Could not parse GOOGLE_SERVICE_ACCOUNT_JSON; please paste raw JSON for the service account.")
-
-    # Priority: st.secrets -> env var -> local secrets file -> fallback keys in st.secrets
-    raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if raw is None:
-        env_val = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-        if env_val:
-            raw = env_val
-    if raw is None:
-        secrets_path = os.getenv("LOCAL_SECRETS_PATH")
-        if secrets_path:
-            p = Path(secrets_path).expanduser()
-            if not p.exists():
-                raise RuntimeError(f"LOCAL_SECRETS_PATH is set but file not found: {p}")
-            if p.suffix.lower() == ".toml":
-                if tomllib is None:
-                    raise RuntimeError("tomllib/tomli not available; install tomli or use JSON secrets.")
-                data = tomllib.loads(p.read_text())
-                raw = (
-                    data.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-                    or data.get("google_service_account_json")
-                    or data.get("service_account")
-                )
-            else:
-                raw = p.read_text()
-    if raw is None:
-        for key in ("gcp_service_account", "service_account"):
-            if key in st.secrets:
-                raw = st.secrets[key]
-                break
-    if raw is None:
-        raise RuntimeError("Secret GOOGLE_SERVICE_ACCOUNT_JSON is missing in Streamlit secrets, env var, or LOCAL_SECRETS_PATH.")
-
-    info = parse(raw)
-    scopes = [
-        "https://www.googleapis.com/auth/drive.readonly",
-        "https://www.googleapis.com/auth/spreadsheets.readonly",
-    ]
-    return service_account.Credentials.from_service_account_info(info, scopes=scopes)
+    """Adapt Streamlit secrets to the shared credential loader."""
+    raw = None
+    try:
+        raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+        if raw is None:
+            raw = st.secrets.get("gcp_service_account") or st.secrets.get("service_account")
+    except FileNotFoundError:
+        pass
+    return data_runtime.load_credentials(raw)
 
 
 def _coerce_bool(val) -> bool:
@@ -446,7 +377,7 @@ def _clear_data_caches() -> None:
 
 
 def align_benchmarks_monthly(tickers: Dict[str, str], idx: pd.DatetimeIndex):
-    return _align_benchmarks_monthly(tickers, idx, yf)
+    return data_runtime.align_benchmarks_monthly(tickers, idx, yf_module=yf)
 
 
 def resolve_build_version() -> str:
@@ -573,7 +504,7 @@ def normalize_selected_sheets_for_mode(selected_sheets: Optional[List[str]], ava
 
 
 def fetch_current_prices_yf(tickers) -> Tuple[Dict[str, float], List[str], Dict[str, int]]:
-    return _fetch_current_prices_yf(tickers, yf)
+    return data_runtime.fetch_current_prices_yf(tickers, yf_module=yf)
 
 
 def fetch_price_history_yf(
@@ -581,7 +512,7 @@ def fetch_price_history_yf(
     start: pd.Timestamp,
     end: pd.Timestamp,
 ) -> Tuple[Dict[str, pd.Series], List[str], Dict[str, int]]:
-    return _fetch_price_history_yf(tickers, start, end, yf)
+    return data_runtime.fetch_price_history_yf(tickers, start, end, yf_module=yf)
 
 
 def _format_df(df: pd.DataFrame, currency_cols=None, pct_cols=None, int_cols=None, float_cols=None, hide_index=False, na_rep=None):
@@ -685,8 +616,7 @@ def _render_data_status(sheet_id: str) -> None:
 
 
 def collect_dividend_cashflows(stock_txns: List[StockTxn], as_of: pd.Timestamp) -> DividendFetchResult:
-    provider = YFinanceDividendProvider(yf) if yf is not None else None
-    return _collect_dividend_cashflows(stock_txns, as_of, build_holding_segments, provider)
+    return data_runtime.collect_dividend_cashflows(stock_txns, as_of, yf_module=yf)
 
 
 def render_issue_status_banner(issues: List[str], price_errors: List[str], price_summary: Dict[str, int]) -> None:

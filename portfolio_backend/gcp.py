@@ -47,17 +47,6 @@ def _service_account_secret() -> Any:
     if raw:
         return raw
 
-    try:
-        import streamlit as st
-
-        raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-        if raw is not None:
-            return raw
-        for key in ("gcp_service_account", "service_account"):
-            if key in st.secrets:
-                return st.secrets[key]
-    except Exception:
-        return None
     return None
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import html
 import hmac
 import json
@@ -20,7 +21,14 @@ from portfolio_backend.mobile_api_service import build_mobile_refresh_payload
 from portfolio_backend.web_dashboard_templates import DASHBOARD_HTML, GOOGLE_REDIRECT_CALLBACK_HTML
 
 
-app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Validate cloud authentication before accepting traffic."""
+    web_auth.validate_configuration()
+    yield
+
+
+app = FastAPI(title="Options ROI Web Dashboard", version="0.1.0", lifespan=lifespan)
 logger = logging.getLogger("uvicorn.error")
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -31,7 +39,13 @@ NO_STORE_HEADERS = {
 
 @app.middleware("http")
 async def no_store_browser_cache(request: Request, call_next):
-    response = await call_next(request)
+    if request.url.path != "/health" and (
+        (web_auth._auth_enabled() and not web_auth._auth_configured())
+        or (web_auth._cloud_runtime() and not web_auth._auth_enabled())
+    ):
+        response = HTMLResponse(web_auth._configuration_error_html(), status_code=503)
+    else:
+        response = await call_next(request)
     for header, value in NO_STORE_HEADERS.items():
         response.headers[header] = value
     return response

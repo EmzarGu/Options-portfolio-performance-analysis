@@ -1,4 +1,4 @@
-VENV_PYTHON := .venv/bin/python
+VENV_PYTHON ?= .venv311/bin/python
 PYTEST_ARGS ?=
 
 .PHONY: test

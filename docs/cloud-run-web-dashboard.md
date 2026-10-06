@@ -1,5 +1,9 @@
 # Cloud Run Web Dashboard
 
+> Current release setup: [6 October hardening](production-hardening-2026-10-06.md) and
+> [README](../README.md). Older dated observations below are historical; authentication,
+> dependencies, runtime extraction and deployment gates have changed.
+
 The production web dashboard is a FastAPI entrypoint exposed through the
 `options-roi-web` Cloud Run service.
 

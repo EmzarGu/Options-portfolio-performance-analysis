@@ -20,7 +20,7 @@ from tests.test_pnl import _make_live_overlay_base_state
 def test_web_import_does_not_load_mobile_http_application():
     """A fresh web process must not instantiate the mobile transport as a dependency."""
     result = subprocess.run(
-        [sys.executable, "-c", "import web_dashboard; import sys; assert 'mobile_api' not in sys.modules"],
+        [sys.executable, "-c", "import web_dashboard; import sys; assert 'mobile_api' not in sys.modules; assert 'streamlit' not in sys.modules; assert 'streamlit_app' not in sys.modules"],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,

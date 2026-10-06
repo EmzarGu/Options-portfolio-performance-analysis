@@ -1,16 +1,13 @@
 """Browser authentication, signed sessions and login rendering.
 
-Cookie formats, authentication checks and rendered login content are unchanged.
+Sessions and OAuth state use separate, expiring signed formats. Legacy cookies are rejected.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
 import os
-from time import time
 from typing import Any, Dict, Optional
+
+from itsdangerous import BadData, URLSafeTimedSerializer
 
 from fastapi import Request
 from fastapi.responses import RedirectResponse, Response
@@ -52,11 +49,14 @@ def _allowed_google_emails() -> set[str]:
 
 
 def _cookie_secret_configured() -> bool:
-    return bool(os.getenv("WEB_DASHBOARD_COOKIE_SECRET") or _dashboard_password())
+    return bool(os.getenv("WEB_DASHBOARD_COOKIE_SECRET", "").strip())
 
 
 def _cookie_secret() -> str:
-    return os.getenv("WEB_DASHBOARD_COOKIE_SECRET") or _dashboard_password() or "local-dev-dashboard-secret"
+    secret = os.getenv("WEB_DASHBOARD_COOKIE_SECRET", "").strip()
+    if not secret:
+        raise RuntimeError("WEB_DASHBOARD_COOKIE_SECRET must be explicitly configured.")
+    return secret
 
 
 def _google_auth_configured() -> bool:
@@ -64,7 +64,7 @@ def _google_auth_configured() -> bool:
 
 
 def _auth_configured() -> bool:
-    return bool(_dashboard_password() or _google_auth_configured())
+    return bool(_cookie_secret_configured() and (_dashboard_password() or _google_auth_configured()))
 
 
 def _password_fallback_visible() -> bool:
@@ -83,55 +83,27 @@ def _session_max_age_seconds() -> int:
     return days * 24 * 60 * 60
 
 
-def _b64_json(data: Dict[str, Any]) -> str:
-    raw = json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def _unb64_json(value: str) -> Dict[str, Any]:
-    padded = value + "=" * (-len(value) % 4)
-    decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
-    data = json.loads(decoded.decode("utf-8"))
-    return data if isinstance(data, dict) else {}
-
-
-def _sign_value(value: str) -> str:
-    payload = value.encode("utf-8")
-    digest = hmac.new(_cookie_secret().encode("utf-8"), payload, hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+def _serializer(purpose: str) -> URLSafeTimedSerializer:
+    """Separate browser sessions from short-lived OAuth state."""
+    return URLSafeTimedSerializer(_cookie_secret(), salt=f"options-roi-{purpose}-v2")
 
 
 def _session_token(*, email: Optional[str] = None, auth_method: str = "key") -> str:
-    payload = _b64_json(
-        {
-            "iat": int(time()),
-            "email": email,
-            "auth": auth_method,
-        }
-    )
-    return f"{payload}.{_sign_value(payload)}"
+    return _serializer("session").dumps({"email": email, "auth": auth_method})
 
 
 def _session_info(token: str) -> Optional[Dict[str, Any]]:
-    if not token or "." not in token:
-        return None
-    payload, signature = token.split(".", 1)
-    if payload.isdigit():
-        # Backward compatibility for the previous timestamp-only cookie shape.
-        if not hmac.compare_digest(signature, _sign_value(payload)):
-            return None
-        issued_at = int(payload)
-        return {"iat": issued_at, "email": None, "auth": "legacy_key"}
-    if not hmac.compare_digest(signature, _sign_value(payload)):
+    if not token or not _auth_configured():
         return None
     try:
-        info = _unb64_json(payload)
-    except Exception:
+        info = _serializer("session").loads(token, max_age=_session_max_age_seconds())
+    except BadData:
         return None
-    issued_at = info.get("iat")
-    if not isinstance(issued_at, int):
+    if not isinstance(info, dict) or info.get("auth") not in {"key", "google"}:
         return None
-    if issued_at < int(time()) - _session_max_age_seconds():
+    if info["auth"] == "google" and info.get("email") not in _allowed_google_emails():
+        return None
+    if info["auth"] == "key" and not _dashboard_password():
         return None
     return info
 
@@ -142,7 +114,7 @@ def _valid_session(token: str) -> bool:
 
 def _is_authenticated(request: Request) -> bool:
     if not _auth_enabled():
-        return True
+        return not _cloud_runtime()
     return _valid_session(request.cookies.get(COOKIE_NAME, ""))
 
 
@@ -194,21 +166,31 @@ def _verify_google_credential(credential: str, *, nonce: Optional[str] = None) -
 
 
 def _oauth_state_token(*, state: str, nonce: str) -> str:
-    payload = _b64_json({"state": state, "nonce": nonce, "iat": int(time())})
-    return f"{payload}.{_sign_value(payload)}"
+    return _serializer("oauth-state").dumps({"state": state, "nonce": nonce})
 
 
 def _oauth_state_info(token: str) -> Optional[Dict[str, Any]]:
-    info = _session_info(token)
-    if not info:
+    if not token or not _auth_configured():
         return None
-    if int(info.get("iat", 0)) < int(time()) - 10 * 60:
+    try:
+        info = _serializer("oauth-state").loads(token, max_age=600)
+    except BadData:
         return None
-    state = info.get("state")
-    nonce = info.get("nonce")
-    if not isinstance(state, str) or not isinstance(nonce, str):
+    if not isinstance(info, dict):
         return None
-    return {"state": state, "nonce": nonce}
+    if not isinstance(info.get("state"), str) or not isinstance(info.get("nonce"), str):
+        return None
+    return info
+
+
+def _cloud_runtime() -> bool:
+    return bool(os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"))
+
+
+def validate_configuration() -> None:
+    """Refuse cloud startup with disabled or incomplete authentication."""
+    if _cloud_runtime() and (not _auth_enabled() or not _auth_configured()):
+        raise RuntimeError("Production web authentication and a dedicated cookie secret are required.")
 
 
 def _google_redirect_uri(request: Request) -> str:
@@ -223,7 +205,7 @@ def _configuration_error_html() -> str:
     return """<!doctype html>
 <html><head><title>Options ROI</title><style>{css}</style></head>
 <body><main class="login"><h1>Dashboard is not configured</h1>
-<p>Set WEB_GOOGLE_CLIENT_ID with WEB_AUTH_ALLOWED_EMAILS and a cookie secret, or set WEB_DASHBOARD_PASSWORD.</p></main></body></html>""".format(
+<p>Set WEB_GOOGLE_CLIENT_ID with WEB_AUTH_ALLOWED_EMAILS and a cookie secret, or set WEB_DASHBOARD_PASSWORD with a separate WEB_DASHBOARD_COOKIE_SECRET.</p></main></body></html>""".format(
         css=BASE_CSS
     )
 

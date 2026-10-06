@@ -336,7 +336,7 @@ def _latest_close_price_from_frame(data, ticker: str, all_tickers: List[str]) ->
                     series = data[col].dropna()
                     if not series.empty:
                         return _coerce_live_price(series.iloc[-1])
-    except Exception:
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
         return None
     return None
 
@@ -399,6 +399,8 @@ def fetch_current_prices_yf(tickers, yf_module) -> Tuple[Dict[str, float], List[
                 if price is not None:
                     prices[t] = price
                     summary["daily_fallback"] += 1
+                    quote_date = pd.Timestamp(hist.index[-1]).date().isoformat()
+                    errors.append(f"{t}: using daily closing price from {quote_date}; live quote unavailable.")
                 continue
         except Exception as exc:
             errors.append(f"{t}: {exc}")

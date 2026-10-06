@@ -1,5 +1,9 @@
 # Cloud Operations Current State
 
+> Current release setup: [6 October hardening](production-hardening-2026-10-06.md) and
+> [README](../README.md). Older dated observations below are historical; authentication,
+> dependencies, runtime extraction and deployment gates have changed.
+
 Live web/mobile/import-job checks: 2026-10-01; scheduler checks: 2026-09-27. Storage/retention descriptions below
 remain from the 2026-05-12 operational record and were not revalidated in this review.
 

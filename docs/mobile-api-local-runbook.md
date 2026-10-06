@@ -1,5 +1,9 @@
 # Mobile API Local Runbook
 
+> Current release setup: [6 October hardening](production-hardening-2026-10-06.md) and
+> [README](../README.md). Older dated observations below are historical; authentication,
+> dependencies, runtime extraction and deployment gates have changed.
+
 This runbook is for backend and iOS development against the local FastAPI mobile
 API.
 

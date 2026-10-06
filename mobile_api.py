@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import hmac
 import logging
 import os
@@ -34,7 +35,27 @@ from portfolio_backend.mobile_api_service import (
 from portfolio_backend.mobile_payloads import build_mobile_config
 
 
-app = FastAPI(title="Options ROI Mobile API", version="0.1.0")
+def _local_auth_bypass() -> bool:
+    """Explicit development opt-out, never effective on Cloud Run."""
+    return (
+        os.getenv("ALLOW_INSECURE_LOCAL_AUTH") == "1"
+        and not (os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"))
+    )
+
+
+def _api_key() -> str:
+    return os.getenv("MOBILE_API_KEY", "").strip()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Fail startup rather than publish an unprotected API."""
+    if not _api_key() and not _local_auth_bypass():
+        raise RuntimeError("MOBILE_API_KEY is required; local development may explicitly opt out.")
+    yield
+
+
+app = FastAPI(title="Options ROI Mobile API", version="0.1.0", lifespan=lifespan)
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.INFO)
 MONTHLY_RANGES = {"3m", "6m", "ytd", "1y", "since_inception"}
@@ -133,8 +154,13 @@ async def mobile_api_key_middleware(request: Request, call_next):
     request_started_at = perf_counter()
     auth_started_at = perf_counter()
     _request_timings(request)
-    expected_key = os.getenv("MOBILE_API_KEY")
-    if not expected_key or request.url.path in PUBLIC_PATHS or not request.url.path.startswith("/v1/mobile/"):
+    expected_key = _api_key()
+    if request.url.path not in PUBLIC_PATHS and not expected_key and not _local_auth_bypass():
+        return JSONResponse(status_code=503, content={"error": {
+            "code": "auth_not_configured", "message": "Mobile authentication is not configured.",
+            "details": {}, "request_id": None,
+        }})
+    if request.url.path in PUBLIC_PATHS or (not expected_key and _local_auth_bypass()):
         _record_timing(request, "request_auth_ms", context_service._elapsed_ms(auth_started_at))
         response = await call_next(request)
         _log_request_timing(

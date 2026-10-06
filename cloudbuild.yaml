@@ -4,85 +4,30 @@ substitutions:
   _AR_REPOSITORY: cloud-run-source-deploy
   _DEPLOY_REGION: europe-west6
   _IMAGE_NAME: options-roi-mobile-api
-  _MOBILE_SERVICE_NAME: options-roi-mobile-api
-  _WEB_SERVICE_NAME: options-roi-web
-  _IBKR_IMPORT_JOB_NAME: ibkr-flex-import
-
 steps:
-  - id: PullCache
+  - id: BuildTests
     name: gcr.io/cloud-builders/docker
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        docker pull ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest || true
-
-  - id: Build
+    args: [build, --target, test, --build-arg, 'APP_BUILD_VERSION=${COMMIT_SHA}', -t, 'options-tests:${COMMIT_SHA}', .]
+  - id: Test
     name: gcr.io/cloud-builders/docker
-    args:
-      - build
-      - --cache-from
-      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest
-      - -t
-      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
-      - -t
-      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest
-      - .
-      - -f
-      - Dockerfile
-
-  - id: Push
+    args: [run, --rm, 'options-tests:${COMMIT_SHA}']
+  - id: Lint
     name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
-
-  - id: PushLatest
+    args: [run, --rm, 'options-tests:${COMMIT_SHA}', python, -m, ruff, check, --select, 'E9,F63,F7,F82', portfolio_backend, mobile_api.py, web_dashboard.py, data_sources.py]
+  - id: BuildProduction
     name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:latest
-
-  - id: DeployMobileAPI
-    name: gcr.io/cloud-builders/gcloud
-    args:
-      - run
-      - services
-      - update
-      - ${_MOBILE_SERVICE_NAME}
-      - --platform=managed
-      - --image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
-      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=${COMMIT_SHA},gcb-build-id=${BUILD_ID}
-      - --region=${_DEPLOY_REGION}
-      - --quiet
-
-  - id: DeployWebDashboard
-    name: gcr.io/cloud-builders/gcloud
-    args:
-      - run
-      - services
-      - update
-      - ${_WEB_SERVICE_NAME}
-      - --platform=managed
-      - --image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
-      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=${COMMIT_SHA},gcb-build-id=${BUILD_ID}
-      - --region=${_DEPLOY_REGION}
-      - --quiet
-
-  - id: UpdateIBKRImportJob
-    name: gcr.io/cloud-builders/gcloud
-    args:
-      - run
-      - jobs
-      - update
-      - ${_IBKR_IMPORT_JOB_NAME}
-      - --image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
-      - --region=${_DEPLOY_REGION}
-      - --quiet
-
-images:
-  - ${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}
-
+    args: [build, --target, production, --build-arg, 'APP_BUILD_VERSION=${COMMIT_SHA}', -t, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}', .]
+  - id: RuntimeSmoke
+    name: gcr.io/cloud-builders/docker
+    args: [run, --rm, -v, '/workspace/scripts/check_runtime.py:/tmp/check_runtime.py:ro', -e, PYTHONPATH=/app, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}', python, /tmp/check_runtime.py]
+  - id: PushTestedImage
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}']
+  - id: DeployAndVerify
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: python3
+    args: [scripts/deploy_verified.py, --project, '${_AR_PROJECT_ID}', --region, '${_DEPLOY_REGION}', --image, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}', --commit, '${COMMIT_SHA}']
 options:
   logging: CLOUD_LOGGING_ONLY
   substitutionOption: ALLOW_LOOSE
+timeout: 1800s

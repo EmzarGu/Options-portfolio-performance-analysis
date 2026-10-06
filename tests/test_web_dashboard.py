@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+import pytest
 
 from fastapi.testclient import TestClient
 
 import web_dashboard
 from portfolio_backend import web_auth, web_data_service as web_data
 from portfolio_backend.web_dashboard_templates import DASHBOARD_HTML
+
+
+@pytest.fixture(autouse=True)
+def explicit_test_cookie_secret(monkeypatch):
+    monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
+    monkeypatch.setenv("WEB_DASHBOARD_COOKIE_SECRET", "test-only-cookie-signing-secret")
 
 
 def _embedded_dashboard_data(html: str):
@@ -670,7 +677,7 @@ def test_web_dashboard_login_page_requires_google_allowlist(monkeypatch):
 
     response = client.get("/login")
 
-    assert response.status_code == 500
+    assert response.status_code == 503
     assert "Dashboard is not configured" in response.text
 
 

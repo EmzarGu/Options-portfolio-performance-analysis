@@ -1,0 +1,22 @@
+name: Application checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build test image from locked runtime
+        run: docker build --target test --build-arg APP_BUILD_VERSION=${{ github.sha }} -t options-test .
+      - name: Regression suite
+        run: docker run --rm options-test
+      - name: Focused lint
+        run: docker run --rm options-test python -m ruff check --select E9,F63,F7,F82 portfolio_backend mobile_api.py web_dashboard.py data_sources.py
+      - name: Verify production image independently
+        run: |
+          docker build --target production --build-arg APP_BUILD_VERSION=${{ github.sha }} -t options-runtime .
+          docker run --rm -v "$PWD/scripts/check_runtime.py:/tmp/check_runtime.py:ro" -e PYTHONPATH=/app options-runtime python /tmp/check_runtime.py

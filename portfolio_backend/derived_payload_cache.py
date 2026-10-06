@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 import zlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pandas as pd
@@ -14,8 +14,8 @@ from portfolio_backend.gcp import firestore_client
 
 
 COLLECTION_DERIVED_PAYLOADS = "dashboard_derived_payloads"
-CHUNK_SUBCOLLECTION = "chunks"
-DERIVED_PAYLOAD_SCHEMA_VERSION = 1
+CHUNK_SUBCOLLECTION = "payload_chunks"
+DERIVED_PAYLOAD_SCHEMA_VERSION = 2
 CHUNK_SIZE = 500_000
 
 logger = logging.getLogger(__name__)
@@ -42,16 +42,22 @@ def load_derived_payload(cache_key: str) -> Optional[dict[str, Any]]:
         chunk_count = int(metadata.get("chunk_count") or 0)
         if chunk_count <= 0:
             return None
+        generation = metadata.get("generation")
+        if not isinstance(generation, str) or len(generation) != 64:
+            return None
         chunks: list[str] = []
         for index in range(chunk_count):
-            chunk = doc_ref.collection(CHUNK_SUBCOLLECTION).document(f"{index:04d}").get()
+            chunk = doc_ref.collection(CHUNK_SUBCOLLECTION).document(f"{generation}-{index:04d}").get()
             if not chunk.exists:
                 return None
             data = (chunk.to_dict() or {}).get("data")
             if not data:
                 return None
             chunks.append(str(data))
-        compressed = base64.b64decode("".join(chunks).encode("ascii"))
+        encoded = "".join(chunks)
+        if hashlib.sha256(encoded.encode("ascii")).hexdigest() != generation:
+            return None
+        compressed = base64.b64decode(encoded.encode("ascii"), validate=True)
         payload = json.loads(zlib.decompress(compressed).decode("utf-8"))
         return payload if isinstance(payload, dict) else None
     except Exception as exc:
@@ -68,23 +74,25 @@ def save_derived_payload(cache_key: str, payload: dict[str, Any], *, metadata: O
         chunks = [encoded[index : index + CHUNK_SIZE] for index in range(0, len(encoded), CHUNK_SIZE)] or [""]
         client = firestore_client()
         doc_ref = client.collection(COLLECTION_DERIVED_PAYLOADS).document(cache_key)
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        doc_ref.set(
-            _json_safe(
-                {
-                    "cache_key": cache_key,
-                    "schema_version": DERIVED_PAYLOAD_SCHEMA_VERSION,
-                    "status": "ready",
-                    "chunk_count": len(chunks),
-                    "payload_bytes_compressed_b64": len(encoded),
-                    "updated_at": now,
-                    **(metadata or {}),
-                }
-            ),
-            merge=True,
-        )
+        now = datetime.now(timezone.utc)
+        generation = hashlib.sha256(encoded.encode("ascii")).hexdigest()
+        # Content-addressed chunks cannot mix two writers' payloads. Publish last.
         for index, chunk in enumerate(chunks):
-            doc_ref.collection(CHUNK_SUBCOLLECTION).document(f"{index:04d}").set({"data": chunk})
+            doc_ref.collection(CHUNK_SUBCOLLECTION).document(f"{generation}-{index:04d}").set({
+                "data": chunk, "expires_at": now + timedelta(days=7),
+            })
+        doc_ref.set(
+            _json_safe({
+                **(metadata or {}),
+                "cache_key": cache_key,
+                "schema_version": DERIVED_PAYLOAD_SCHEMA_VERSION,
+                "status": "ready",
+                "generation": generation,
+                "chunk_count": len(chunks),
+                "payload_bytes_compressed_b64": len(encoded),
+                "updated_at": now.isoformat(timespec="seconds"),
+            }),
+        )
     except Exception as exc:
         logger.warning("derived_payload_cache_save_failed key=%s error=%s", cache_key, exc)
 

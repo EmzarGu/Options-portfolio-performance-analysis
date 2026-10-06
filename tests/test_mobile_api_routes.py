@@ -305,6 +305,7 @@ def test_ibkr_import_health_suppresses_failed_retry_when_range_already_imported(
 
 @pytest.fixture
 def api_harness(monkeypatch):
+    monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "1")
     context_service._clear_context_cache()
     calls = SimpleNamespace(contexts=[], builders={}, dashboard_target_return=None, dashboard_target_floor=None)
 
@@ -497,7 +498,7 @@ def test_health_route_is_lightweight(api_harness):
     assert api_harness.calls.builders == {}
 
 
-def test_api_key_is_not_required_when_unset(api_harness, monkeypatch):
+def test_local_opt_out_allows_unset_api_key(api_harness, monkeypatch):
     monkeypatch.delenv("MOBILE_API_KEY", raising=False)
 
     response = api_harness.client.get("/v1/mobile/config")
@@ -1134,6 +1135,7 @@ def test_ibkr_common_request_defaults_to_latest_market_day(api_harness, monkeypa
 
 
 def test_ibkr_routes_build_from_persisted_local_json_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "1")
     service = IbkrImportService(
         LocalRawReportStore(tmp_path / "raw"),
         LocalJsonImportStore(tmp_path / "firestore_sim"),

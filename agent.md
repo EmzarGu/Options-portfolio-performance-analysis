@@ -16,7 +16,7 @@ You are a coding agent working inside this repository. Follow these rules at all
 
 ## Testing
 - If tests exist, run them after changes.
-- Run tests via `make test` so the project `.venv` is used instead of the system Python.
+- Run tests via `make test` so the project Python 3.11 `.venv311` is used instead of the system Python.
 - If tests do not exist, suggest reasonable tests.
 - Never ignore test failures.
 
@@ -28,9 +28,9 @@ You are a coding agent working inside this repository. Follow these rules at all
 
 ## Canonical Repositories
 - Backend, Streamlit backup app, mobile API, and web dashboard:
-  `/Users/emzar/Options-portfolio-performance-analysis`
+  the root of this repository
 - iOS app:
-  `/Users/emzar/Documents/Codex Projects/Codex Investment Workflows/Option Analysis App/ios/OptionsMonitor-iOS`
+  the separate `OptionsMonitor-iOS` checkout (not included here)
 
 ## Documentation
 - Add docstrings/comments to new functions.

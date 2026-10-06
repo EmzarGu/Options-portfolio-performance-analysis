@@ -346,7 +346,9 @@ def test_fetch_current_prices_uses_daily_close_only_as_final_fallback():
     prices, errors, summary = fetch_current_prices_yf(["AAA"], yf_module)
 
     assert prices == {"AAA": 99.0}
-    assert errors == []
+    assert len(errors) == 1
+    assert "daily closing price" in errors[0]
+    assert "live quote unavailable" in errors[0]
     assert ticker.history_calls == [{"period": "5d", "interval": "1d"}]
     assert summary == {"requested": 1, "fetched": 1, "intraday": 0, "fast_info": 0, "daily_fallback": 1}
 

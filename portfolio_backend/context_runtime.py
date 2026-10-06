@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from fastapi import HTTPException
 
-import streamlit_app as dashboard_app
+from portfolio_backend import data_runtime as dashboard_app
 from portfolio_backend.ibkr import import_health
 from portfolio_backend.ibkr.mobile_service import build_ibkr_mobile_payload_context
 from portfolio_backend.ibkr.repository import load_flex_report_from_env
@@ -902,6 +902,7 @@ def refresh_context(
     """Refresh prices from a valid base snapshot, rebuilding only when required."""
     resolved_cache_bust = cache_bust if cache_bust is not None else _refresh_cache_bust()
     if _data_source() != DATA_SOURCE_IBKR:
+        dashboard_app._download_excel.cache_clear()
         context = get_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
