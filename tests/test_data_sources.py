@@ -509,3 +509,14 @@ def test_fetch_price_history_does_not_write_bundled_fallback_when_store_unavaila
     assert errors == []
     assert summary == {"requested": 1, "fetched": 1}
     assert history["AAA"].tolist() == [101.0, 102.0]
+
+
+def test_daily_fallback_warning_uses_date_of_last_valid_price():
+    ticker = FakeCurrentTicker(
+        fast_info={},
+        history=pd.DataFrame({"Close": [99.0, float("nan")]}, index=pd.to_datetime(["2026-05-11", "2026-05-12"])),
+    )
+    prices, errors, summary = fetch_current_prices_yf(["AAA"], FakeCurrentPriceYF(pd.DataFrame(), {"AAA": ticker}))
+    assert prices == {"AAA": 99.0}
+    assert errors == ["AAA: using daily closing price from 2026-05-11; live quote unavailable."]
+    assert summary["daily_fallback"] == 1

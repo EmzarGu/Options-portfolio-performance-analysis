@@ -395,11 +395,12 @@ def fetch_current_prices_yf(tickers, yf_module) -> Tuple[Dict[str, float], List[
                 continue
             hist = tk.history(period="5d", interval="1d")
             if not hist.empty:
-                price = _coerce_live_price(hist["Close"].dropna().iloc[-1] if "Close" in hist else None)
+                closes = hist["Close"].dropna() if "Close" in hist else pd.Series(dtype=float)
+                price = _coerce_live_price(closes.iloc[-1] if not closes.empty else None)
                 if price is not None:
                     prices[t] = price
                     summary["daily_fallback"] += 1
-                    quote_date = pd.Timestamp(hist.index[-1]).date().isoformat()
+                    quote_date = pd.Timestamp(closes.index[-1]).date().isoformat()
                     errors.append(f"{t}: using daily closing price from {quote_date}; live quote unavailable.")
                 continue
         except Exception as exc:
