@@ -14,6 +14,7 @@
 !scripts/deploy_verified.py
 !scripts/import_option_market_history.py
 !scripts/check_runtime.py
+!scripts/ibkr_backfill.py
 
 **/__pycache__/**
 **/*.pyc

@@ -19,7 +19,7 @@ USER root
 COPY requirements-dev.txt requirements-streamlit.txt ./
 RUN python -m pip install --no-deps -r requirements-dev.txt && python -m pip check
 COPY tests/ tests/
-COPY scripts/deploy_verified.py scripts/deploy_verified.py
+COPY scripts/deploy_verified.py scripts/ibkr_backfill.py scripts/
 COPY streamlit_app.py visual_prototype.py ./
 USER 10001:10001
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
