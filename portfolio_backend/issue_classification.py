@@ -40,6 +40,13 @@ _KNOWN_HISTORICAL_AUDIT_MESSAGES = frozenset(
 
 def classify_backend_issue(message: str) -> IssueClassification:
     text = str(message or "")
+    if text.startswith(("Benchmark unavailable:", "Benchmark history ")):
+        return IssueClassification(
+            category="historical_price",
+            severity="warning",
+            action="review_source_data",
+            actionable=True,
+        )
     if text in _KNOWN_HISTORICAL_AUDIT_MESSAGES:
         return IssueClassification(
             category="wheel_audit",

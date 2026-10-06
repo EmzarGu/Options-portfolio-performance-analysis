@@ -1,6 +1,19 @@
 from portfolio_backend.issue_classification import classify_backend_issue, split_actionable_and_audit_issues
 
 
+def test_missing_benchmarks_are_price_issues_not_workbook_repairs():
+    for message in (
+        "Benchmark unavailable: PUTW ETF; comparison data is missing.",
+        "Benchmark history unavailable: price history could not be loaded.",
+        "Benchmark history provider reported 1 warning(s); some series may be incomplete.",
+    ):
+        result = classify_backend_issue(message)
+        assert result.category == "historical_price"
+        assert result.action == "review_source_data"
+        assert result.severity == "warning"
+        assert result.actionable
+
+
 def test_expected_wheel_exclusions_are_non_actionable_audit_notes():
     messages = [
         "Excluded ABC call execution on 2026-01-20 because no prior put-assignment stock inventory was held.",
