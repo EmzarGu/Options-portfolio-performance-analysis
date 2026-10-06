@@ -902,7 +902,8 @@ def test_ibkr_same_day_covered_call_roll_replacement_reuses_released_assignment_
     assert ftnt_inventory["covered_strike"] == 95.0
     assert ftnt_inventory["unrealized_pnl"] == pytest.approx(-250.0)
     ftnt_total = state.per_ticker_totals.loc[state.per_ticker_totals["ticker"].eq("FTNT")].iloc[0]
-    assert ftnt_total["unrealized_pnl"] == pytest.approx(-250.0)
+    # Full chain balance 505, plus linked stock loss -250; no roll result booked early.
+    assert ftnt_total["unrealized_pnl"] == pytest.approx(255.0)
     assert not [issue for issue in state.issues if "FTNT call" in issue]
 
 
@@ -1207,7 +1208,7 @@ def test_ibkr_wheel_covered_call_expiration_realizes_premium_and_keeps_stock():
     ]
 
 
-def test_ibkr_pipeline_nets_same_order_put_roll_without_double_counting_replacement():
+def test_ibkr_pipeline_keeps_same_order_put_roll_premium_open():
     open_old = _trade(
         putCall="P",
         symbol="ABC  251219P00100000",
@@ -1264,11 +1265,10 @@ def test_ibkr_pipeline_nets_same_order_put_roll_without_double_counting_replacem
     )
 
     yearly = state.yearly.set_index("year")
-    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(1297.0)
-    assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(0.0)
+    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(0.0)
+    assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(1297.0)
     assert [(event.date, event.otype, event.pnl, event.reason) for event in state.realized_option_events] == [
-        (pd.Timestamp("2025-11-17"), "Put", pytest.approx(1297.0), "close"),
-        (pd.Timestamp("2026-02-20"), "Put", pytest.approx(0.0), "expiration"),
+        (pd.Timestamp("2026-02-20"), "Put", pytest.approx(1297.0), "expiration"),
     ]
 
 
@@ -1689,7 +1689,7 @@ def test_ibkr_roll_is_accounted_as_close_old_and_open_new():
     assert open_lots[0].open_price == 4.49
 
 
-def test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_counting_replacement():
+def test_ibkr_pipeline_realizes_completed_roll_chain_in_completion_year():
     open_old = _trade(
         putCall="C",
         symbol="ABC  251219C00100000",
@@ -1770,15 +1770,14 @@ def test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_co
     )
 
     yearly = state.yearly.set_index("year")
-    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(1297.0)
-    assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(0.0)
+    assert yearly.loc[2025, "realized_options_pnl"] == pytest.approx(0.0)
+    assert yearly.loc[2026, "realized_options_pnl"] == pytest.approx(1297.0)
     assert [(event.date, event.pnl) for event in state.realized_option_events] == [
-        (pd.Timestamp("2025-11-17"), pytest.approx(1297.0)),
-        (pd.Timestamp("2026-02-20"), pytest.approx(0.0)),
+        (pd.Timestamp("2026-02-20"), pytest.approx(1297.0)),
     ]
 
 
-def test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized_premium():
+def test_ibkr_pipeline_keeps_roll_replacement_premium_open_until_close():
     open_old = _trade(
         putCall="C",
         symbol="ABC  251219C00100000",
@@ -1840,16 +1839,31 @@ def test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized
         align_benchmarks_monthly_fn=_empty_benchmarks,
     )
 
-    assert state.yearly.set_index("year").loc[2025, "realized_options_pnl"] == pytest.approx(1297.0)
+    assert state.yearly.set_index("year").loc[2025, "realized_options_pnl"] == pytest.approx(0.0)
     assert len(state.open_options) == 1
     open_row = state.open_options.iloc[0]
     assert open_row["ticker"] == "ABC"
     assert open_row["strike"] == 110.0
-    assert open_row["open_price"] == pytest.approx(0.0)
+    assert open_row["open_price"] == pytest.approx(12.97)
     assert open_row["roll_adjusted_open_price"] == pytest.approx(12.97)
 
+    from portfolio_backend.mobile_payloads import build_open_option_short_rows
+    from portfolio_backend.decision_lab_candidates import _covered_call_lifecycle_outcomes
 
-def test_ibkr_monthly_projection_reports_incremental_and_roll_adjusted_open_premium():
+    option = build_open_option_short_rows(state)[0]
+    assert option["accounting_open_premium"] == pytest.approx(1297)
+    assert option["strategy_premium_collected"] == pytest.approx(1297)
+    assert option["realized_premium_already_booked"] == pytest.approx(0)
+    outcomes = _covered_call_lifecycle_outcomes(
+        {"cost_basis": 100, "current_unrealized": 1297, "realized_pnl": 0},
+        strike=110, option_net=0, contract_qty=1, open_option=option,
+    )
+    # The deferred chain result and $1,000 stock gain appear once each.
+    assert outcomes["exercise_result"] == pytest.approx(2297)
+    assert outcomes["no_exercise_result"] == pytest.approx(1297)
+
+
+def test_ibkr_same_expiry_roll_keeps_realized_and_projected_premium_separate():
     open_old = _trade(
         underlyingSymbol="ZM",
         symbol="ZM   260515P00080000",
@@ -1911,10 +1925,10 @@ def test_ibkr_monthly_projection_reports_incremental_and_roll_adjusted_open_prem
         align_benchmarks_monthly_fn=_empty_benchmarks,
     )
 
-    assert [(event.ticker, event.pnl) for event in state.realized_option_events] == [("ZM", pytest.approx(897.0))]
+    assert state.realized_option_events == []
     assert len(state.open_options) == 1
     assert state.open_options.iloc[0]["ticker"] == "ZM"
-    assert state.open_options.iloc[0]["open_price"] == pytest.approx(0.0)
+    assert state.open_options.iloc[0]["open_price"] == pytest.approx(8.97)
     assert state.open_options.iloc[0]["roll_adjusted_open_price"] == pytest.approx(8.97)
     open_lots = [lot for lot in state.lots if lot.close_date is None]
     assert len(open_lots) == 1
@@ -1922,8 +1936,8 @@ def test_ibkr_monthly_projection_reports_incremental_and_roll_adjusted_open_prem
 
     rows = build_monthly_performance_rows(state, target_return=0.015, monthly_range="ytd")
     may = next(row for row in rows if row["month"] == "2026-05-31")
-    assert may["realized_options_pnl"] == pytest.approx(897.0)
-    assert may["open_premium_collected"] == pytest.approx(0.0)
+    assert may["realized_options_pnl"] == pytest.approx(0.0)
+    assert may["open_premium_collected"] == pytest.approx(897.0)
     assert "open_expiring_roll_adjusted_premium" not in may
     assert may["projected_month_pnl"] == pytest.approx(897.0)
 
@@ -2476,3 +2490,149 @@ def test_ibkr_vertical_put_spread_is_excluded_from_wheel_put_pnl():
     assert [row.trade_id for row in excluded] == ["SPY-LONG-OPEN", "SPY-SHORT-OPEN", "SPY-SHORT-CLOSE"]
     assert any("put spread contracts" in issue for issue in issues)
     assert any("put spread close contracts" in issue for issue in issues)
+
+
+@pytest.mark.parametrize("put_call", ["P", "C"])
+def test_partial_repeated_rolls_preserve_fifo_premium_and_cash_conservation(put_call):
+    # Two fills at different prices, a partial close, a larger replacement,
+    # then a second roll across months. Net balances stay deferred until completion.
+    specs = [
+        ("A", "20250824", "20251016", 100, -1, 199, "OPEN-A"),
+        ("B", "20250825", "20251016", 100, -2, 598, "OPEN-B"),
+        ("C", "20250930", "20251016", 100, 2, -802, "0001.ROLL1.02.01"),
+        ("D", "20250930", "20251120", 110, -3, 1497, "0001.ROLL1.03.01"),
+        ("E", "20251005", "20251120", 110, 1, -601, "0001.ROLL2.02.01"),
+        ("F", "20251005", "20251218", 120, -1, 699, "0001.ROLL2.03.01"),
+    ]
+    trades = [
+        _trade(tradeID=key, transactionID=key, ibExecID=execution,
+               conid=f"{put_call}-{expiry}-{strike}", symbol=f"ABC {expiry}{put_call}{strike}",
+               tradeDate=day, expiry=expiry, strike=strike, putCall=put_call,
+               quantity=qty, buySell="SELL" if qty < 0 else "BUY",
+               openCloseIndicator="O" if qty < 0 else "C", netCash=cash)
+        for key, day, expiry, strike, qty, cash, execution in specs
+    ]
+    report = _report({
+        "Trade": trades,
+        "OptionEAE": [_option_eae(date="20250101", quantity=-4),
+                      _stock_eae(date="20250101", quantity=400, tradePrice=100, proceeds=-40000)],
+    })
+
+    def build(day):
+        return build_ibkr_base_pipeline(
+            report, as_of=pd.Timestamp(day).date(),
+            fetch_price_history_fn=_empty_price_history,
+            align_benchmarks_monthly_fn=_empty_benchmarks,
+        )
+
+    september = build("2025-09-30")
+    assert september.realized_option_events == []
+    assert september.monthly_cycles.loc[pd.Timestamp("2025-09-30"), "realized_options_pnl"] == pytest.approx(0)
+    assert sum(row.open_price * row.qty * 100 for row in september.lots if row.close_date is None) == pytest.approx(1492)
+
+    october = build("2025-10-06")
+    assert october.monthly_cycles.loc[pd.Timestamp("2025-09-30"), "realized_options_pnl"] == pytest.approx(0)
+    assert october.monthly_cycles.loc[pd.Timestamp("2025-10-31"), "realized_options_pnl"] == pytest.approx(0)
+    open_credit = sum(row.open_price * row.qty * 100 for row in october.lots if row.close_date is None)
+    assert open_credit == pytest.approx(1590)
+    assert sum(event.pnl for event in october.realized_option_events) + open_credit == pytest.approx(1590)
+
+    finished = build("2025-12-19")
+    assert finished.open_options.empty
+    assert finished.monthly_cycles.loc[pd.Timestamp("2025-10-31"), "realized_options_pnl"] == pytest.approx(299)
+    assert finished.monthly_cycles.loc[pd.Timestamp("2025-11-30"), "realized_options_pnl"] == pytest.approx(896)
+    assert finished.monthly_cycles.loc[pd.Timestamp("2025-12-31"), "realized_options_pnl"] == pytest.approx(395)
+    assert sum(event.pnl for event in finished.realized_option_events) == pytest.approx(sum(x[5] for x in specs))
+
+
+@pytest.mark.parametrize("put_call", ["P", "C"])
+@pytest.mark.parametrize("replacement_expiry", ["20251219", "20260220"])
+def test_partial_roll_carries_negative_balance_and_realizes_only_terminal_quantity(put_call, replacement_expiry):
+    """One of two contracts ends; the other carries its loss through another roll."""
+    specs = [
+        ("A", "20251101", "20251219", 100, -2, 398, "OPEN"),
+        ("B", "20251105", "20251219", 100, 2, -1002, "0001.R1.02.01"),
+        ("C", "20251105", replacement_expiry, 110, -1, 299, "0001.R1.03.01"),
+        ("D", "20251110", replacement_expiry, 110, 1, -401, "0001.R2.02.01"),
+        ("E", "20251110", "20260320", 120, -1, 199, "0001.R2.03.01"),
+        ("F", "20260120", "20260320", 120, 1, -51, "TERMINAL"),
+    ]
+    trades = [
+        _trade(tradeID=key, transactionID=key, ibExecID=execution,
+               conid=f"{put_call}-{expiry}-{strike}", symbol=f"ABC {expiry}{put_call}{strike}",
+               tradeDate=day, expiry=expiry, strike=strike, putCall=put_call,
+               quantity=qty, buySell="SELL" if qty < 0 else "BUY",
+               openCloseIndicator="O" if qty < 0 else "C", netCash=cash)
+        for key, day, expiry, strike, qty, cash, execution in specs
+    ]
+    report = _report({"Trade": trades, "OptionEAE": [
+        _option_eae(date="20250101", quantity=-2),
+        _stock_eae(date="20250101", quantity=200, tradePrice=100, proceeds=-20000),
+    ]})
+    def build(day):
+        return build_ibkr_base_pipeline(
+            report, as_of=pd.Timestamp(day).date(), fetch_price_history_fn=_empty_price_history,
+            align_benchmarks_monthly_fn=_empty_benchmarks,
+        )
+    first = build("2025-11-06")
+    assert [(event.qty, event.pnl) for event in first.realized_option_events] == [(1, pytest.approx(-302))]
+    assert first.open_options.iloc[0].open_price * 100 == pytest.approx(-3)
+    repeated = build("2025-11-11")
+    assert [event.pnl for event in repeated.realized_option_events] == pytest.approx([-302])
+    assert repeated.open_options.iloc[0].open_price * 100 == pytest.approx(-205)
+    from portfolio_backend.mobile_payloads import build_open_option_short_rows
+    option = build_open_option_short_rows(repeated)[0]
+    assert option["accounting_open_premium"] == pytest.approx(-205)
+    assert option["realized_premium_already_booked"] == 0
+    assert sum(event.pnl for event in repeated.realized_option_events) + option["accounting_open_premium"] == pytest.approx(-507)
+    if put_call == "C":
+        from portfolio_backend.decision_lab_candidates import _covered_call_lifecycle_outcomes
+        outcomes = _covered_call_lifecycle_outcomes(
+            {"cost_basis": 100, "current_unrealized": -205, "realized_pnl": -302},
+            strike=120, option_net=0, contract_qty=1, open_option=option,
+        )
+        assert outcomes["exercise_result"] == pytest.approx(1493)
+        assert outcomes["no_exercise_result"] == pytest.approx(-507)
+    finished = build("2026-01-21")
+    assert finished.open_options.empty
+    assert [(event.qty, event.pnl) for event in finished.realized_option_events] == [
+        (1, pytest.approx(-302)), (1, pytest.approx(-256))]
+    assert sum(event.pnl for event in finished.realized_option_events) == pytest.approx(sum(x[5] for x in specs))
+    assert finished.yearly.set_index("year").loc[2025, "realized_options_pnl"] == pytest.approx(-302)
+    assert finished.yearly.set_index("year").loc[2026, "realized_options_pnl"] == pytest.approx(-256)
+
+
+def test_roll_without_matching_old_inventory_does_not_discard_replacement_credit():
+    """A missing opening record is flagged; the replacement still keeps its cash."""
+    from portfolio_backend.ibkr.pipeline import _process_roll_adjusted_option_executions
+    rows = [
+        _trade(tradeID="CLOSE", transactionID="CLOSE", tradeDate="20251101", expiry="20251219",
+               quantity=1, buySell="BUY", openCloseIndicator="C", netCash=-501,
+               ibExecID="0001.ORPHAN.02.01"),
+        _trade(tradeID="NEW", transactionID="NEW", tradeDate="20251101", expiry="20260220",
+               quantity=-1, netCash=699, ibExecID="0001.ORPHAN.03.01"),
+    ]
+    events, lots, _, issues = _process_roll_adjusted_option_executions(
+        option_executions_from_rows(rows), set(), pd.Timestamp("2025-11-02"))
+    assert events == []
+    assert lots[0].open_price * 100 == pytest.approx(699)
+    assert any("Unmatched buy quantity" in issue for issue in issues)
+
+
+
+def test_multiyear_chain_defers_all_prior_roll_cash_until_april_assignment():
+    """All early roll credits carry forward, including across calendar years."""
+    import json
+    from pathlib import Path
+    from portfolio_backend.ibkr.pipeline import _process_roll_adjusted_option_executions
+    fixture = json.loads((Path(__file__).parent / "fixtures/completed_roll_chain_aapl.json").read_text())
+    executions = option_executions_from_rows([IbkrRawRow("Trade", row) for row in fixture["trades"]])
+    unfinished = [execution for execution in executions if execution.date < pd.Timestamp("2026-04-17")]
+    events, lots, _, issues = _process_roll_adjusted_option_executions(unfinished, set(), pd.Timestamp("2026-04-16"))
+    assert not events and not issues
+    assert len(lots) == 1
+    assert lots[0].open_price * 100 == pytest.approx(fixture["expected_net_result"])
+    events, lots, _, issues = _process_roll_adjusted_option_executions(executions, set(), pd.Timestamp("2026-04-17"))
+    assert not lots and not issues
+    assert [(event.date, event.pnl) for event in events] == [
+        (pd.Timestamp(fixture["expected_terminal_date"]), pytest.approx(fixture["expected_net_result"]))]

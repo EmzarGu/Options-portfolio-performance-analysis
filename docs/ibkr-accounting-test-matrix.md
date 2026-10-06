@@ -11,10 +11,9 @@ test. If a case is not covered, it is not production-ready.
 2. Short calls count only when backed by prior short-put assignment inventory.
 3. Stock P&L counts only for assignment-derived shares.
 4. Dividends count only during assignment-derived holding periods.
-5. Non-rolled options realize on close, expiration, or assignment, never on
-   open.
-6. Roll netting applies only when IBKR execution IDs prove the close and
-   replacement belong to the same roll order.
+5. Open premiums and continuing roll-chain balances never enter realized P&L.
+6. Proven same-order rolls carry the full signed balance forward; recognize it
+   once when the quantity terminates by close, expiration or assignment.
 7. A non-wheel call roll chain stays non-wheel until it is closed.
 8. Identical open contracts display as one position, while execution lots stay
    separate for audit and realized P&L matching.
@@ -39,10 +38,13 @@ test. If a case is not covered, it is not production-ready.
 | CALL-DISPLAY-001 | IBKR has multiple fills for same open contract | Display one open position by ticker/type/strike/expiration with summed quantity and weighted-average open price. Keep execution lots separate. | `test_build_open_options_frame_groups_same_contract_lots` | Covered |
 | CYCLE-CALL-001 | Assigned stock has a call expiring in the projected cycle | Keep OTM stock unrealized P&L as exposure only. If the call is ITM, include stock P&L capped at strike because the shares would be disposed in the cycle. | `test_future_call_cycle_keeps_otm_stock_unrealized_out_of_projected_pnl`; `test_future_call_cycle_caps_stock_pnl_at_itm_call_strike_and_not_put_loss` | Covered |
 | CYCLE-PUT-001 | Short put expires in the projected cycle | Add accounting open premium while OTM. If ITM, also add `(current - strike) * contracts * 100` assignment P&L. | `test_future_put_cycle_uses_open_premium_when_put_is_otm`; `test_future_put_cycle_adds_assignment_gap_when_put_is_itm` | Covered |
-| ROLL-CALL-001 | Same-order call roll | If close and replacement share IBKR execution group, net replacement credit into old close event and keep replacement open with zero unrecognized premium. Preserve roll-adjusted open premium separately for display/reconciliation. | `test_ibkr_pipeline_nets_same_day_roll_credit_on_close_date_without_double_counting_replacement`; `test_ibkr_pipeline_keeps_same_day_roll_replacement_open_with_zero_unrealized_premium` | Covered |
-| ROLL-CALL-002 | Same-day unrelated call close/open | Do not net unless IBKR execution group proves a roll. | `test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open` | Covered |
+| ROLL-CALL-001 | Same-order call roll | Defer the entire net roll-chain balance until completion, including across years and within the same expiry. Partial closures realize only terminal quantity; repeated rolls preserve all prior credits/debits. | `test_ibkr_pipeline_realizes_completed_roll_chain_in_completion_year`; `test_ibkr_pipeline_keeps_roll_replacement_premium_open_until_close`; `test_partial_repeated_rolls_preserve_fifo_premium_and_cash_conservation` | Covered |
+| ROLL-CALL-002 | Same-day unrelated call close/open | Do not group unrelated trades without broker execution evidence. | `test_ibkr_pipeline_does_not_net_unrelated_same_day_close_and_open` | Covered |
 | ROLL-CALL-003 | Non-wheel call roll chain | Exclude close and replacement when the original call was non-wheel. Replacement must not enter wheel P&L later. | `test_ibkr_wheel_call_filter_keeps_excluded_roll_chain_out_of_wheel_pnl` | Covered |
-| ROLL-PUT-001 | Same-order put roll | Same execution-group roll netting as calls, with no stock effect unless later assigned. | `test_ibkr_pipeline_nets_same_order_put_roll_without_double_counting_replacement` | Covered |
+| ROLL-PUT-001 | Same-order put roll | Same completed-chain accounting as calls; full net balance stays deferred until terminal closure, with no stock effect unless later assigned. | `test_ibkr_pipeline_keeps_same_order_put_roll_premium_open` | Covered |
+| ROLL-PARTIAL-001 | Partial terminal closure and repeated debit roll | Recognize only ended quantity; keep accumulated negative balances through repeated replacements and API/Lab projections. | `test_partial_roll_carries_negative_balance_and_realizes_only_terminal_quantity` | Covered |
+| ROLL-AAPL-001 | Actual June 2025-April 2026 AAPL chain | Carry every original broker credit/debit; realize +[private reconciliation amount] once in April, including [private reconciliation amount] omitted by the old fragment. | `test_actual_aapl_chain_defers_all_prior_roll_cash_until_april_assignment` | Covered |
+| ROLL-ORPHAN-001 | Missing old opening record | Flag unmatched close, preserve replacement cash as independent open lot. | `test_roll_without_matching_old_inventory_does_not_discard_replacement_credit` | Covered |
 | LONG-OPT-001 | Long option open/close | Preserve raw transactions. Exclude from short-option wheel metrics until long-option strategy support exists. | `test_ibkr_long_option_legs_are_excluded_from_short_strategy_adapter` | Covered |
 | SPREAD-001 | Vertical put/call spread | Exclude paired spread legs from wheel P&L. Do not count the short leg alone as a wheel option. | `test_ibkr_vertical_put_spread_is_excluded_from_wheel_put_pnl` | Covered |
 | STOCK-ASSIGN-001 | Stock bought through assigned put | Include only when matched to option-side put assignment. Cost basis from stock-side row/strike. | `test_ibkr_wheel_stock_transactions_use_option_eae_stock_rows_and_ignore_uncovered_calls`; `test_ibkr_stock_side_buy_without_put_assignment_does_not_seed_wheel_call_inventory` | Covered |

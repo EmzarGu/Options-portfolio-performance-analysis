@@ -101,9 +101,9 @@ Response:
 
 Premium fields in `items` use explicit accounting names:
 
-- `accounting_open_premium`: open option premium not already recognized in realized P&L. This is the only open-short premium value that may feed projected P&L.
-- `realized_premium_already_booked`: strategy premium already recognized in realized P&L, usually from prior roll accounting.
-- `strategy_premium_collected`: total strategy premium context for the open lot: `accounting_open_premium + realized_premium_already_booked`.
+- `accounting_open_premium`: signed deferred net option strategy balance, including every prior broker-linked roll credit/debit and fee. It is unrecognized while the chain is open and feeds projected P&L once; negative values are valid.
+- `realized_premium_already_booked`: compatibility field; zero for current IBKR builds because full continuing chain balances remain deferred until completion.
+- `strategy_premium_collected`: net strategy balance for the open quantity: `accounting_open_premium + realized_premium_already_booked`. Current IBKR builds have zero booked premium, so this equals the signed deferred balance.
 - `projected_pnl`: backend-computed expiry P&L for the open short contract: accounting open premium less current intrinsic value. Clients do not recompute it.
 
 ```json
@@ -226,15 +226,15 @@ Fields:
 
 - `snapshot.ytd_total_pnl`: null if `include_unrealized=true` and unrealized snapshot is blocked.
 - `snapshot.current_unrealized_pnl`, `current_option_unrealized_pnl`, `current_stock_unrealized_pnl`, `current_put_assignment_unrealized_pnl`: null if blocked by missing required prices.
-- `snapshot.current_option_unrealized_pnl`: includes open short option premium and the assignment gap for open ITM puts. The assignment gap is `(current_price - strike) * contracts * 100`, so it is negative when assignment would create an immediate stock loss.
-- `snapshot.current_option_premium_unrealized_pnl`: open short option premium before subtracting the ITM put assignment gap. This is a display/reconciliation subcomponent of `current_option_unrealized_pnl`, not an additional amount to add to total unrealized.
+- `snapshot.current_option_unrealized_pnl`: includes signed deferred option strategy balances and the assignment gap for open ITM puts. The assignment gap is `(current_price - strike) * contracts * 100`, so it is negative when assignment would create an immediate stock loss.
+- `snapshot.current_option_premium_unrealized_pnl`: signed deferred option strategy balances before subtracting the ITM put assignment gap. This is a display/reconciliation subcomponent of `current_option_unrealized_pnl`, not an additional amount to add to total unrealized.
 - `snapshot.current_stock_unrealized_pnl`: actual held-stock unrealized P&L only. Open ITM put assignment exposure is excluded because the shares are not owned yet.
 - `snapshot.itm_put_cash_required`: cash required to take assignment of currently ITM open puts at strike. `itm_put_market_value` is the current market value of those shares, and the difference is represented in `current_put_assignment_unrealized_pnl`.
 - `snapshot.available_cash`: reserved for an IBKR available-cash import. It is `null` until the import stores account cash balances.
 - `monthly_target.target_basis`: enum. Initial value is `avg_capital`, matching RoAC. If the product later supports RoPC target tracking, add `peak_capital` explicitly rather than changing semantics.
 - `monthly_target.current_return_metric`: enum. Initial value is `return_roac`.
 - `monthly_target.current_*`, `realized_*`, and `status`: realized-only values.
-- `monthly_target.open_premium_collected`: accounting open premium assigned to the active cycle. It is safe to add to realized P&L without double-counting same-expiration roll credits already recognized in realized roll economics.
+- `monthly_target.open_premium_collected`: accounting open premium assigned to the active cycle. It contains each open contract's actual net opening credit, including roll replacements, and is added only to projected P&L.
 - `monthly_target.projected_month_pnl`: canonical active-cycle projection and must match `monthly_target.cycle_projection.projected_cycle_pnl`.
 - `monthly_target.cycle_projection`: the canonical active-cycle object used by web and mobile. It includes the active cycle label/month, expiries, open ticker/contract counts, realized cycle P&L, additive open premium, ITM put assignment P&L for puts expiring in the cycle, linked stock unrealized exposure, projected cycle P&L, target/remaining values, put exposure, ITM put signal, and covered-call upside signal. OTM linked-stock P&L remains exposure only; ITM covered-call stock P&L enters the cycle projection at the call strike because assignment would dispose of the shares.
 - `monthly_target.monthly_target_status`: target status based on `projected_return_roac`, not realized return.
@@ -501,6 +501,76 @@ Recommended backend shape change:
 - Replace `inv_df` dataframe rows with typed `InventoryPosition` DTOs before API serialization.
 - Add stable IDs because dataframes do not provide row identity.
 
+## Endpoint 3a: Assigned Holdings Review Input
+
+`GET /v1/mobile/assigned-holdings-review`
+
+Purpose: versioned, read-only input for the assigned-holdings research
+automation. Unlike the grouped Positions payload, this endpoint preserves every
+active assignment lot and the allocation of every open covered call to those
+lots. It is built from the canonical IBKR wheel accounting pipeline; clients
+must not reconstruct assignment FIFO from raw imported rows.
+
+Query parameters: common parameters. `include_unrealized` defaults to `true`.
+Bearer/API-key authentication is inherited from all `/v1/mobile/*` routes.
+
+Top-level response:
+
+```json
+{
+  "request": {},
+  "data_freshness": {},
+  "review_input": {
+    "schema_version": "1.0",
+    "as_of": "2026-05-03",
+    "currency": "USD",
+    "recommendations_allowed": true,
+    "blockers": [],
+    "warnings": [],
+    "summary": {},
+    "holdings": [],
+    "unallocated_open_calls": [],
+    "methodology": {}
+  }
+}
+```
+
+Each `holdings` item includes:
+
+- `id`, `ticker`, `current_shares`, nullable `current_price`,
+  `current_price_updated_at`, and `price_status`.
+- `assignment_lots`: stable lot ID, assignment date, put expiration,
+  assignment strike, original/remaining shares, assigned-put premium, allocated
+  call cashflows, realized stock P&L, market stock P&L, stock P&L at open-call
+  strikes, capped upside, and lifecycle P&L excluding dividends.
+- `open_calls`: stable option ID, open/expiration dates, DTE, strike,
+  contracts, covered/unallocated shares, nullable underlying price/moneyness,
+  nullable `current_option_mark`, and per-assignment-lot allocations.
+- `totals`: remaining assignment capital, weighted assignment price, market
+  value, lifecycle components, covered shares, and current capped upside.
+- Top-level accounting warnings are limited to issues naming a currently active
+  assigned holding. The summary reports how many unrelated historical warnings
+  were suppressed so clients are not flooded by closed-position diagnostics.
+- `data_quality`: `ok`, `warning`, or `blocked`, with machine-readable blockers
+  and warnings.
+
+Rules:
+
+- Missing-price holdings remain in `holdings`; price-dependent values are
+  `null` and that holding's call-management input is blocked.
+- Unhealthy/stale IBKR import metadata sets
+  `review_input.recommendations_allowed=false`.
+- Calls exceeding assignment-derived inventory are retained in
+  `unallocated_open_calls` and block recommendations.
+- Mixed assignment lots are never collapsed for call allocation. Weighted
+  assignment price is display-only.
+- `current_option_mark` is currently `null`; the canonical live-price overlay
+  supplies underlying prices, not option marks.
+- Lifecycle P&L excludes dividends until reliable assignment-lot attribution is
+  available. The omission is explicit in `methodology` and per-holding warnings.
+- This endpoint does not perform research, make recommendations, or place,
+  modify, preview, or cancel orders.
+
 ## Endpoint 4: Per-Ticker P&L
 
 `GET /v1/mobile/tickers`
@@ -597,7 +667,7 @@ Nullability:
 - History row `id` is mandatory when `history` is populated. Use `year:{YYYY}:ticker:{ticker}`.
 - `unrealized_pnl` and `total_pnl` are `null` when unrealized snapshot is blocked.
 - `current_option_premium_unrealized_pnl`, `current_put_assignment_unrealized_pnl`, `current_option_unrealized_pnl`, and `current_stock_unrealized_pnl` are `null` when unrealized snapshot is blocked.
-- `current_option_premium_unrealized_pnl` is open short option premium by ticker. It is not realized P&L.
+- `current_option_premium_unrealized_pnl` is the signed deferred option strategy balance by ticker, including linked roll history. It is not realized P&L.
 - `current_put_assignment_unrealized_pnl` is the open ITM put assignment gap by ticker. It is negative when assignment would immediately create a stock loss.
 - `current_option_unrealized_pnl` is `current_option_premium_unrealized_pnl + current_put_assignment_unrealized_pnl`.
 - `current_stock_unrealized_pnl` is actual held-stock unrealized P&L by ticker. It excludes open put assignment exposure because those shares are not owned yet.
@@ -743,7 +813,7 @@ Nullability:
 - Month row `id` is mandatory and must follow the stable row ID rules above.
 - `return_roac` and `return_ropc` are `null` if capital coverage is incomplete for the month.
 - `total_realized_pnl`, `realized_month_pnl`, `return_roac`, `return_ropc`, `remaining_pnl`, and `status` are realized-only.
-- `open_premium_collected` is assigned by option expiration month for still-open short options and is safe to add to realized P&L without double-counting. For same-expiration rolls, replacement premium can be netted into the realized roll event, so this field may be zero even while a rolled replacement remains open.
+- `open_premium_collected` retains its compatibility key but is the signed deferred net balance of open option strategies, assigned by current expiration month. Linked rolls carry original receipts, every buyback/replacement and actual fees until final close, expiration or assignment. Only projections add this balance to realized P&L; historical realized values exclude continuing chains. Display as Open strategy balance, and allow negative values.
 - `includes_open_premium` is `true` when projected values include non-zero open option premium for that expiration month.
 - `projection_basis` allowed values: `realized_only`, `realized_plus_open_premium`.
 - `projected_month_pnl` for the active/current month is the canonical active-cycle projected P&L and matches `active_cycle.projected_cycle_pnl`. Closed historical months remain realized-only. Future rows use their own `cycle_projection.projected_cycle_pnl` when open option exposure exists.

@@ -7,9 +7,9 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-import mobile_api
+from portfolio_backend import context_runtime as context_service
 from portfolio_backend.charts import build_benchmark_growth_chart_data, build_options_cycle_chart_data
-from portfolio_backend.ibkr.assignment_quality import assignment_quality_tickers, build_assignment_quality_analysis
+from portfolio_backend.assignment_quality_runtime import build_assignment_payload
 from portfolio_backend.ibkr.repository import load_flex_report_from_env
 from portfolio_backend.mobile_api_service import (
     build_mobile_dashboard_payload,
@@ -49,11 +49,13 @@ def _json_safe(value: Any) -> Any:
 
 
 def _frame_records(df: Any, *, index_name: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return JSON-safe rows without mutating the source frame or its index."""
     if df is None or getattr(df, "empty", True):
         return []
     frame = df.copy()
     if index_name is not None:
-        frame = frame.reset_index().rename(columns={frame.reset_index().columns[0]: index_name})
+        frame = frame.reset_index()
+        frame = frame.rename(columns={frame.columns[0]: index_name})
     if limit is not None:
         frame = frame.head(limit)
     return _json_safe(frame.to_dict(orient="records"))
@@ -145,49 +147,21 @@ def _expectancy_by_year_records(state: Any) -> List[Dict[str, Any]]:
     return rows
 
 
-def _assignment_quality_payload(state: Any) -> Dict[str, Any]:
-    prices = dict(getattr(state, "stock_prices", {}) or getattr(state, "live_prices", {}) or {})
-    as_of = pd.to_datetime(getattr(state, "as_of", None) or date.today()).normalize()
+def _assignment_quality_payload(state: Any, source_metadata: Optional[dict] = None) -> Dict[str, Any]:
+    """Revalue cached historical accounting without rebuilding it on price refresh."""
+    def fetch_prices(tickers):
+        deps = context_service._dependencies({})
+        return deps.fetch_current_prices(tickers) if deps.fetch_current_prices else ({}, [], {})
+
     try:
-        report = load_flex_report_from_env()
-    except Exception as exc:
-        return {"error": str(exc), "summary": {}, "by_ticker": [], "by_assignment_year": [], "by_horizon": [], "lot_detail": []}
-    assignment_tickers = assignment_quality_tickers(report, as_of=as_of)
-    missing_current = sorted(ticker for ticker in assignment_tickers if ticker not in prices)
-    if missing_current:
-        try:
-            deps = mobile_api._dependencies({})
-            if deps.fetch_current_prices is not None:
-                fetched, _errors, _summary = deps.fetch_current_prices(missing_current)
-                prices.update(fetched or {})
-        except Exception:
-            pass
-    historical_prices: Dict[str, pd.Series] = {}
-    history_errors: list[str] = []
-    tickers = sorted(set([*assignment_tickers, *[str(ticker).upper() for ticker in prices.keys()]]))
-    if tickers:
-        try:
-            store = get_default_price_history_store()
-            lookups = store.get_many_history(tickers, pd.Timestamp("2000-01-01"), as_of)
-            historical_prices = {
-                ticker: lookup.series
-                for ticker, lookup in lookups.items()
-                if lookup is not None and getattr(lookup, "series", pd.Series(dtype=float)) is not None
-            }
-        except Exception as exc:
-            history_errors.append(str(exc))
-    try:
-        payload = build_assignment_quality_analysis(
-            report,
-            as_of=as_of,
-            prices=prices,
-            historical_prices=historical_prices,
+        return build_assignment_payload(
+            state=state, source_metadata=source_metadata or {},
+            report_loader=load_flex_report_from_env,
+            history_store_factory=get_default_price_history_store,
+            price_fetcher=fetch_prices,
         )
     except Exception as exc:
         return {"error": str(exc), "summary": {}, "by_ticker": [], "by_assignment_year": [], "by_horizon": [], "lot_detail": []}
-    if history_errors:
-        payload.setdefault("coverage", {})["history_errors"] = history_errors
-    return payload
 
 
 def get_web_context(
@@ -203,7 +177,7 @@ def get_web_context(
     os.environ.setdefault("OPTIONS_DATA_SOURCE", "ibkr")
     os.environ.setdefault("IBKR_REPORT_SOURCE", "firestore")
     if force_rebuild:
-        context, cache_bust, _refresh_metadata = mobile_api._smart_refresh_context(
+        context, cache_bust, _refresh_metadata = context_service.refresh_context(
             as_of=as_of,
             include_unrealized=include_unrealized,
             selected_sheets=None,
@@ -212,7 +186,7 @@ def get_web_context(
         )
         return context, cache_bust
     cache_bust = None
-    context = mobile_api._context(
+    context = context_service.get_context(
         as_of=as_of,
         include_unrealized=include_unrealized,
         selected_sheets=None,
@@ -368,7 +342,7 @@ def build_dashboard_data(
 
 def build_assignment_quality_data(*, as_of: Optional[date] = None) -> Dict[str, Any]:
     context, _ = get_web_context(as_of=as_of, include_unrealized=True)
-    return _json_safe(_assignment_quality_payload(context.state))
+    return _json_safe(_assignment_quality_payload(context.state, getattr(context, "source_metadata", {}) or {}))
 
 def dashboard_shell_data(*, include_unrealized: bool, target_return: float, target_floor: float = 0.01) -> Dict[str, Any]:
     target_floor = min(float(target_floor), float(target_return))

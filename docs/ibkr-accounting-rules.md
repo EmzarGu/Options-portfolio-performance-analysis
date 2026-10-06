@@ -16,9 +16,12 @@ dividends, and positions. The IBKR importer should preserve the raw facts and
 then produce a calculation model with explicit option lots, stock lots, realized
 events, and cashflows.
 
-## Current App Model
+## Legacy Google Sheet Model
 
-The active pipeline currently does this:
+The simplified Google Sheet pipeline provides the original model described
+below. Its manual assignment flags and yfinance dividend estimates are legacy
+source behavior, not the current IBKR source implementation. Current IBKR
+recognition and eligibility rules are defined in the following sections.
 
 - A `Sell` option row opens a short option lot.
 - A matching `Buy` row closes that short option lot FIFO by ticker, type,
@@ -68,41 +71,55 @@ option_cashflow_pnl = short option opening credits - close debits - commissions,
 option_lifecycle_pnl = close/expiration/assignment P&L by option lot lifecycle
 ```
 
-`option_cashflow_pnl` is the appropriate first comparison to the manually
-maintained sheet because the sheet often records rolled options as net strategy
-cash movements. `option_lifecycle_pnl` is still useful for lot audits, tax-style
-realization, and open-lot reconciliation, but it is misleading on its own for
-yearly dashboard P&L when an in-the-money covered call is rolled into a future
-expiry. In that case IBKR records a large buy-to-close debit and a large
-sell-to-open credit; the net roll cashflow, not only the close debit, reflects
-the strategy movement for the period.
+Dashboard realized option P&L is completed-strategy P&L. An ordinary short
+option is a one-contract-lifecycle strategy. A broker-confirmed roll continues
+the existing strategy; it does not realize the continuing quantity.
 
-The production IBKR dashboard pipeline therefore uses strategy cashflow
-semantics for roll chains:
+For each continuing quantity, carry the signed net balance forward:
 
 ```text
-Normal short option:
-  realize only when the lot is closed, expires, or is assigned.
-
-IBKR same-order roll:
-  if a BUY/C close and SELL/O replacement share the same execution group on
-  the same date, ticker, and option type, allocate the replacement credit to
-  the old lot close event. The replacement lot remains open with zero
-  unrecognized premium for dashboard purposes, so its later expiration or
-  assignment does not count the same credit a second time.
-
-Excluded/non-wheel call roll:
-  if a call is excluded because it is not backed by available
-  assignment-derived stock, every same-execution-group replacement leg remains
-  excluded until that non-wheel chain is closed. A later replacement must not
-  become wheel P&L merely because assignment-derived shares become available
-  after the non-wheel chain was already opened.
+replacement balance = prior deferred balance - buyback cost + replacement credit
 ```
 
-This is not open-date realization. A non-rolled option opened in one year and
-closed or expired in the next year is still realized in the close/expiration
-year. Roll netting is allowed only when IBKR execution IDs prove the close and
-replacement were part of the same roll order.
+All balances include actual commissions/rebates. A balance may be negative.
+Repeated rolls accumulate every prior credit/debit; replacement receipts are
+never realized while the chain is open. On final closure without replacement,
+expiration, or assignment, recognize the entire accumulated net option result
+once, on that terminal event date. Cross-year chains are recognized in their
+completion year, without separate prior-year roll losses or later gross credits.
+
+Roll identity requires the same date, ticker, option type, multiplier and proven
+IBKR combo execution prefix. Unrelated same-day trades remain independent.
+Allocate multiple fills FIFO by quantity. A partial roll carries only the linked
+quantity; any closed quantity without replacement is realized immediately. Any
+extra replacement quantity starts a new independent lot. Keep carried lots
+separate internally, even when identical contracts aggregate for display.
+
+`OptionLot.open_price` and `roll_adjusted_open_price` both contain the per-share
+deferred net strategy balance in IBKR mode, rather than the latest gross opening
+receipt. Open-option, unrealized and expiry-projection calculations use that
+signed balance once. Compatibility fields named premium retain their keys but
+represent this balance; they must not clamp losses to zero. Raw executions retain
+actual contract credits/debits and broker per-contract realization for audit.
+This dashboard strategy attribution differs from broker/tax contract realization.
+
+Reported terminal IBKR transactions recognize the result on their recorded date.
+Without a reported close, keep a lot visible through expiration day; implicit
+expiration is recognized only when `as_of` is later, dated to expiration.
+
+Assigned option results remain separate from stock P&L at strike. Wheel stock,
+dividend attribution and excluded/non-wheel roll inheritance remain unchanged.
+
+Historical basis: the May 10 April reconciliation describes carrying AAPL roll
+economics to final April assignment in the earlier strategy log. Its -[private reconciliation amount]
+example includes only the last three adjustments; the complete broker-linked
+chain, including earlier opening/roll credits, totals +[private reconciliation amount] Preserve the
+mechanism, and calculate the balance from all original broker executions.
+The May/June IBKR implementation instead booked roll credits immediately, and
+the first October correction split individual contract realization. Neither
+implementation satisfied both user requirements. The user authorized this
+completed-chain rule, regression tests and production deployment on October 1.
+See [implementation and release record](completed-roll-chain-accounting-2026-10-01.md).
 
 Short calls require one extra wheel eligibility check. A call execution is part
 of wheel option P&L only if assignment-derived shares from an earlier short put
@@ -125,10 +142,10 @@ shares is excluded, even if IBKR later records a call assignment.
 | Covered call expires worthless | `SELL/O` call; `OptionEAE Expiration` or no close by expiry | Realize call premium. | Stock inventory remains unchanged. | Dividends continue if stock still held. | Realizes option premium; stock lot remains. | Same. |
 | Covered call bought to close | `SELL/O` call; `BUY/C` call | Realize option P&L from premium minus close cost. | Stock inventory unchanged. | Dividends continue. | Same for option lot. | Same; use IBKR close execution and realized P&L reconciliation. |
 | Covered call assigned partially | One or more call lots assigned; stock-side sell less than total holdings | Realize only the assigned call premium. | Sell only the stock-side quantity FIFO. Example: 400 assignment-derived shares at 70, then a 2-contract call assigned at 75 sells 200 shares, realizes 200 * (75 - 70) stock P&L, and leaves 200 shares open at 70 basis. | Dividends stop only for sold shares after assignment date; remaining shares keep their holding segment. | Handles assigned call as stock sell, FIFO. | Same, but stock-side sell from IBKR is authoritative for quantity/proceeds. |
-| Roll short call up/out for credit | `BUY/C` old option plus `SELL/O` new option, same IBKR execution group | Realize old lot on close date using old premium + close debit + replacement credit. Open replacement with zero unrecognized premium to prevent double counting. | Stock inventory unchanged. | Dividends continue. | Sheet often manually nets the roll chain into one strategy result. | Net only same-execution-group roll legs. Do not net unrelated same-day trades. |
-| Roll short call up/out for debit | Same as above | Realize old lot on close date using old premium + close debit + replacement credit/debit. Open replacement with zero unrecognized premium for the rolled quantity. | Stock inventory unchanged. | Dividends continue. | Same if manually netted. | Same. |
-| Partial roll | Close part of old lot and open smaller/larger new lot in same execution group | FIFO close only the rolled quantity. Allocate replacement credit/debit pro rata. Preserve any unrolled old quantity and any residual new quantity separately. | Stock inventory unchanged. | Dividends continue. | Partial closes preserve remaining lot. | Same; IBKR quantities drive allocation. |
-| Roll short put down/out | `BUY/C` old put plus `SELL/O` new put in same execution group | Same roll netting as calls. | No stock transaction unless later assigned. | None until stock exists. | Same if rows separate or manually netted. | Same. |
+| Roll short call up/out for credit | `BUY/C` old option plus `SELL/O` new option, same IBKR execution group | Carry old deferred balance minus buyback debit plus replacement credit onto the linked replacement; realize only at chain completion. | Stock inventory unchanged. | Dividends continue. | Sheet often manually nets the roll chain into one strategy result. | Keep the full signed net chain balance deferred until completion; do not split roll legs into realized periods. |
+| Roll short call up/out for debit | Same as above | Carry the signed net balance, including any accumulated loss, until chain completion. | Stock inventory unchanged. | Dividends continue. | Same if manually netted. | Same. |
+| Partial roll | Close part of old lot and open smaller/larger new lot in same execution group | Carry the linked rolled quantity FIFO. Realize terminal closed quantities only; preserve untouched old and extra new quantities separately. | Stock inventory unchanged. | Dividends continue. | Partial closes preserve remaining lot. | Same; IBKR quantities drive allocation. |
+| Roll short put down/out | `BUY/C` old put plus `SELL/O` new put in same execution group | Same deferred net chain balance as calls; realize at terminal close/expiration/assignment. | No stock transaction unless later assigned. | None until stock exists. | Same if rows separate or manually netted. | Same. |
 | Non-wheel call rolled forward | Original call is not backed by assignment-derived inventory; later `BUY/C` plus `SELL/O` replacement shares same IBKR execution group | Exclude original call, close, and replacement from wheel option P&L. | No wheel stock effect. | No wheel dividend effect. | Sheet may include this manually if it was intentionally tracked. | Preserve raw IBKR rows but do not include in wheel dashboard. |
 | Short put assigned then stock later sold manually | Put assignment stock buy plus later `Trade` `assetCategory=STK`, `buySell=SELL` | Put premium already realized at assignment. | Stock sale realizes stock P&L FIFO. | Dividends included for holding period. | Can handle only if sale comes from assigned call or manually represented stock flow; sheet source does not generally load stock sells. | Use explicit IBKR stock sell. This is required for reliable accounting. |
 | Manual stock buy followed by covered call | `Trade` stock buy; later short call `SELL/O` | Exclude from wheel option P&L. | Exclude from wheel stock P&L. | Exclude dividends. | Current source usually lacks independent stock buys unless derived. | Preserve raw activity, but do not include in wheel performance unless a separate covered-call strategy view is added. |
@@ -175,12 +192,9 @@ Recommended defaults:
 1. Option lots are matched FIFO by account, underlying, put/call, strike,
    expiration, and multiplier.
 2. Prefer IBKR `conid` for exact option identity when available.
-3. Rolls are recognized by the dashboard only when IBKR execution IDs show the
-   close and replacement belong to the same execution group. The dashboard
-   allocates the replacement credit/debit to the old close event and keeps the
-   replacement lot open with zero unrecognized premium for the rolled quantity.
-   Raw execution storage still preserves the close and replacement as separate
-   IBKR facts.
+3. Execution groups establish roll identity for wheel classification and chain
+   continuation. Close inventory FIFO, transfer the complete signed balance to
+   linked replacements, and realize only terminal quantities.
 4. Stock lots are matched FIFO by account and ticker/conid, but wheel dashboard
    stock lots are seeded only from short-put assignment stock-side rows.
 5. Assignment/exercise stock movement should be sourced from stock-side
@@ -191,15 +205,16 @@ Recommended defaults:
 7. Dividends should use actual IBKR cash transactions rather than yfinance once
    stock holding segments are sourced from IBKR.
 8. Cash deposits/withdrawals are capital flows, not trading P&L.
-9. Dashboard option P&L in IBKR mode should use execution-date option cashflow
-   unless the UI explicitly labels a value as lot-lifecycle realized P&L.
+9. Realized dashboard option P&L uses completed strategy quantities, including
+   their entire linked roll history.
+   Execution-date cashflow and open-option projections are separate measures.
 10. Dashboard call option P&L is included only while assignment-derived shares
     from a prior short put are held. Covered calls without that prior put are
     preserved in raw storage and excluded from wheel performance.
 11. A roll replacement inherits the wheel/non-wheel classification of the
     call being bought to close when both legs share the same IBKR execution
     group. This prevents excluded call chains from re-entering wheel P&L later
-    as standalone replacement premium.
+    as the entire carried net strategy balance, never only the latest replacement credit.
 12. Keep execution-level option lots separate for audit and realized P&L
     matching, but aggregate identical open contracts for Streamlit/iOS position
     display. Same ticker, option type, strike, and expiration should render as

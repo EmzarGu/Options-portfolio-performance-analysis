@@ -1,6 +1,28 @@
 import pandas as pd
 
 from portfolio_backend.price_history_store import MemoryPriceHistoryStore
+from portfolio_backend.price_history_store import _series_from_doc
+
+
+def test_history_parser_preserves_mixed_dates_invalid_rows_and_duplicates():
+    rows = [
+        {"date": "2024-05-22", "close": "103.5"},
+        {"date": "May 20, 2024", "close": 100},
+        {"date": "2024-05-21T15:30:00", "close": "102"},
+        {"date": "2024-05-20", "close": 101.0},
+        {"date": "invalid", "close": 900},
+        {"date": "2024-05-23", "close": "invalid"},
+        {"date": None, "close": 999},
+        {"date": "2024-05-24"},
+    ]
+    expected = pd.Series([101.0, 102.0, 103.5],
+                         index=pd.to_datetime(["2024-05-20", "2024-05-21", "2024-05-22"]), name="AAA")
+    pd.testing.assert_series_equal(_series_from_doc({"prices": rows}, "AAA"), expected)
+
+
+def test_history_parser_retains_empty_series_contract():
+    for doc in ({}, {"prices": []}, {"prices": [{"date": "bad", "close": 3}, {}]}):
+        pd.testing.assert_series_equal(_series_from_doc(doc, "AAA"), pd.Series(dtype=float, name="AAA"))
 
 
 def test_memory_price_history_store_serves_covered_range():

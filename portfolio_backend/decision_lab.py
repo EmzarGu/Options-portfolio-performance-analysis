@@ -770,7 +770,7 @@ def _coverage_notes(
         notes.append(
             {
                 "severity": "status",
-                "message": f"Option coverage: quotes {fmt_pct_for_note(quote_coverage)}, greeks {fmt_pct_for_note(greek_coverage)}.",
+                "message": f"Fields present in {contract_count} displayed contracts: quotes {fmt_pct_for_note(quote_coverage)}, greeks {fmt_pct_for_note(greek_coverage)}. This is not download completeness.",
             }
         )
     else:

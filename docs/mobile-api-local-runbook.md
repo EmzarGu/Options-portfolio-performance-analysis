@@ -3,6 +3,8 @@
 This runbook is for backend and iOS development against the local FastAPI mobile
 API.
 
+Refresh semantics checked against local source on 2026-09-19.
+
 ## Install
 
 ```bash
@@ -25,6 +27,13 @@ For an iOS simulator running on the same Mac, use the same host and port. For a
 physical device, expose the Mac on the local network and use the Mac LAN IP.
 
 ## Common Query Parameters
+
+For IBKR/Firestore, configure `OPTIONS_DATA_SOURCE=ibkr`,
+`IBKR_REPORT_SOURCE=firestore`, the project/query IDs, and authorized Firestore
+credentials as described in the [web runbook](cloud-run-web-dashboard.md).
+The sheet-selection examples below apply to the legacy Sheets path. When
+`MOBILE_API_KEY` is configured, protected endpoints require an `x-api-key` header
+or a bearer token; health remains public.
 
 Read endpoints and refresh accept the same common query parameters:
 
@@ -55,13 +64,12 @@ prefs, Sheets, prices, or pipeline data. Use `GET /v1/mobile/config` as the
 first functional backend/config check.
 
 After refresh succeeds, the iOS client should reload the read endpoints listed
-in `refresh.reload_endpoints`. In IBKR/Firestore mode the server persists the
-refreshed context as the latest shared state for matching read calls, so the
-client does not need to append `cache_bust` during normal app use.
-
-Read endpoints prefer the persisted refreshed context when available. Local
-in-memory reuse is only an optimization/fallback, not the cross-request source
-of truth.
+in `refresh.reload_endpoints`. In IBKR/Firestore mode the server restores a matching
+persisted **base accounting snapshot** and refreshes its price overlay. If no valid
+base exists, it rebuilds and stores that base. It does not persist the full
+price-refreshed context for reuse across instances. The current process remembers
+the refreshed context and cache-bust value; normal clients do not need to append
+`cache_bust`. Read calls check source markers before reusing in-memory contexts.
 
 ## Smoke Test
 

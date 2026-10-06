@@ -1,6 +1,24 @@
 from __future__ import annotations
 
 
+DECISION_RESPONSE_JS = """
+async function readDecisionLabResponse(response){
+  if (!response.ok) {
+    const fallback = response.status === 504
+      ? "Decision Lab took too long to respond. Please retry; stored portfolio data is preserved."
+      : `Decision Lab request failed (HTTP ${response.status}). Please retry.`;
+    let error = fallback;
+    try {
+      const payload = await response.json();
+      if (payload.error) error = payload.error;
+    } catch (_) { /* Gateways may return plain text instead of JSON. */ }
+    throw new Error(error);
+  }
+  try { return await response.json(); }
+  catch (_) { throw new Error("Decision Lab returned an unreadable response. Please reload the page and retry."); }
+}
+"""
+
 BASE_CSS = """
 :root{color-scheme:dark;--color-bg:#080c0f;--color-surface:#10161a;--color-surface-raised:#11191c;--color-surface-muted:#0d1417;--color-border:#26383b;--color-border-strong:#365257;--color-text:#eef7ef;--color-text-muted:#aab7ad;--color-accent:#45d2c5;--color-positive:#7ee092;--color-negative:#ff6f78;--color-attention:#f6c25b;--color-info:#7aa7ff;--color-neutral:#aab7ad;--color-benchmark:#b8c2cc;--band-negative:var(--color-negative);--band-below:var(--color-attention);--band-target:var(--color-positive);--band-above:var(--color-info);--risk-itm:var(--color-negative);--risk-near:var(--color-attention);--risk-otm:var(--color-info);--priority-high:var(--color-negative);--priority-medium:var(--color-attention);--priority-low:var(--color-info);--status-current:var(--color-accent);--radius-control:6px;--radius-panel:8px;--bg:var(--color-bg);--panel:var(--color-surface);--panel2:var(--color-surface-raised);--line:var(--color-border);--muted:var(--color-text-muted);--text:var(--color-text);--accent:var(--color-accent);--accent2:var(--color-positive);--warn:var(--color-attention);--bad:var(--color-negative);--good:var(--color-positive);--shadow:0 12px 40px rgba(0,0,0,.24)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
@@ -751,8 +769,8 @@ function openShortColumns(){
     {key:"current_price",label:"Current",format:v=>fmtMoney(v,2),num:true},
     {key:"moneyness",label:"Moneyness",format:fmtPct,num:true,className:moneynessCls},
     {key:"quantity",label:"Qty",num:true},
-    {key:"accounting_open_premium",label:"Open premium",value:r=>numeric(r.accounting_open_premium) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
-    {key:"strategy_premium_collected",label:"Strategy premium",value:r=>numeric(r.strategy_premium_collected) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"accounting_open_premium",label:"Open strategy balance",value:r=>numeric(r.accounting_open_premium) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
+    {key:"strategy_premium_collected",label:"Net strategy balance",value:r=>numeric(r.strategy_premium_collected) || 0,format:v=>fmtMoney(v,2),num:true,className:cls},
     {key:"projected_pnl",label:"Projected P&L",format:v=>fmtMoney(v,2),num:true,className:cls},
     {key:"covered_status",label:"Backing",format:labelize}
   ];
@@ -777,7 +795,7 @@ function riskCards(rows, limit=null){
   return `<div class="risk-grid">${top.map(r => {
     const tone = riskTone(r);
     const premium = numeric(r.strategy_premium_collected) || 0;
-    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${safe(riskPill(r))}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Strategy premium ${safe(fmtMoney(premium,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
+    return `<div class="risk-card"><div class="risk-head"><div><div class="risk-title">${safe(r.ticker)} ${safe(r.option_type)} ${safe(fmtDec(r.strike,2))}</div><div class="muted">${safe(fmtDate(r.expiration))} - ${safe(r.days_to_expiration)} DTE</div></div><span class="pill ${tone}">${safe(riskPill(r))}</span></div><div class="risk-meta"><span>Current ${safe(fmtMoney(r.current_price,2))}</span><span>Moneyness ${safe(fmtPct(r.moneyness))}</span><span>Qty ${safe(r.quantity)}</span><span>${labelize(r.covered_status)}</span><span>Net strategy balance ${safe(fmtMoney(premium,2))}</span><span>Opened ${safe(fmtDate(r.opened))}</span></div></div>`;
   }).join("")}</div>`;
 }
 function monthlyRows(){
@@ -828,7 +846,7 @@ function decisionActiveCycle(){
 function activeCycleWaterfall(c){
   const parts = [
     ["Realized cycle P&L", c.realized_cycle_pnl],
-    ["Open premium collected", c.open_premium_collected],
+    ["Open strategy balance", c.open_premium_collected],
     ["ITM call stock P&L", c.itm_call_stock_pnl],
     ["ITM put assignment P&L", c.itm_put_unrealized_loss],
     ["Projected cycle P&L", c.projected_cycle_pnl],
@@ -875,7 +893,10 @@ function optionDataStatusText(){
   return `${safe(status.provider || "option data")} ${safe(status.status || "not fetched")} · ${safe(fmtNum(status.contract_count || 0))} contracts`;
 }
 function optionDataControls(){
-  return `<div class="option-controls"><div><div class="metric-label">Option data</div><div class="option-status mono">${optionDataStatusText()}</div></div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
+  const status = ((decisionData().option_market_data || {}).status) || {};
+  const notice = status.message ? `<div class="option-status">${safe(status.message)}</div>` : "";
+  const dated = status.provider === "marketdata" ? `<div class="option-status mono"><strong>Quotes: ${safe(fmtDate(status.quote_date))}</strong> · ${fmtNum(status.credits_used)} / ${fmtNum(status.account_daily_limit)} daily credits used</div><div>Download for ${safe(fmtDate(status.latest_quote_date || status.quote_date))}: ${fmtNum(status.prepared_request_count ?? ((status.request_count || 0) - (status.missing_request_count || 0)))} / ${fmtNum(status.request_count)} selections ready${status.missing_request_count ? ` · ${fmtNum(status.missing_request_count)} pending` : ""}</div>` : "";
+  return `<div class="option-controls"><div><div class="metric-label">Option data</div>${dated}<div class="option-status mono">${optionDataStatusText()}</div>${notice}</div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
 }
 function decisionActionRows(){
   return dataTable("decision-actions", decisionData().ticker_situations || [], [
@@ -924,17 +945,18 @@ function candidateTable(rows, status={}){
     {key:"roll_close_cost",label:"Est. close cost",format:fmtMoney,num:true,className:cls},
     {key:"roll_new_credit",label:"Est. new credit",format:fmtMoney,num:true,className:cls},
     {key:"roll_net_credit",label:"Net credit after close",format:fmtMoney,num:true,className:cls},
-    {key:"incremental_exit_pnl",label:"Net improvement vs current",format:fmtMoney,num:true,className:cls},
-    {key:"expected_value",label:"Expected value",format:fmtMoney,num:true,className:cls},
-    {key:"expected_value_vs_current",label:"EV vs current",format:fmtMoney,num:true,className:cls},
+    {key:"incremental_exit_pnl",label:"Exit proceeds change",format:fmtMoney,num:true,className:cls},
+    {key:"expected_value",label:"Scenario estimate",format:fmtMoney,num:true,className:cls},
+    {key:"expected_value_vs_current",label:"Scenario vs current",format:fmtMoney,num:true,className:cls},
     {key:"exercise_result",label:"If exercised",format:fmtMoney,num:true,className:cls},
     {key:"no_exercise_result",label:"If not exercised",format:fmtMoney,num:true,className:cls},
     {key:"upside_left",label:"Added upside room",format:fmtMoney,num:true,className:cls},
     {key:"upside_foregone",label:"Current price above strike",format:fmtMoney,num:true,className:cls},
-    {key:"exercise_probability",label:"Exercise probability",format:v=>numeric(v)===null?"n/a":`${(Math.abs(Number(v))*100).toFixed(1)}%`,num:true},
+    {key:"exercise_probability",label:"Delta exercise proxy",format:v=>numeric(v)===null?"n/a":`${(Math.abs(Number(v))*100).toFixed(1)}%`,num:true},
     {key:"delta",label:"Delta/risk",format:v=>numeric(v)===null?"n/a":Math.abs(Number(v)).toFixed(2),num:true},
     {key:"liquidity",label:"Liquidity"},
     {key:"tradeability",label:"Tradeability"},
+    {key:"quote_date",label:"Quote date",format:fmtDate},
     {key:"price_source",label:"Price source"},
     {key:"score",label:"Score",num:true},
     {key:"score_reason",label:"Score reason"}
@@ -986,6 +1008,7 @@ function decisionCoverage(){
   const notes = decisionData().coverage_notes || [];
   return `<div class="note-list">${notes.map(n=>`<div class="note"><strong>${safe(n.severity)}</strong><span class="muted">${safe(n.message)}</span></div>`).join("")}</div>`;
 }
+__DECISION_RESPONSE_JS__
 async function loadDecisionLab(){
   if (appState.decisionLabLoading) return;
   appState.decisionLabLoading = true;
@@ -996,8 +1019,7 @@ async function loadDecisionLab(){
       credentials: "same-origin",
       headers: {"Accept": "application/json"}
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    const payload = await readDecisionLabResponse(response);
     appState.decisionLab = payload;
     data.decision_lab = payload;
   } catch (err) {
@@ -1032,6 +1054,7 @@ function renderDecisionLab(){
     ${sectionHead("Action Needed")}
     ${decisionActionRows()}
     ${sectionHead("Recommendation Candidates / Recovery Planner")}
+    <div class="sub">Current position appears first as the comparison baseline, not a ranking. Scenario estimates use delta as a rough exercise weight and current stock-price inputs, not a future price forecast. Expiries have different horizons. Estimates exclude future trading fees.</div>
     ${decisionCandidates()}
     ${sectionHead("Strike Selection Quality")}
     ${decisionStrikeQuality()}
@@ -1059,7 +1082,7 @@ function renderDashboard(){
     <div class="grid metrics">
       ${card("YTD total P&L", fmtMoney(snap.ytd_total_pnl), snap.unrealized_adjusted ? "Realized YTD + current unrealized" : "Realized P&L only", cls(snap.ytd_total_pnl))}
       ${card("YTD realized P&L", fmtMoney(snap.ytd_realized_pnl), "Options, stock P&L, and dividends", cls(snap.ytd_realized_pnl))}
-      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (premium ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put unrealized loss ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
+      ${card("Current unrealized", fmtMoney(snap.current_unrealized_pnl), `Options ${safe(fmtMoney(snap.current_option_unrealized_pnl))}${numeric(snap.current_put_assignment_unrealized_pnl) ? ` (net option balance ${safe(fmtMoney(snap.current_option_premium_unrealized_pnl))}, ITM put unrealized loss ${safe(fmtMoney(snap.current_put_assignment_unrealized_pnl))})` : ""} / Stock ${safe(fmtMoney(snap.current_stock_unrealized_pnl))}`, cls(snap.current_unrealized_pnl))}
       ${card("YTD annualized TWR", fmtPct(snap.ytd_annualized_twr), snap.unrealized_adjusted ? "Unrealized-adjusted" : "Realized only", cls(snap.ytd_annualized_twr))}
     </div>
     ${activeCycleBlock()}
@@ -1093,16 +1116,16 @@ function renderMonthly(){
       {key:"peak_capital",label:"Peak capital",format:fmtMoney,num:true},
       {key:"return_roac",label:"RoAC",format:fmtPct,num:true,className:cls},
       {key:"return_ropc",label:"RoPC",format:fmtPct,num:true,className:cls},
-      {key:"open_premium_collected",label:"Open premium",format:fmtMoney,num:true,className:cls},
+      {key:"open_premium_collected",label:"Open strategy balance",format:fmtMoney,num:true,className:cls},
       {key:"projected_month_pnl",label:"Projected P&L",value:displayMonthPnl,format:fmtMoney,num:true,className:cls},
       {key:"projected_return_roac",label:"Projected RoAC",value:displayMonthReturn,format:fmtPct,num:true,className:v=>bandTone(v, targetFloor(), targetReturn())}
-    ], {title:"Monthly table", wide:true})}
+    ], {title:"Monthly table", subtitle:"Realized option P&L includes completed strategies. Linked rolls carry their net balance until final close, expiration or assignment.", wide:true})}
     ${sectionHead("Future Open Expiry Months")}
     ${dataTable("future-months", future, [
       {key:"month",label:"Month",format:monthName},
       {key:"open_ticker_count",label:"Open tickers",num:true},
       {key:"realized_cycle_pnl",label:"Realized cycle P&L",format:fmtMoney,num:true,className:cls},
-      {key:"open_premium_collected",label:"Open premium collected",format:fmtMoney,num:true,className:cls},
+      {key:"open_premium_collected",label:"Open strategy balance",format:fmtMoney,num:true,className:cls},
       {key:"itm_call_stock_pnl",label:"ITM call stock P&L",format:fmtMoney,num:true,className:cls},
       {key:"itm_put_unrealized_loss",label:"ITM put assignment P&L",format:fmtMoney,num:true,className:cls},
       {key:"projected_cycle_pnl",label:"Projected cycle P&L",format:fmtMoney,num:true,className:cls},
@@ -1675,7 +1698,7 @@ function renderMethodology(){
   $("methodology").innerHTML = `
     ${sectionHead("Methodology", "Same backend accounting as iOS, with web-only diagnostic breadth.")}
     <div class="grid two-even">
-      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Active cycle</h3><p>The Dashboard target panel follows the nearest open option expiry cycle, while Monthly keeps closed calendar-month reporting and the future expiry table for reconciliation.</p></div>
+      <div class="panel"><h3>Source</h3><p>Production web and iOS read imported IBKR Flex data from Firestore. Streamlit remains the Google Sheets backup/control dashboard.</p><h3>Wheel scope</h3><p>Wheel P&L starts with assigned puts. Covered calls are included when backed by assignment-derived shares or valid covered-call roll replacements. Expected non-wheel exclusions are audit notes, not actionable issues.</p><h3>Realized option P&L</h3><p>Open options and continuing rolls remain outside realized P&L. Each linked roll carries premiums minus buybacks and fees forward; the full net result is recognized once at final close, expiration or assignment. Partial closures recognize only the quantity that ends.</p><h3>Active cycle</h3><p>The Dashboard target panel follows the nearest open option expiry cycle, while Monthly keeps closed calendar-month reporting and the future expiry table for reconciliation.</p></div>
       <div class="panel"><h3>Unrealized snapshot</h3><p>Current unrealized values are monitoring snapshots, not complete option mark-to-market accounting. Missing required prices suppress affected unrealized fields.</p><h3>Benchmarks</h3><p>Return metrics compare monthly strategy returns with aligned benchmark monthly series when coverage is complete.</p><h3>Refresh</h3><p>Refresh checks whether the IBKR source changed. If not, it updates current prices only and keeps the existing accounting pipeline.</p></div>
     </div>
   `;
@@ -1818,8 +1841,7 @@ function bindControls(){
           credentials: "same-origin",
           headers: {"Accept": "application/json"}
         });
-        const refreshed = await response.json();
-        if (!response.ok) throw new Error(refreshed.error || `HTTP ${response.status}`);
+        const refreshed = await readDecisionLabResponse(response);
         data.decision_lab = refreshed;
         appState.decisionLab = refreshed;
         render();
@@ -1920,4 +1942,4 @@ loadDashboardData();
 </body>
 </html>""".replace(
     "__BASE_CSS__", BASE_CSS
-)
+).replace("__DECISION_RESPONSE_JS__", DECISION_RESPONSE_JS)

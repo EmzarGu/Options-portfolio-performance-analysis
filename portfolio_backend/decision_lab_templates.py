@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from portfolio_backend.web_dashboard_templates import BASE_CSS
+from portfolio_backend.web_dashboard_templates import BASE_CSS, DECISION_RESPONSE_JS
 
 
 DECISION_LAB_HTML = """<!doctype html>
@@ -94,7 +94,7 @@ function cycleBlock(data){
   const c = data.active_cycle || {};
   const parts = [
     ["Realized cycle P&L", c.realized_cycle_pnl],
-    ["Open premium collected", c.open_premium_collected],
+    ["Open strategy balance", c.open_premium_collected],
     ["ITM call stock P&L", c.itm_call_stock_pnl],
     ["ITM put assignment P&L", c.itm_put_unrealized_loss],
     ["Projected cycle P&L", c.projected_cycle_pnl],
@@ -137,17 +137,18 @@ function candidateCompare(rows, status={}){
     {key:"roll_close_cost",label:"Est. close cost",format:fmtMoney,num:true,className:cls},
     {key:"roll_new_credit",label:"Est. new credit",format:fmtMoney,num:true,className:cls},
     {key:"roll_net_credit",label:"Net credit after close",format:fmtMoney,num:true,className:cls},
-    {key:"incremental_exit_pnl",label:"Net improvement vs current",format:fmtMoney,num:true,className:cls},
-    {key:"expected_value",label:"Expected value",format:fmtMoney,num:true,className:cls},
-    {key:"expected_value_vs_current",label:"EV vs current",format:fmtMoney,num:true,className:cls},
+    {key:"incremental_exit_pnl",label:"Exit proceeds change",format:fmtMoney,num:true,className:cls},
+    {key:"expected_value",label:"Scenario estimate",format:fmtMoney,num:true,className:cls},
+    {key:"expected_value_vs_current",label:"Scenario vs current",format:fmtMoney,num:true,className:cls},
     {key:"exercise_result",label:"If exercised",format:fmtMoney,num:true,className:cls},
     {key:"no_exercise_result",label:"If not exercised",format:fmtMoney,num:true,className:cls},
     {key:"upside_left",label:"Added upside room",format:fmtMoney,num:true,className:cls},
     {key:"upside_foregone",label:"Current price above strike",format:fmtMoney,num:true,className:cls},
-    {key:"exercise_probability",label:"Exercise probability",format:v=>num(v)===null?"n/a":`${(Math.abs(Number(v))*100).toFixed(1)}%`,num:true},
+    {key:"exercise_probability",label:"Delta exercise proxy",format:v=>num(v)===null?"n/a":`${(Math.abs(Number(v))*100).toFixed(1)}%`,num:true},
     {key:"delta",label:"Delta/risk",format:v=>num(v)===null?"n/a":Math.abs(Number(v)).toFixed(2),num:true},
     {key:"liquidity",label:"Liquidity"},
     {key:"tradeability",label:"Tradeability"},
+    {key:"quote_date",label:"Quote date",format:fmtDate},
     {key:"price_source",label:"Price source"},
     {key:"provider",label:"Provider",format:v=>safe(v || "n/a")},
     {key:"score",label:"Score",num:true},
@@ -196,10 +197,12 @@ function strikeQuality(data){
 function coverage(data){
   return `<div class="grid">${(data.coverage_notes||[]).map(n=>`<div class="note"><strong>${safe(n.severity)}</strong> ${safe(n.message)}</div>`).join("")}</div>`;
 }
+__DECISION_RESPONSE_JS__
 function optionDataControls(data){
   const st = (data.option_market_data || {}).status || {};
   const text = st.last_fetched_at ? `${safe(st.provider || "option data")} fetched ${safe(fmtDateTime(st.last_fetched_at))} · ${fmtNum(st.contract_count)} contracts · ${safe(st.source || "")}` : `${safe(st.provider || "option data")} ${safe(st.status || "not fetched")} · ${fmtNum(st.contract_count || 0)} contracts`;
-  return `<div class="option-controls"><div class="option-status mono">${text}</div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
+  const dated = st.provider === "marketdata" ? `<div><strong>Quotes: ${safe(fmtDate(st.quote_date))}</strong> · ${fmtNum(st.credits_used)} / ${fmtNum(st.account_daily_limit)} daily credits used</div><div>Download for ${safe(fmtDate(st.latest_quote_date || st.quote_date))}: ${fmtNum(st.prepared_request_count ?? ((st.request_count || 0) - (st.missing_request_count || 0)))} / ${fmtNum(st.request_count)} selections ready${st.missing_request_count ? ` · ${fmtNum(st.missing_request_count)} pending` : ""}</div>` : "";
+  return `<div class="option-controls"><div class="option-status mono">${dated}${text}${st.message ? `<div>${safe(st.message)}</div>` : ""}</div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
 }
 function attachOptionFetch(){
   const btn = $("fetchOptionData");
@@ -209,8 +212,7 @@ function attachOptionFetch(){
     btn.textContent = "Fetching...";
     try {
       const response = await fetch("/api/decision-lab/options/refresh" + window.location.search, {method:"POST", credentials:"same-origin"});
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
+      const data = await readDecisionLabResponse(response);
       chartSeq = 0;
       pending.length = 0;
       render(data);
@@ -238,6 +240,7 @@ function render(data){
     ${head("cycle","2. Active Cycle Target & Exposure")}
     ${cycleBlock(data)}
     ${head("candidates","3. Recommendation Candidates / Recovery Planner")}
+    <div class="sub">Current position appears first as the comparison baseline, not a ranking. Scenario estimates use delta as a rough exercise weight and current stock-price inputs, not a future price forecast. Expiries have different horizons. Estimates exclude future trading fees.</div>
     ${candidates(data)}
     ${head("strikes","4. Strike Selection Quality")}
     ${strikeQuality(data)}
@@ -248,9 +251,9 @@ function render(data){
   attachOptionFetch();
 }
 fetch("/api/decision-lab" + window.location.search, {credentials:"same-origin"})
-  .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+  .then(readDecisionLabResponse)
   .then(render)
   .catch(err => {$("content").innerHTML = `<div class="panel"><h2>Decision lab failed to load</h2><p class="error">${safe(err.message || err)}</p></div>`});
 </script>
 </body>
-</html>""".replace("__BASE_CSS__", BASE_CSS)
+</html>""".replace("__BASE_CSS__", BASE_CSS).replace("__DECISION_RESPONSE_JS__", DECISION_RESPONSE_JS)

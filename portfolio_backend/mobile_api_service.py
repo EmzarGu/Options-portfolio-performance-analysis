@@ -7,7 +7,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
+from portfolio_backend.ibkr.assignment_quality import build_assigned_holdings_review_analysis
 from portfolio_backend.mobile_payloads import (
+    build_data_freshness,
     build_mobile_dashboard,
     build_mobile_issues,
     build_mobile_monthly_performance,
@@ -18,6 +20,7 @@ from portfolio_backend.mobile_payloads import (
     build_mobile_yearly_performance,
 )
 from portfolio_backend.models import PipelineState
+from portfolio_backend.serializers import json_safe
 from portfolio_backend.pipeline import (
     apply_live_price_overlay,
     apply_unrealized_adjusted_display,
@@ -155,6 +158,41 @@ def build_mobile_positions_payload(context: MobilePayloadContext) -> Dict[str, A
         context.request,
         available_sheets=context.available_sheets,
         source_metadata=context.source_metadata,
+    )
+
+
+def build_mobile_assigned_holdings_review_payload(
+    context: MobilePayloadContext,
+    *,
+    report: Any,
+) -> Dict[str, Any]:
+    """Build the versioned, read-only assigned-holdings research input."""
+    state = context.state
+    prices = dict(getattr(state, "stock_prices", {}) or getattr(state, "live_prices", {}) or {})
+    as_of = context.request.get("as_of") or getattr(state, "as_of", date.today())
+    selected_sheets = list(context.request.get("selected_sheets") or [])
+    freshness = build_data_freshness(
+        state,
+        selected_sheets,
+        available_sheets=context.available_sheets,
+        source_metadata=context.source_metadata,
+    )
+    return json_safe(
+        {
+            "request": {
+                "as_of": as_of,
+                "include_unrealized": bool(context.request.get("include_unrealized")),
+                "selected_sheets": selected_sheets,
+            },
+            "data_freshness": freshness,
+            "review_input": build_assigned_holdings_review_analysis(
+                report,
+                as_of=as_of,
+                prices=prices,
+                prices_updated_at=freshness.get("prices_updated_at"),
+                import_health=context.source_metadata.get("ibkr_import_health"),
+            ),
+        }
     )
 
 

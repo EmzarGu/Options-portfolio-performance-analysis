@@ -105,6 +105,12 @@ def apply_option_market_candidates(
     for group in candidate_groups:
         ticker = str(group.get("ticker") or "").upper()
         converted, candidate_status = _real_contract_candidates(ticker, group, contracts, status, reference_date)
+        if status.get("provider") == "marketdata":
+            for candidate in converted:
+                candidate["tradeability"] = "dated estimate"
+                candidate["quote_date"] = status.get("quote_date") or status.get("expected_quote_date")
+            if converted:
+                candidate_status["message"] = f"{len(converted)} dated comparison(s) found."
         rows.append(
             {
                 **group,
@@ -333,12 +339,14 @@ def _covered_call_lifecycle_ev(
     option_net: float,
     exercise_probability: Optional[float],
     contract_qty: int,
+    open_option: Optional[dict[str, Any]] = None,
 ) -> Optional[float]:
     outcomes = _covered_call_lifecycle_outcomes(
         state,
         strike=strike,
         option_net=option_net,
         contract_qty=contract_qty,
+        open_option=open_option,
     )
     if outcomes is None:
         return None
@@ -352,6 +360,7 @@ def _covered_call_lifecycle_outcomes(
     strike: Optional[float],
     option_net: float,
     contract_qty: int,
+    open_option: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, float]]:
     current_unrealized = _num(state.get("current_unrealized"))
     cost = _num(state.get("cost_basis"))
@@ -359,9 +368,17 @@ def _covered_call_lifecycle_outcomes(
     if strike is None or cost is None or current_unrealized is None:
         return None
     shares = max(contract_qty, 1) * 100
+    # Accounting premium is still unbooked; strategy premium may include amounts
+    # already in realized P&L. It is already included in current_unrealized.
+    option = open_option or {}
+    open_premium = _num(option.get("accounting_open_premium"))
+    if open_premium is None:
+        open_premium = (_num(option.get("strategy_premium_collected")) or 0.0) - (
+            _num(option.get("realized_premium_already_booked")) or 0.0
+        )
     return {
         "no_exercise_result": realized + current_unrealized + option_net,
-        "exercise_result": realized + option_net + (strike - cost) * shares,
+        "exercise_result": realized + open_premium + option_net + (strike - cost) * shares,
     }
 
 
@@ -380,6 +397,7 @@ def _covered_call_baseline_ev(
             option_net=0.0,
             exercise_probability=0.0,
             contract_qty=contract_qty,
+            open_option=open_option,
         )
     return _covered_call_lifecycle_ev(
         state,
@@ -387,6 +405,7 @@ def _covered_call_baseline_ev(
         option_net=0.0,
         exercise_probability=current_delta,
         contract_qty=contract_qty,
+        open_option=open_option,
     )
 
 
@@ -456,6 +475,7 @@ def _covered_call_baseline(
         strike=current_strike,
         option_net=0.0,
         contract_qty=contract_qty,
+        open_option=open_option,
     )
     expected_value = _covered_call_lifecycle_ev(
         state,
@@ -463,6 +483,7 @@ def _covered_call_baseline(
         option_net=0.0,
         exercise_probability=delta,
         contract_qty=contract_qty,
+        open_option=open_option,
     )
     score = 70.0
     if exit_pnl > 0:
@@ -493,9 +514,9 @@ def _covered_call_baseline(
         "exercise_probability": _probability_from_delta(delta),
         "contract_count": contract_qty,
         "is_current_position": True,
-        "score_reason": f"Current call baseline; expected value {_money(expected_value)}.",
+        "score_reason": f"Current call baseline; scenario estimate {_money(expected_value)}.",
         "provider": current_contract.get("provider") or status.get("provider") if current_contract else status.get("provider"),
-        "price_source": _price_source(current_contract) if current_contract else "open-position",
+        "price_source": _price_source(current_contract, "ask") if current_contract else "open-position",
         "quote_coverage": bool(current_contract and current_contract.get("bid") is not None and current_contract.get("ask") is not None),
         "fetch_timestamp": status.get("last_fetched_at"),
         "contract_symbol": current_contract.get("contract_symbol") if current_contract else None,
@@ -534,9 +555,10 @@ def _covered_call_roll_candidate(
     ):
         return None
     net_credit = (new_credit - close_cost) * 100 * contract_qty
-    extra_upside = max(new_strike - current_strike, 0) * 100 * contract_qty
+    strike_proceeds_change = (new_strike - current_strike) * 100 * contract_qty
+    extra_upside = max(strike_proceeds_change, 0)
     baseline_exit = (current_strike - cost) * 100 * contract_qty + (_num(open_option.get("strategy_premium_collected")) or 0)
-    exit_pnl = baseline_exit + extra_upside + net_credit
+    exit_pnl = baseline_exit + strike_proceeds_change + net_credit
     incremental_exit = exit_pnl - baseline_exit
     dte_added = max((_days_until(new_expiry, reference_date) or 0) - (_days_until(current_expiry, reference_date) or 0), 0)
     delta = abs(_num(new_contract.get("delta")) or 0) if new_contract.get("delta") is not None else None
@@ -550,12 +572,14 @@ def _covered_call_roll_candidate(
         option_net=net_credit,
         exercise_probability=delta,
         contract_qty=contract_qty,
+        open_option=open_option,
     )
     outcomes = _covered_call_lifecycle_outcomes(
         state,
         strike=new_strike,
         option_net=net_credit,
         contract_qty=contract_qty,
+        open_option=open_option,
     )
     expected_value_vs_current = (
         candidate_ev - baseline_ev if candidate_ev is not None and baseline_ev is not None else None
@@ -608,9 +632,9 @@ def _covered_call_roll_candidate(
         "no_exercise_result": outcomes.get("no_exercise_result") if outcomes else None,
         "exercise_probability": _probability_from_delta(delta),
         "contract_count": contract_qty,
-        "score_reason": f"{action}: EV vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, {dte_added} DTE added.",
+        "score_reason": f"{action}: scenario vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, {dte_added} DTE added.",
         "provider": new_contract.get("provider") or status.get("provider"),
-        "price_source": _price_source(new_contract),
+        "price_source": f"close: {_price_source(current_contract, 'ask')}; sell: {_price_source(new_contract)}",
         "quote_coverage": new_contract.get("bid") is not None and new_contract.get("ask") is not None,
         "fetch_timestamp": status.get("last_fetched_at"),
         "contract_symbol": new_contract.get("contract_symbol"),
@@ -674,7 +698,7 @@ def _short_put_baseline(
         "is_current_position": True,
         "score_reason": "Baseline current put.",
         "provider": current_contract.get("provider") or status.get("provider") if current_contract else status.get("provider"),
-        "price_source": _price_source(current_contract) if current_contract else "open-position",
+        "price_source": _price_source(current_contract, "ask") if current_contract else "open-position",
         "quote_coverage": bool(current_contract and current_contract.get("bid") is not None and current_contract.get("ask") is not None),
         "fetch_timestamp": status.get("last_fetched_at"),
         "contract_symbol": current_contract.get("contract_symbol") if current_contract else None,
@@ -759,9 +783,9 @@ def _short_put_roll_candidate(
         "exercise_probability": _probability_from_delta(delta),
         "added_assignment_exposure": added_assignment_exposure,
         "contract_count": contract_qty,
-        "score_reason": f"Roll put up: EV vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, delta {delta:.2f}.",
+        "score_reason": f"Roll put up: scenario vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, delta {delta:.2f}.",
         "provider": new_contract.get("provider") or status.get("provider"),
-        "price_source": _price_source(new_contract),
+        "price_source": f"close: {_price_source(current_contract, 'ask')}; sell: {_price_source(new_contract)}",
         "quote_coverage": new_contract.get("bid") is not None and new_contract.get("ask") is not None,
         "fetch_timestamp": status.get("last_fetched_at"),
         "contract_symbol": new_contract.get("contract_symbol"),
@@ -868,20 +892,23 @@ def _short_put_risk_reduction_candidate(
         "exercise_probability": _probability_from_delta(delta),
         "assignment_risk_reduction": assignment_risk_reduction,
         "contract_count": contract_qty,
-        "score_reason": f"Roll put down/out: EV vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, assignment exposure reduced {_money(assignment_risk_reduction)}.",
+        "score_reason": f"Roll put down/out: scenario vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, assignment exposure reduced {_money(assignment_risk_reduction)}.",
         "provider": new_contract.get("provider") or status.get("provider"),
-        "price_source": _price_source(new_contract),
+        "price_source": f"close: {_price_source(current_contract, 'ask')}; sell: {_price_source(new_contract)}",
         "quote_coverage": new_contract.get("bid") is not None and new_contract.get("ask") is not None,
         "fetch_timestamp": status.get("last_fetched_at"),
         "contract_symbol": new_contract.get("contract_symbol"),
     }
 
 
-def _price_source(contract: Optional[dict[str, Any]]) -> str:
+def _price_source(contract: Optional[dict[str, Any]], side: str = "bid") -> str:
     if not contract:
         return "n/a"
+    price = _num(contract.get(side))
+    if price is not None and price > 0:
+        return f"quote_{side}"
     raw = contract.get("raw") if isinstance(contract.get("raw"), dict) else {}
-    return str(raw.get("price_source") or ("quote_bid_ask_mid" if contract.get("bid") is not None and contract.get("ask") is not None else "provider_mark"))
+    return str(raw.get("price_source") or "provider_mark")
 
 
 def _same_expiry(left: Any, right: Any) -> bool:
@@ -1143,7 +1170,7 @@ def _candidate_from_live_contract(
     raw = contract.get("raw") if isinstance(contract.get("raw"), dict) else {}
     quote_coverage = contract.get("bid") is not None and contract.get("ask") is not None
     tradeability = "quote-backed" if quote_coverage else "indicative"
-    price_source = raw.get("price_source") or ("quote_bid" if quote_coverage else "provider_mark")
+    price_source = _price_source(contract)
 
     exit_pnl = premium
     upside_left = None
@@ -1216,7 +1243,7 @@ def _candidate_from_live_contract(
         "exercise_result": outcomes.get("exercise_result") if outcomes else None,
         "no_exercise_result": outcomes.get("no_exercise_result") if outcomes else None,
         "exercise_probability": exercise_probability,
-        "score_reason": f"{action}: EV vs current {_money(expected_value_vs_current)}, {_live_candidate_score_reason(action, liquidity, delta, premium, upside_left)}",
+        "score_reason": f"{action}: scenario vs current {_money(expected_value_vs_current)}, {_live_candidate_score_reason(action, liquidity, delta, premium, upside_left)}",
         "provider": contract.get("provider") or status.get("provider"),
         "price_source": price_source,
         "quote_coverage": quote_coverage,

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from copy import deepcopy
+from types import SimpleNamespace
+import math
+import re
 from typing import Any, Iterable, Optional
 
 import pandas as pd
@@ -60,6 +64,40 @@ def decision_read(delta: float, assigned_capital: float) -> str:
     return "Small difference"
 
 
+def prepare_assignment_quality(report: Any, *, as_of: Any) -> dict[str, Any]:
+    """Prepare price-independent assignment accounting once per report and date."""
+    as_of = pd.Timestamp(as_of).normalize()
+    positions = ibkr_option_positions_from_report(report, as_of=as_of)
+    lots, _ = _assignment_lots_with_issues(report, as_of, positions=positions)
+    movements = wheel_stock_movements_from_report(report)
+    _, segments, _ = compute_wheel_stock_realized_and_segments(movements, as_of=as_of)
+    executions, _, _ = wheel_option_executions(
+        option_executions_from_report(report, short_strategy_only=False), segments,
+    )
+    _allocate_stock_sales(lots, report, as_of, movements=movements)
+    allocations = _allocate_call_cashflows(lots, lots, report, as_of, executions=executions)
+    lot_docs = []
+    for lot in lots:
+        doc = asdict(lot)
+        doc["assignment_date"] = lot.assignment_date.isoformat()
+        doc["expiration"] = lot.expiration.isoformat()
+        lot_docs.append(doc)
+    return {
+        "lots": lot_docs,
+        "call_allocations": allocations,
+        "open_calls": [
+            {"ticker": lot.ticker, "otype": lot.otype, "qty": lot.qty,
+             "strike": lot.strike, "expiration": pd.Timestamp(lot.expiration).isoformat(),
+             "open_date": pd.Timestamp(lot.open_date).isoformat()}
+            for lot in positions[1] if lot.otype == "Call" and lot.qty > 0
+        ],
+        "executions": [
+            {"ticker": ex.ticker, "date": ex.date.isoformat(), "otype": ex.otype,
+             "net_cash": ex.net_cash} for ex in executions
+        ],
+    }
+
+
 def build_assignment_quality_analysis(
     report: Any,
     *,
@@ -68,15 +106,22 @@ def build_assignment_quality_analysis(
     historical_prices: Optional[dict[str, pd.Series]] = None,
     opportunity_monthly_rate: float = DEFAULT_OPPORTUNITY_MONTHLY_RATE,
     horizons_months: Iterable[int] = (6, 12, 18),
+    prepared: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     as_of_ts = pd.to_datetime(as_of).normalize()
     prices = {str(k).upper(): float(v) for k, v in (prices or {}).items() if v is not None}
     historical_prices = historical_prices or {}
 
-    all_lots = _assignment_lots(report, as_of_ts)
-    _allocate_stock_sales(all_lots, report, as_of_ts)
-    call_allocations = _allocate_call_cashflows(all_lots, all_lots, report, as_of_ts)
-    _apply_open_call_caps(all_lots, report, prices, as_of_ts)
+    prepared = prepare_assignment_quality(report, as_of=as_of_ts) if prepared is None else prepared
+    # The cached accounting is immutable; caps and valuation mutate only fresh copies.
+    all_lots = [AssignmentQualityLot(**{
+        **deepcopy(row), "assignment_date": pd.Timestamp(row["assignment_date"]),
+        "expiration": pd.Timestamp(row["expiration"]),
+    }) for row in prepared["lots"]]
+    call_allocations = deepcopy(prepared["call_allocations"])
+    executions = [SimpleNamespace(**{**row, "date": pd.Timestamp(row["date"])}) for row in prepared["executions"]]
+    open_calls = [SimpleNamespace(**row) for row in prepared["open_calls"]]
+    _apply_open_call_caps(all_lots, report, prices, as_of_ts, open_lots=open_calls)
 
     current_rows = [
         row
@@ -95,7 +140,7 @@ def build_assignment_quality_analysis(
     ]
     missing_current_price = sorted({lot.ticker for lot in all_lots if lot.ticker not in prices})
 
-    cohort_rows = _cohort_rows(all_lots, current_rows, report, as_of_ts)
+    cohort_rows = _cohort_rows(all_lots, current_rows, report, as_of_ts, executions=executions)
     by_ticker = _aggregate(cohort_rows, ["ticker"])
     by_year = _aggregate(cohort_rows, ["assignment_year"])
     summary = _summary(cohort_rows, total_lots=len(all_lots), missing_price_count=len(missing_current_price))
@@ -234,12 +279,149 @@ def build_assignment_quality_analysis(
     }
 
 
+def build_assigned_holdings_review_analysis(
+    report: Any,
+    *,
+    as_of: Any,
+    prices: Optional[dict[str, float]] = None,
+    prices_updated_at: Optional[str] = None,
+    import_health: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Build the read-only, lot-preserving input used to review assigned holdings.
+
+    The output deliberately separates deterministic IBKR accounting facts from
+    any later company-quality research or hold/close recommendation.
+    """
+    as_of_ts = pd.to_datetime(as_of).normalize()
+    clean_prices = {
+        str(ticker).upper().strip(): float(value)
+        for ticker, value in (prices or {}).items()
+        if _finite_number(value)
+    }
+    all_lots, accounting_issues = _assignment_lots_with_issues(report, as_of_ts)
+    sale_issues = _allocate_stock_sales(all_lots, report, as_of_ts)
+    _allocate_call_cashflows(all_lots, all_lots, report, as_of_ts)
+    open_calls = _apply_open_call_caps(all_lots, report, clean_prices, as_of_ts)
+
+    active_lots = [lot for lot in all_lots if lot.remaining_shares > 1e-9]
+    active_tickers = sorted({lot.ticker for lot in active_lots})
+    calls_by_ticker: dict[str, list[dict[str, Any]]] = {}
+    for call in open_calls:
+        calls_by_ticker.setdefault(str(call["ticker"]), []).append(call)
+
+    import_health = dict(import_health or {})
+    import_issues = list(import_health.get("issues") or [])
+    global_blockers = [
+        {
+            "code": "ibkr_import_unhealthy",
+            "message": str(issue.get("message") or "IBKR import health requires review."),
+        }
+        for issue in import_issues
+    ]
+    holdings = [
+        _assigned_holding_review_row(
+            ticker,
+            lots=[lot for lot in active_lots if lot.ticker == ticker],
+            open_calls=calls_by_ticker.get(ticker, []),
+            current_price=clean_prices.get(ticker),
+            prices_updated_at=prices_updated_at,
+        )
+        for ticker in active_tickers
+    ]
+
+    unallocated_open_calls = [
+        _open_call_review_row(call, current_price=clean_prices.get(str(call["ticker"])))
+        for call in open_calls
+        if float(call.get("unallocated_shares") or 0.0) > 1e-9
+    ]
+    if unallocated_open_calls:
+        global_blockers.append(
+            {
+                "code": "open_call_inventory_mismatch",
+                "message": "One or more open calls exceed assignment-derived shares.",
+            }
+        )
+
+    missing_prices = sorted(
+        holding["ticker"]
+        for holding in holdings
+        if holding["current_price"] is None
+    )
+    all_accounting_issues = [*accounting_issues, *sale_issues]
+    relevant_accounting_issues = [
+        issue
+        for issue in all_accounting_issues
+        if _issue_mentions_active_ticker(issue, active_tickers)
+    ]
+    warnings = [
+        {"code": "accounting_issue", "message": str(issue)}
+        for issue in relevant_accounting_issues
+    ]
+    if missing_prices:
+        warnings.append(
+            {
+                "code": "missing_current_prices",
+                "message": f"Current prices are unavailable for: {', '.join(missing_prices)}.",
+                "tickers": missing_prices,
+            }
+        )
+
+    return {
+        "schema_version": "1.0",
+        "as_of": as_of_ts.date().isoformat(),
+        "currency": "USD",
+        "recommendations_allowed": not global_blockers,
+        "blockers": global_blockers,
+        "warnings": warnings,
+        "summary": {
+            "holding_count": len(holdings),
+            "assignment_lot_count": len(active_lots),
+            "assigned_share_count": float(sum(lot.remaining_shares for lot in active_lots)),
+            "open_call_count": len(open_calls),
+            "open_call_contract_count": float(sum(float(call.get("contracts") or 0.0) for call in open_calls)),
+            "missing_price_tickers": missing_prices,
+            "blocked_holding_count": sum(
+                1 for holding in holdings if holding["data_quality"]["status"] == "blocked"
+            ),
+            "unallocated_open_call_count": len(unallocated_open_calls),
+            "suppressed_unrelated_accounting_warning_count": (
+                len(all_accounting_issues) - len(relevant_accounting_issues)
+            ),
+        },
+        "holdings": holdings,
+        "unallocated_open_calls": unallocated_open_calls,
+        "methodology": {
+            "inventory": "Assignment lots and remaining shares use the canonical IBKR wheel FIFO accounting.",
+            "market_stock_pnl": "Remaining shares valued at current market price versus assignment strike.",
+            "stock_pnl_at_open_call_strikes": (
+                "Covered shares valued at their open-call strike; uncovered shares remain valued at current market price."
+            ),
+            "capped_upside": "Positive current-price upside above allocated open-call strikes.",
+            "lifecycle_pnl": (
+                "Assigned-put premium + allocated call cashflows + realized stock P&L "
+                "+ stock P&L with current open-call caps."
+            ),
+            "dividends": "Excluded because lot-level attribution is not currently reliable.",
+            "current_option_mark": "Not supplied by the canonical underlying-price feed; returned as null.",
+        },
+    }
+
+
 def assignment_quality_tickers(report: Any, *, as_of: Any) -> list[str]:
     return sorted({lot.ticker for lot in _assignment_lots(report, pd.to_datetime(as_of).normalize())})
 
 
 def _assignment_lots(report: Any, as_of: pd.Timestamp) -> list[AssignmentQualityLot]:
-    _, _, _, _, all_option_lots = ibkr_option_positions_from_report(report, as_of=as_of)
+    lots, _ = _assignment_lots_with_issues(report, as_of)
+    return lots
+
+
+def _assignment_lots_with_issues(
+    report: Any,
+    as_of: pd.Timestamp,
+    *, positions=None,
+) -> tuple[list[AssignmentQualityLot], list[str]]:
+    _, _, _, issues, all_option_lots = positions if positions is not None else ibkr_option_positions_from_report(report, as_of=as_of)
     lots: list[AssignmentQualityLot] = []
     for lot in all_option_lots:
         if lot.otype != "Put" or not lot.assigned or lot.close_date is None:
@@ -264,11 +446,20 @@ def _assignment_lots(report: Any, as_of: pd.Timestamp) -> list[AssignmentQuality
                 put_pnl=float(lot.open_price) * float(lot.qty) * 100.0,
             )
         )
-    return sorted(lots, key=lambda x: (x.assignment_date, x.ticker, x.expiration, x.strike, x.lot_id))
+    return (
+        sorted(lots, key=lambda x: (x.assignment_date, x.ticker, x.expiration, x.strike, x.lot_id)),
+        [str(issue) for issue in issues],
+    )
 
 
-def _allocate_stock_sales(all_lots: list[AssignmentQualityLot], report: Any, as_of: pd.Timestamp) -> None:
-    movements = [m for m in wheel_stock_movements_from_report(report) if m.date <= as_of]
+def _allocate_stock_sales(
+    all_lots: list[AssignmentQualityLot],
+    report: Any,
+    as_of: pd.Timestamp,
+    *, movements=None,
+) -> list[str]:
+    movements = [m for m in (wheel_stock_movements_from_report(report) if movements is None else movements) if m.date <= as_of]
+    issues: list[str] = []
     lots_by_ticker: dict[str, list[AssignmentQualityLot]] = {}
     for lot in all_lots:
         lots_by_ticker.setdefault(lot.ticker, []).append(lot)
@@ -295,6 +486,12 @@ def _allocate_stock_sales(all_lots: list[AssignmentQualityLot], report: Any, as_
                 }
             )
             remaining -= take
+        if remaining > 1e-9:
+            issues.append(
+                f"{remaining:g} sold shares of {sale.ticker} on {sale.date.date()} "
+                "could not be matched to assignment-derived inventory."
+            )
+    return issues
 
 
 def _allocate_call_cashflows(
@@ -302,12 +499,16 @@ def _allocate_call_cashflows(
     all_lots: list[AssignmentQualityLot],
     report: Any,
     as_of: pd.Timestamp,
+    *, executions=None,
 ) -> list[dict[str, Any]]:
-    _, holding_segments, _ = compute_wheel_stock_realized_and_segments(
-        wheel_stock_movements_from_report(report),
-        as_of=as_of,
-    )
-    included, _, _ = wheel_option_executions(option_executions_from_report(report, short_strategy_only=False), holding_segments)
+    if executions is None:
+        _, holding_segments, _ = compute_wheel_stock_realized_and_segments(
+            wheel_stock_movements_from_report(report),
+            as_of=as_of,
+        )
+        included, _, _ = wheel_option_executions(option_executions_from_report(report, short_strategy_only=False), holding_segments)
+    else:
+        included = executions
     call_rows: list[dict[str, Any]] = []
     for ex in included:
         if ex.otype != "Call" or ex.date > as_of:
@@ -360,8 +561,10 @@ def _apply_open_call_caps(
     report: Any,
     prices: dict[str, float],
     as_of: pd.Timestamp,
-) -> None:
-    _, open_lots, _, _, _ = ibkr_option_positions_from_report(report, as_of=as_of)
+    *, open_lots=None,
+) -> list[dict[str, Any]]:
+    if open_lots is None:
+        _, open_lots, _, _, _ = ibkr_option_positions_from_report(report, as_of=as_of)
     open_calls = sorted(
         [lot for lot in open_lots if lot.otype == "Call" and lot.qty > 0],
         key=lambda lot: (lot.ticker, float(lot.strike), pd.to_datetime(lot.expiration)),
@@ -377,9 +580,28 @@ def _apply_open_call_caps(
     for lots in lots_by_ticker.values():
         lots.sort(key=lambda lot: (lot.assignment_date, lot.expiration, lot.strike, lot.lot_id))
 
+    call_rows: list[dict[str, Any]] = []
+    call_id_counts: dict[str, int] = {}
     for call in open_calls:
         ticker = str(call.ticker).upper().strip()
         shares_to_cover = abs(float(call.qty)) * 100.0
+        opened = pd.to_datetime(call.open_date).normalize()
+        expiration = pd.to_datetime(call.expiration).normalize()
+        call_id_base = f"optlot:{ticker}:Call:{float(call.strike):g}:{expiration.date()}:{opened.date()}"
+        call_sequence = call_id_counts.get(call_id_base, 0)
+        call_id_counts[call_id_base] = call_sequence + 1
+        call_row = {
+            "id": f"{call_id_base}:{call_sequence}",
+            "ticker": ticker,
+            "opened": opened.date().isoformat(),
+            "expiration": expiration.date().isoformat(),
+            "days_to_expiration": int((expiration - as_of).days),
+            "strike": float(call.strike),
+            "contracts": abs(float(call.qty)),
+            "covered_shares": 0.0,
+            "unallocated_shares": 0.0,
+            "allocations": [],
+        }
         for lot in lots_by_ticker.get(ticker, []):
             if shares_to_cover <= 1e-9:
                 break
@@ -392,7 +614,19 @@ def _apply_open_call_caps(
             covered_by_lot[lot.lot_id].append((take, strike))
             lot.open_call_covered_shares += take
             lot.open_call_min_strike = strike if lot.open_call_min_strike is None else min(lot.open_call_min_strike, strike)
+            call_row["covered_shares"] += take
+            call_row["allocations"].append(
+                {
+                    "assignment_lot_id": lot.lot_id,
+                    "shares": take,
+                    "assignment_strike": lot.strike,
+                    "call_strike": strike,
+                    "stock_pnl_if_called": take * (strike - lot.strike),
+                }
+            )
             shares_to_cover -= take
+        call_row["unallocated_shares"] = max(shares_to_cover, 0.0)
+        call_rows.append(call_row)
 
     for lot in all_lots:
         price = prices.get(lot.ticker)
@@ -406,6 +640,200 @@ def _apply_open_call_caps(
         uncovered = max(lot.remaining_shares - covered_shares, 0.0)
         pnl += uncovered * (price - lot.strike)
         lot.stock_unrealized_pnl = pnl
+    return call_rows
+
+
+def _finite_number(value: Any) -> bool:
+    try:
+        return value is not None and math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _issue_mentions_active_ticker(issue: Any, active_tickers: Iterable[str]) -> bool:
+    """Keep historical accounting warnings only when an active holding is named."""
+    text = str(issue or "").upper()
+    return any(
+        re.search(rf"(?<![A-Z0-9]){re.escape(str(ticker).upper())}(?![A-Z0-9])", text)
+        for ticker in active_tickers
+    )
+
+
+def _open_call_review_row(
+    call: dict[str, Any],
+    *,
+    current_price: Optional[float],
+) -> dict[str, Any]:
+    strike = float(call["strike"])
+    allocations = []
+    for allocation in call.get("allocations") or []:
+        capped_upside = (
+            max(float(allocation["shares"]) * (float(current_price) - strike), 0.0)
+            if current_price is not None
+            else None
+        )
+        allocations.append(
+            {
+                **allocation,
+                "capped_upside_at_current_price": capped_upside,
+            }
+        )
+    return {
+        "id": str(call["id"]),
+        "ticker": str(call["ticker"]),
+        "opened": call["opened"],
+        "expiration": call["expiration"],
+        "days_to_expiration": int(call["days_to_expiration"]),
+        "strike": strike,
+        "contracts": float(call["contracts"]),
+        "covered_shares": float(call["covered_shares"]),
+        "unallocated_shares": float(call["unallocated_shares"]),
+        "current_price": current_price,
+        "moneyness": (
+            (float(current_price) - strike) / strike
+            if current_price is not None and strike > 0
+            else None
+        ),
+        "current_option_mark": None,
+        "allocations": allocations,
+    }
+
+
+def _assigned_holding_review_row(
+    ticker: str,
+    *,
+    lots: list[AssignmentQualityLot],
+    open_calls: list[dict[str, Any]],
+    current_price: Optional[float],
+    prices_updated_at: Optional[str],
+) -> dict[str, Any]:
+    call_rows = [
+        _open_call_review_row(call, current_price=current_price)
+        for call in open_calls
+    ]
+    allocations_by_lot: dict[str, list[dict[str, Any]]] = {}
+    for call in call_rows:
+        for allocation in call["allocations"]:
+            allocations_by_lot.setdefault(str(allocation["assignment_lot_id"]), []).append(allocation)
+
+    lot_rows: list[dict[str, Any]] = []
+    for lot in lots:
+        allocations = allocations_by_lot.get(lot.lot_id, [])
+        covered_shares = sum(float(row["shares"]) for row in allocations)
+        uncovered_shares = max(float(lot.remaining_shares) - covered_shares, 0.0)
+        market_stock_pnl = (
+            float(lot.remaining_shares) * (float(current_price) - lot.strike)
+            if current_price is not None
+            else None
+        )
+        stock_pnl_at_open_call_strikes = (
+            sum(float(row["stock_pnl_if_called"]) for row in allocations)
+            + uncovered_shares * (float(current_price) - lot.strike)
+            if current_price is not None
+            else None
+        )
+        capped_upside = (
+            sum(float(row["capped_upside_at_current_price"] or 0.0) for row in allocations)
+            if current_price is not None
+            else None
+        )
+        stock_pnl_with_current_call_cap = (
+            float(market_stock_pnl) - float(capped_upside or 0.0)
+            if market_stock_pnl is not None
+            else None
+        )
+        lifecycle_pnl = (
+            lot.put_pnl
+            + lot.call_cashflow_pnl
+            + lot.stock_realized_pnl
+            + float(stock_pnl_with_current_call_cap)
+            if stock_pnl_with_current_call_cap is not None
+            else None
+        )
+        lot_rows.append(
+            {
+                "id": lot.lot_id,
+                "assignment_date": lot.assignment_date.date().isoformat(),
+                "put_expiration": lot.expiration.date().isoformat(),
+                "assignment_strike": lot.strike,
+                "original_shares": lot.original_shares,
+                "remaining_shares": lot.remaining_shares,
+                "assigned_put_premium": lot.put_pnl,
+                "realized_call_cashflow": lot.call_cashflow_pnl,
+                "stock_realized_pnl": lot.stock_realized_pnl,
+                "market_stock_pnl": market_stock_pnl,
+                "stock_pnl_at_open_call_strikes": stock_pnl_at_open_call_strikes,
+                "capped_upside_at_current_price": capped_upside,
+                "lifecycle_pnl_excluding_dividends": lifecycle_pnl,
+            }
+        )
+
+    current_shares = float(sum(lot.remaining_shares for lot in lots))
+    assignment_capital = float(sum(lot.remaining_shares * lot.strike for lot in lots))
+    market_stock_pnl_values = [row["market_stock_pnl"] for row in lot_rows]
+    call_strike_pnl_values = [row["stock_pnl_at_open_call_strikes"] for row in lot_rows]
+    cap_values = [row["capped_upside_at_current_price"] for row in lot_rows]
+    lifecycle_values = [row["lifecycle_pnl_excluding_dividends"] for row in lot_rows]
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    if current_price is None:
+        blockers.append(
+            {
+                "code": "current_price_missing",
+                "message": f"Current price is unavailable for {ticker}; call-management analysis is blocked.",
+            }
+        )
+    if any(float(call["unallocated_shares"]) > 1e-9 for call in call_rows):
+        blockers.append(
+            {
+                "code": "open_call_inventory_mismatch",
+                "message": f"Open calls for {ticker} exceed assignment-derived shares.",
+            }
+        )
+    return {
+        "id": f"assigned:{ticker}",
+        "ticker": ticker,
+        "current_shares": current_shares,
+        "current_price": current_price,
+        "current_price_updated_at": prices_updated_at,
+        "price_status": "available" if current_price is not None else "missing",
+        "assignment_lots": lot_rows,
+        "open_calls": call_rows,
+        "totals": {
+            "remaining_assignment_capital": assignment_capital,
+            "weighted_assignment_price": assignment_capital / current_shares if current_shares > 0 else None,
+            "market_value": current_shares * float(current_price) if current_price is not None else None,
+            "assigned_put_premium": float(sum(lot.put_pnl for lot in lots)),
+            "realized_call_cashflow": float(sum(lot.call_cashflow_pnl for lot in lots)),
+            "stock_realized_pnl": float(sum(lot.stock_realized_pnl for lot in lots)),
+            "market_stock_pnl": (
+                float(sum(float(value) for value in market_stock_pnl_values))
+                if all(value is not None for value in market_stock_pnl_values)
+                else None
+            ),
+            "stock_pnl_at_open_call_strikes": (
+                float(sum(float(value) for value in call_strike_pnl_values))
+                if all(value is not None for value in call_strike_pnl_values)
+                else None
+            ),
+            "capped_upside_at_current_price": (
+                float(sum(float(value) for value in cap_values))
+                if all(value is not None for value in cap_values)
+                else None
+            ),
+            "lifecycle_pnl_excluding_dividends": (
+                float(sum(float(value) for value in lifecycle_values))
+                if all(value is not None for value in lifecycle_values)
+                else None
+            ),
+            "open_call_covered_shares": float(sum(float(call["covered_shares"]) for call in call_rows)),
+        },
+        "data_quality": {
+            "status": "blocked" if blockers else ("warning" if warnings else "ok"),
+            "blockers": blockers,
+            "warnings": warnings,
+        },
+    }
 
 
 def _lot_result_row(
@@ -503,6 +931,7 @@ def _cohort_rows(
     lot_rows: list[dict[str, Any]],
     report: Any,
     as_of: pd.Timestamp,
+    *, executions=None,
 ) -> list[dict[str, Any]]:
     if not lot_rows:
         return []
@@ -528,11 +957,14 @@ def _cohort_rows(
     for ticker_cohorts in cohorts_by_ticker.values():
         ticker_cohorts.sort(key=lambda row: row["inclusion_date"])
 
-    _, holding_segments, _ = compute_wheel_stock_realized_and_segments(
-        wheel_stock_movements_from_report(report),
-        as_of=as_of,
-    )
-    included, _, _ = wheel_option_executions(option_executions_from_report(report, short_strategy_only=False), holding_segments)
+    if executions is None:
+        _, holding_segments, _ = compute_wheel_stock_realized_and_segments(
+            wheel_stock_movements_from_report(report),
+            as_of=as_of,
+        )
+        included, _, _ = wheel_option_executions(option_executions_from_report(report, short_strategy_only=False), holding_segments)
+    else:
+        included = executions
     for ex in included:
         if ex.date > as_of:
             continue

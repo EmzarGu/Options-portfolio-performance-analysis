@@ -9,6 +9,7 @@ from typing import Any, Iterable, Optional
 from portfolio_backend.ibkr.flex_client import DateRange, FlexClient, parse_iso_date, plan_backfill_ranges
 from portfolio_backend.ibkr.importer import FirestoreImportStore, GcsRawReportStore, IbkrImportService
 from portfolio_backend.market_calendar import is_us_market_trading_day
+from portfolio_backend.pipeline_warmup import warm_dashboard_snapshot
 
 
 SOURCE = "ibkr_flex"
@@ -501,12 +502,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--polls", type=int, default=int(os.environ.get("IBKR_FLEX_POLLS", "30")))
     parser.add_argument("--poll-interval", type=float, default=float(os.environ.get("IBKR_FLEX_POLL_INTERVAL", "5")))
+    parser.add_argument(
+        "--warm-dashboard", action="store_true",
+        default=os.environ.get("IBKR_IMPORT_WARM_DASHBOARD", "0").lower() in {"1", "true", "yes"},
+        help="Prepare the shared dashboard snapshot after a successful import.",
+    )
+    parser.add_argument(
+        "--warm-only", action="store_true",
+        help="Prepare the dashboard from the existing successful import without contacting IBKR.",
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    result = run_import(args)
+    result = {"status": "not_run", "mode": "warm_only"} if args.warm_only else run_import(args)
+    if args.warm_dashboard or args.warm_only:
+        try:
+            result["dashboard_warmup"] = warm_dashboard_snapshot()
+            _emit_progress({"event": "dashboard_warmup", **result["dashboard_warmup"]})
+        except Exception as exc:
+            result["dashboard_warmup"] = {"status": "failed", "error_type": type(exc).__name__, "error_message": str(exc)[:1000]}
+            _emit_progress({"event": "dashboard_warmup", "severity": "ERROR", **result["dashboard_warmup"]})
+            print(json.dumps(result, sort_keys=True))
+            # Imported records remain valid. Signal the preparation failure so
+            # it can be retried with --warm-only instead of repeating the import.
+            return 1
     print(json.dumps(result, sort_keys=True))
     return 0
 

@@ -290,7 +290,7 @@ def test_stored_option_contracts_create_provider_candidate_inputs():
     candidate = data["recommendation_candidates"][0]["recommended"]
 
     assert candidate["provider"] == "cutemarkets"
-    assert candidate["price_source"] == "quote_midpoint"
+    assert candidate["price_source"] == "quote_bid"
     assert candidate["premium"] == pytest.approx(34.0)
     assert candidate["delta"] == pytest.approx(0.14)
     assert data["option_market_data"]["status"]["contract_count"] == 1

@@ -43,7 +43,7 @@ class CuteMarketsClient:
     def configured(self) -> bool:
         return bool(self.api_key)
 
-    def fetch_chain(self, request: OptionChainRequest, *, limit: int = 100) -> OptionMarketFetchResult:
+    def fetch_chain(self, request: OptionChainRequest, *, limit: int = 100, deadline: Optional[float] = None) -> OptionMarketFetchResult:
         if not self.api_key:
             raise RuntimeError("CUTEMARKETS_API_KEY is not configured")
 
@@ -61,7 +61,7 @@ class CuteMarketsClient:
         error = None
 
         while url:
-            response = self._get(url, params=params, headers=headers)
+            response = self._get(url, params=params, headers=headers, deadline=deadline)
             status_code = response.status_code
             try:
                 payload = response.json()
@@ -134,11 +134,19 @@ class CuteMarketsClient:
         rows = _result_rows(payload)
         return rows[0] if rows else {}
 
-    def _get(self, url: str, *, params: Optional[dict[str, Any]], headers: dict[str, str]) -> Any:
+    def _get(self, url: str, *, params: Optional[dict[str, Any]], headers: dict[str, str], deadline: Optional[float] = None) -> Any:
         for attempt in range(3):
-            self._throttle()
-            response = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
+            self._throttle(deadline=deadline)
+            timeout = self.timeout
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise requests.Timeout("Option data refresh reached its time limit")
+                timeout = (min(5.0, remaining / 2), min(self.timeout, remaining / 2))
+            response = self.session.get(url, params=params, headers=headers, timeout=timeout)
             self._last_request_at = time.monotonic()
+            if deadline is not None and time.monotonic() >= deadline:
+                raise requests.Timeout("Option data refresh reached its time limit")
             if response.status_code != 429 or attempt == 2:
                 return response
             retry_after = response.headers.get("Retry-After")
@@ -146,16 +154,22 @@ class CuteMarketsClient:
                 wait = float(retry_after) if retry_after else self.min_interval_seconds
             except ValueError:
                 wait = self.min_interval_seconds
-            time.sleep(max(wait, self.min_interval_seconds, 1.0))
+            self._wait(max(wait, self.min_interval_seconds, 1.0), deadline=deadline)
         return response
 
-    def _throttle(self) -> None:
+    def _wait(self, seconds: float, *, deadline: Optional[float]) -> None:
+        """Do not let a provider's retry delay consume the page's request lifetime."""
+        if deadline is not None and seconds >= deadline - time.monotonic():
+            raise requests.Timeout("Option data refresh reached its time limit")
+        time.sleep(seconds)
+
+    def _throttle(self, *, deadline: Optional[float] = None) -> None:
         if self.min_interval_seconds <= 0 or self._last_request_at <= 0:
             return
         elapsed = time.monotonic() - self._last_request_at
         remaining = self.min_interval_seconds - elapsed
         if remaining > 0:
-            time.sleep(remaining)
+            self._wait(remaining, deadline=deadline)
 
 
 def normalize_cutemarkets_contract(row: dict[str, Any], request: OptionChainRequest) -> Optional[OptionMarketContract]:

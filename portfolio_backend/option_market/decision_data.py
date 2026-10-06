@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 import os
+from time import monotonic
 from typing import Any, Callable, Optional, Protocol
+
+import requests
 
 from portfolio_backend.option_market.cutemarkets import CuteMarketsClient
 from portfolio_backend.option_market.models import (
@@ -51,7 +54,7 @@ class DecisionOptionDataProvider(Protocol):
     provider: str
     configured: bool
 
-    def fetch_chain(self, request: OptionChainRequest):
+    def fetch_chain(self, request: OptionChainRequest, *, deadline: Optional[float] = None):
         ...
 
 
@@ -123,6 +126,7 @@ def load_or_fetch_decision_option_data(
     universe: DecisionOptionUniverse,
     provider_client: DecisionOptionDataProvider,
     force_refresh: bool = False,
+    allow_fetch: bool = True,
 ) -> DecisionOptionData:
     previous_run = store.load_latest_successful_fetch_run(
         universe_key=universe.universe_key,
@@ -160,6 +164,20 @@ def load_or_fetch_decision_option_data(
                 "request_ids": sorted(stored_request_ids),
                 "missing_request_ids": missing_request_ids,
                 "last_fetched_at": _latest_contract_updated_at(stored_contracts),
+            },
+        )
+
+    if not allow_fetch:
+        return DecisionOptionData(
+            universe=universe,
+            contracts=[],
+            status={
+                "provider": universe.provider,
+                "source": "none",
+                "status": "not_fetched",
+                "message": "Option candidates are unavailable. Use Fetch option data to request an update; portfolio analysis remains available.",
+                "contract_count": 0,
+                "request_count": len(universe.requests),
             },
         )
 
@@ -202,7 +220,13 @@ def load_or_fetch_decision_option_data(
     contract_count = 0
     provider_call_budget = _provider_call_budget()
     provider_calls = 0
-    for request in universe.requests:
+    # Share one budget across chains, pagination, throttling and rate-limit retries.
+    deadline = monotonic() + 30.0
+    for index, request in enumerate(universe.requests):
+        if monotonic() >= deadline:
+            skipped += len(universe.requests) - index
+            errors.append("Option data refresh reached its time limit. Please try again later.")
+            break
         existing_contracts = store.load_contracts(request)
         if existing_contracts and not force_refresh:
             request_ids.append(request.request_id)
@@ -214,17 +238,26 @@ def load_or_fetch_decision_option_data(
             continue
         provider_calls += 1
         try:
-            result = provider_client.fetch_chain(request)
+            result = provider_client.fetch_chain(request, deadline=deadline)
+        except (requests.Timeout, requests.ConnectionError):
+            failed += 1
+            skipped += len(universe.requests) - index - 1
+            errors.append("The options service is unavailable or took too long to respond. Please try again later.")
+            break
         except Exception as exc:
             failed += 1
             errors.append(f"{request.ticker} {request.put_call} {request.expiry}: {exc}")
             continue
-        request_ids.append(request.request_id)
-        store.save_chain_snapshot(result)
         if result.error:
             failed += 1
             errors.append(f"{request.ticker} {request.put_call} {request.expiry}: {result.error}")
+            if result.status_code in (401, 403, 429) or result.status_code >= 500:
+                skipped += len(universe.requests) - index - 1
+                break
         else:
+            # A failed or incomplete chain must not overwrite the last good snapshot.
+            request_ids.append(request.request_id)
+            store.save_chain_snapshot(result)
             fetched += 1
             contract_count += len(result.contracts)
 
@@ -258,17 +291,18 @@ def load_or_fetch_decision_option_data(
             status=_status_from_run(run_doc, contracts, source="provider_refresh"),
         )
 
-    contracts = _contracts_from_store(store, previous_run) if previous_run else []
+    contracts = _contracts_from_store(store, previous_run) if previous_run else stored_contracts
     status = _status_from_run(previous_run, contracts, source="stored_after_failed_refresh") if previous_run else {}
     status.update(
         {
             "provider": universe.provider,
-            "source": status.get("source") or "none",
-            "status": "failed_refresh_kept_previous" if previous_run else "failed",
+            "source": status.get("source") or ("stored_after_failed_refresh" if contracts else "none"),
+            "status": "failed_refresh_kept_previous" if contracts else "failed",
             "message": "; ".join(errors[:3]) if errors else "Provider refresh failed",
             "request_count": len(universe.requests),
             "contract_count": len(contracts),
             "skipped_request_count": skipped,
+            "last_fetched_at": status.get("last_fetched_at") or _latest_contract_updated_at(contracts),
         }
     )
     return DecisionOptionData(universe=universe, contracts=contracts, status=status)
@@ -303,6 +337,7 @@ def decision_option_loader(
                 universe=universe,
                 provider_client=provider_factory(),
                 force_refresh=force_refresh,
+                allow_fetch=force_refresh,
             )
             return data.as_dict()
         except Exception as exc:

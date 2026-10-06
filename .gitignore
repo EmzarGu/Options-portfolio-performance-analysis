@@ -11,3 +11,10 @@ tmp.png
 tmp/
 reports/
 write_access_check.tmp
+
+# Local research and raw portfolio exports are not application source.
+analysis/
+reviews/
+tmp-shop-research.json
+.pytest_cache/
+.ruff_cache/

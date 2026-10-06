@@ -70,6 +70,47 @@ the recent overlap window. If Firestore is reset and a full multi-year backfill
 is needed again, temporarily increase the timeout before running the reset
 backfill.
 
+## Preparing the dashboard after import
+
+Since 23 September, the production job also prepares dated Market Data selections
+after dashboard preparation. `DECISION_LAB_PROVIDER=marketdata` enables this path;
+`MARKETDATA_API_TOKEN` references Secret Manager `marketdata-api-token:1`.
+Option preparation shares a 90-credit ceiling and a distributed lease with the
+web service, and has a 90-second budget. Its result appears under
+`dashboard_warmup.option_data`; a partial or failed option update leaves the
+portfolio import valid. See the [release record](decision-lab-marketdata-production-2026-09-23.md).
+
+Production enables `IBKR_IMPORT_WARM_DASHBOARD=1`,
+`PIPELINE_SNAPSHOT_STORE=firestore`, and `PRICE_HISTORY_STORE=firestore`.
+After all import chunks finish successfully (including an explicitly deferred
+trailing statement), the job prepares the default dashboard context and verifies
+that its base accounting snapshot can be read from Firestore. Failed imports
+do not start preparation. Both the 07:15 and 19:45 Europe/Zurich schedules use
+this same job; no separate warmer or additional scheduled service is required.
+
+Preparation uses the same previous US trading day, source partition, import
+marker and snapshot schema as interactive requests. It stores only the existing
+base snapshot; the browser continues to fetch current prices on refresh and
+continues to validate the latest import marker. Historical dates and custom
+requests are still built on demand. Scalar historical-price parsing has been
+replaced with batch conversion without changing price selection or calculations.
+
+The `dashboard_warmup` JSON log includes status, snapshot ID and stage timings.
+Persistence failure logs `severity=ERROR` and exits the job with code 1, while
+the successfully imported records and their success audit remain intact. The
+dashboard retains its normal on-demand rebuild fallback. Retry preparation
+without contacting IBKR or changing the import marker with:
+
+```bash
+gcloud run jobs execute ibkr-flex-import \
+  --project=options-performance-dashboard --region=europe-west6 \
+  --args=-m,portfolio_backend.ibkr.import_job,--warm-only --wait
+```
+
+For other invocations preparation is opt-in via `--warm-dashboard` or the
+environment flag. Disable it with `IBKR_IMPORT_WARM_DASHBOARD=0` if needed;
+normal interactive refresh remains available.
+
 Manual date overrides are available and take precedence over the rolling window:
 
 ```bash

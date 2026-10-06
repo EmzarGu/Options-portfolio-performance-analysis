@@ -16,15 +16,23 @@ The page shell is served immediately. The heavier portfolio payload is loaded by
 the browser from `/api/dashboard`, so a cold Cloud Run instance or slow Firestore
 read no longer leaves the browser waiting for the first paint.
 
-The server is split into three layers:
+The server separates HTTP handling from shared data services:
 
-- `web_dashboard.py`: FastAPI routes, authentication, session cookies, and the
-  browser refresh/read orchestration.
+- `web_dashboard.py`: FastAPI routes, middleware and browser request validation.
+- `portfolio_backend/web_auth.py`: authentication, session cookies and login rendering.
+- `portfolio_backend/web_data_service.py`: payload caches, history loading and
+  the existing Decision Lab provider orchestration.
+- `portfolio_backend/context_runtime.py`: shared web/mobile portfolio context,
+  source markers, snapshot coordination and refresh. IBKR import-health rules
+  live in `portfolio_backend/ibkr/import_health.py`.
 - `portfolio_backend/web_dashboard_payloads.py`: IBKR-backed web JSON payload
   assembly, including tables, chart data, mobile DTO reuse, and reconciliation
   notes.
 - `portfolio_backend/web_dashboard_templates.py`: browser HTML, CSS, and
   JavaScript assets.
+
+This module separation was [deployed on 2026-09-19](production-deployment-2026-09-19.md).
+Routes, configuration, authentication rules and provider selection are unchanged.
 
 The dashboard uses the shared mobile snapshot semantics for unrealized P&L:
 open ITM put assignment gaps are included in option unrealized exposure, held

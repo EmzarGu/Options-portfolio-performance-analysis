@@ -126,3 +126,19 @@ def test_memory_pipeline_snapshot_store_build_lease_blocks_other_owner_until_rel
 
     store.release_build_lease("lease:demo", "owner-a")
     assert store.try_acquire_build_lease("lease:demo", "owner-b", ttl_seconds=30)
+
+
+def test_accounting_revision_rejects_old_snapshot_and_changes_cache_identity(monkeypatch):
+    import portfolio_backend.pipeline_snapshot_store as module
+
+    client = _FakeFirestoreClient()
+    store = FirestorePipelineSnapshotStore(client=client)
+    args = dict(source_snapshot_id="unchanged-ibkr-import", as_of="2026-10-01", selected_sheets=["IBKR Flex"])
+    legacy_version = 7
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "SNAPSHOT_SCHEMA_VERSION", legacy_version)
+        old_id = pipeline_snapshot_id(**args)
+        store.save(old_id, SimpleNamespace(realized_options_pnl=6510.11), {})
+    assert module.SNAPSHOT_SCHEMA_VERSION > legacy_version
+    assert pipeline_snapshot_id(**args) != old_id
+    assert store.load(old_id) is None

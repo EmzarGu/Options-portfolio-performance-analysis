@@ -5,6 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 import web_dashboard
+from portfolio_backend import web_auth, web_data_service as web_data
 from portfolio_backend.web_dashboard_templates import DASHBOARD_HTML
 
 
@@ -162,8 +163,8 @@ def test_web_dashboard_renders_when_auth_disabled(monkeypatch):
         lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
     )
     monkeypatch.setattr(
-        web_dashboard,
-        "_build_dashboard_data",
+        web_data,
+        '_build_dashboard_data',
         lambda **_: (_ for _ in ()).throw(AssertionError("dashboard page should render a shell only")),
     )
     client = TestClient(web_dashboard.app)
@@ -227,11 +228,11 @@ def test_web_dashboard_has_assignment_quality_renderer():
 
 
 def test_assignment_quality_payload_is_lazy_loaded(monkeypatch):
-    monkeypatch.setattr(web_dashboard, "_is_authenticated", lambda request: True)
-    monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(web_auth, '_is_authenticated', lambda request: True)
+    monkeypatch.setattr(web_data, '_get_cached_dashboard_data', lambda **_: _fake_dashboard_data())
     monkeypatch.setattr(
-        web_dashboard,
-        "_get_cached_assignment_quality_data",
+        web_data,
+        '_get_cached_assignment_quality_data',
         lambda **_: {"summary": {"lots": 2}, "by_ticker": []},
     )
 
@@ -242,24 +243,24 @@ def test_assignment_quality_payload_is_lazy_loaded(monkeypatch):
 
 
 def test_assignment_quality_payload_reuses_persisted_derived_cache(monkeypatch):
-    web_dashboard._clear_dashboard_data_cache()
+    web_data._clear_dashboard_data_cache()
     source_payload = _fake_dashboard_data()
     source_payload["source_metadata"] = {"source_snapshot_id": "source-1", "pipeline_snapshot_id": "pipe-1"}
     calls = []
 
-    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: {"summary": {"lots": 3}})
-    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: calls.append("save"))
+    monkeypatch.setattr(web_data, 'load_derived_payload', lambda _key: {"summary": {"lots": 3}})
+    monkeypatch.setattr(web_data, 'save_derived_payload', lambda *_args, **_kwargs: calls.append("save"))
     monkeypatch.setattr(
-        web_dashboard,
-        "build_web_assignment_quality_data",
+        web_data,
+        'build_web_assignment_quality_data',
         lambda **_: (_ for _ in ()).throw(AssertionError("should reuse persisted payload")),
     )
 
-    data = web_dashboard._get_cached_assignment_quality_data(source_payload=source_payload)
+    data = web_data._get_cached_assignment_quality_data(source_payload=source_payload)
 
     assert data["summary"]["lots"] == 3
     assert calls == []
-    web_dashboard._clear_dashboard_data_cache()
+    web_data._clear_dashboard_data_cache()
 
 
 def test_web_dashboard_does_not_add_extra_benchmark_baseline_label():
@@ -360,7 +361,7 @@ def test_web_dashboard_updates_shared_target_band(monkeypatch):
 def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
     monkeypatch.setenv("WEB_DASHBOARD_DATA_CACHE_SECONDS", "300")
-    web_dashboard._clear_dashboard_data_cache()
+    web_data._clear_dashboard_data_cache()
     calls = []
 
     def fake_build(**kwargs):
@@ -375,8 +376,8 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
         "load_monthly_target_band",
         lambda: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
     )
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", fake_build)
-    monkeypatch.setattr(web_dashboard, "_build_decision_lab_payload", lambda payload, force_refresh=False: _fake_decision_lab_data())
+    monkeypatch.setattr(web_data, '_build_dashboard_data', fake_build)
+    monkeypatch.setattr(web_data, '_build_decision_lab_payload', lambda payload, force_refresh=False: _fake_decision_lab_data())
     client = TestClient(web_dashboard.app)
 
     first = client.get("/api/dashboard?target_return_pct=2.25")
@@ -395,12 +396,12 @@ def test_web_dashboard_api_builds_payload_and_reuses_short_cache(monkeypatch):
             "timing_recorder": calls[0]["timing_recorder"],
         }
     ]
-    web_dashboard._clear_dashboard_data_cache()
+    web_data._clear_dashboard_data_cache()
 
 
 def test_web_dashboard_refresh_accepts_decision_lab_section(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    monkeypatch.setattr(web_dashboard, "_get_context", lambda **_: (object(), 123))
+    monkeypatch.setattr(web_data, '_get_context', lambda **_: (object(), 123))
     monkeypatch.setattr(web_dashboard, "build_mobile_refresh_payload", lambda *_, **__: {})
     client = TestClient(web_dashboard.app, follow_redirects=False)
 
@@ -440,17 +441,17 @@ def test_decision_lab_renders_shell_when_auth_disabled(monkeypatch):
 
 def test_decision_lab_api_builds_real_data_model(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: None)
-    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(web_data, 'load_derived_payload', lambda _key: None)
+    monkeypatch.setattr(web_data, 'save_derived_payload', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         web_dashboard,
         "_monthly_target_band_from_request",
         lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
     )
-    monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(web_data, '_get_cached_dashboard_data', lambda **_: _fake_dashboard_data())
     monkeypatch.setattr(
-        web_dashboard,
-        "_load_probability_trade_matches",
+        web_data,
+        '_load_probability_trade_matches',
         lambda: [
             {
                 "matched": True,
@@ -469,10 +470,10 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
             }
         ],
     )
-    monkeypatch.setattr(web_dashboard, "_load_historical_option_enrichments", lambda: [])
+    monkeypatch.setattr(web_data, '_load_historical_option_enrichments', lambda: [])
     monkeypatch.setattr(
-        web_dashboard,
-        "_decision_option_loader",
+        web_data,
+        '_decision_option_loader',
         lambda force_refresh=False: (lambda _situations, _cycle, _candidates, _payload: {"status": {"source": "none"}, "contracts": []}),
     )
     client = TestClient(web_dashboard.app)
@@ -490,38 +491,38 @@ def test_decision_lab_api_builds_real_data_model(monkeypatch):
 
 
 def test_decision_lab_payload_reuses_persisted_derived_cache(monkeypatch):
-    web_dashboard._clear_dashboard_data_cache()
+    web_data._clear_dashboard_data_cache()
     source_payload = _fake_dashboard_data()
     source_payload["source_metadata"] = {"source_snapshot_id": "source-2", "pipeline_snapshot_id": "pipe-2"}
     saved = []
 
-    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: {"summary": {"action_item_count": 7}})
-    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: saved.append(True))
+    monkeypatch.setattr(web_data, 'load_derived_payload', lambda _key: {"summary": {"action_item_count": 7}})
+    monkeypatch.setattr(web_data, 'save_derived_payload', lambda *_args, **_kwargs: saved.append(True))
     monkeypatch.setattr(
-        web_dashboard,
-        "_build_decision_lab_payload",
+        web_data,
+        '_build_decision_lab_payload',
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should reuse persisted payload")),
     )
 
-    data = web_dashboard._get_cached_decision_lab_payload(source_payload)
+    data = web_data._get_cached_decision_lab_payload(source_payload)
 
     assert data["summary"]["action_item_count"] == 7
     assert saved == []
-    web_dashboard._clear_dashboard_data_cache()
+    web_data._clear_dashboard_data_cache()
 
 
 def test_decision_lab_option_refresh_uses_force_loader(monkeypatch):
     monkeypatch.setenv("WEB_DASHBOARD_AUTH", "0")
-    monkeypatch.setattr(web_dashboard, "load_derived_payload", lambda _key: None)
-    monkeypatch.setattr(web_dashboard, "save_derived_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(web_data, 'load_derived_payload', lambda _key: None)
+    monkeypatch.setattr(web_data, 'save_derived_payload', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         web_dashboard,
         "_monthly_target_band_from_request",
         lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
     )
-    monkeypatch.setattr(web_dashboard, "_get_cached_dashboard_data", lambda **_: _fake_dashboard_data())
-    monkeypatch.setattr(web_dashboard, "_load_probability_trade_matches", lambda: [])
-    monkeypatch.setattr(web_dashboard, "_load_historical_option_enrichments", lambda: [])
+    monkeypatch.setattr(web_data, '_get_cached_dashboard_data', lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(web_data, '_load_probability_trade_matches', lambda: [])
+    monkeypatch.setattr(web_data, '_load_historical_option_enrichments', lambda: [])
     calls = []
 
     def fake_loader(force_refresh=False):
@@ -536,7 +537,7 @@ def test_decision_lab_option_refresh_uses_force_loader(monkeypatch):
             "contracts": [],
         }
 
-    monkeypatch.setattr(web_dashboard, "_decision_option_loader", fake_loader)
+    monkeypatch.setattr(web_data, '_decision_option_loader', fake_loader)
     client = TestClient(web_dashboard.app)
 
     response = client.post("/api/decision-lab/options/refresh")
@@ -576,13 +577,13 @@ def test_web_dashboard_login_accepts_dashboard_password(monkeypatch):
         "_monthly_target_band_from_request",
         lambda _request: {"target_floor": 0.01, "target_return": 0.015, "source": "test"},
     )
-    monkeypatch.setattr(web_dashboard, "_build_dashboard_data", lambda **_: _fake_dashboard_data())
+    monkeypatch.setattr(web_data, '_build_dashboard_data', lambda **_: _fake_dashboard_data())
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 
     response = client.post("/login", data={"password": "secret"}, follow_redirects=False)
 
     assert response.status_code == 303
-    assert COOKIE_HEADER(response).startswith(f"{web_dashboard.COOKIE_NAME}=")
+    assert COOKIE_HEADER(response).startswith(f"{web_auth.COOKIE_NAME}=")
 
     dashboard_response = client.get("/")
     assert dashboard_response.status_code == 200
@@ -679,8 +680,8 @@ def test_web_dashboard_google_login_accepts_allowed_verified_email(monkeypatch):
     monkeypatch.setenv("WEB_AUTH_ALLOWED_EMAILS", "user@example.com")
     monkeypatch.setenv("WEB_DASHBOARD_PASSWORD", "secret")
     monkeypatch.setattr(
-        web_dashboard,
-        "_verify_google_credential",
+        web_auth,
+        '_verify_google_credential',
         lambda credential: {"email": "user@example.com"} if credential == "good" else {},
     )
     client = TestClient(web_dashboard.app, base_url="https://testserver")
@@ -688,7 +689,7 @@ def test_web_dashboard_google_login_accepts_allowed_verified_email(monkeypatch):
     response = client.post("/auth/google", data={"credential": "good"}, follow_redirects=False)
 
     assert response.status_code == 303
-    assert COOKIE_HEADER(response).startswith(f"{web_dashboard.COOKIE_NAME}=")
+    assert COOKIE_HEADER(response).startswith(f"{web_auth.COOKIE_NAME}=")
 
 
 def test_web_dashboard_google_login_rejects_disallowed_email(monkeypatch):
@@ -700,7 +701,7 @@ def test_web_dashboard_google_login_rejects_disallowed_email(monkeypatch):
     def reject(_credential):
         raise PermissionError("This Google account is not allowed for this dashboard.")
 
-    monkeypatch.setattr(web_dashboard, "_verify_google_credential", reject)
+    monkeypatch.setattr(web_auth, '_verify_google_credential', reject)
     client = TestClient(web_dashboard.app, base_url="https://testserver")
 
     response = client.post("/auth/google", data={"credential": "good"})

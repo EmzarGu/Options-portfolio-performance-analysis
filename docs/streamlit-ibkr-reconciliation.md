@@ -1,5 +1,14 @@
 # Streamlit Sheet vs IBKR Reconciliation
 
+> Historical record, superseded by [completed roll-chain accounting](completed-roll-chain-accounting-2026-10-01.md).
+> Current dashboard strategy P&L defers the full linked chain balance until completion.
+
+
+> Historical audit: its roll-netted realized figures were superseded by the
+> 1 October 2026 correction. Replacement premiums now remain open until their
+> own lifecycle event. See [current rules](ibkr-accounting-rules.md) and
+> [correction and verification](realized-pnl-correction-2026-10-01.md).
+
 - Generated: `2026-05-10` local run
 - As-of date used: `2026-05-10`
 - Sheet source: `Options 2024`, `Options 2025`, `Options 2026`
@@ -21,18 +30,18 @@ No production switch or deploy was performed. CSV artifacts are under `tmp/strea
 
 | Surface | Row | Sheet | IBKR | IBKR - Sheet | Classification | Explanation |
 |---|---|---:|---:|---:|---|---|
-| Dashboard | YTD realized P&L | $22,200.80 | $25,909.27 | $3,708.47 | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
-| Dashboard | Current option unrealized | $6,523.09 | $3,492.70 | $-3,030.39 | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
-| Dashboard | YTD total P&L | $36,027.89 | $36,705.97 | $678.08 | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
-| Monthly | April 2026 options P&L | $3,716.60 | $5,542.66 | $1,826.06 | sheet_periodization_difference | April 2026 option P&L delta is driven mainly by CCJ/NVDA lifecycle-date inclusion and AAPL prior-roll realization. |
-| Monthly | May 2026 realized options P&L | $0.00 | $703.33 | $703.33 | known_contract_semantics_difference | May includes current-month IBKR lifecycle realized P&L plus projection semantics for open expiring premium. |
-| Monthly | May 2026 total realized P&L | $0.00 | $703.33 | $703.33 | known_contract_semantics_difference | May includes current-month IBKR lifecycle realized P&L plus projection semantics for open expiring premium. |
-| Per ticker | CCJ 2026 options P&L | $504.60 | $1,788.98 | $1,284.38 | sheet_periodization_difference | CCJ April 2026 difference is lifecycle-date/roll periodization; IBKR events are valid covered-call wheel events, not over-inclusion. |
-| Per ticker | NVDA 2026 options P&L | $641.88 | $855.99 | $214.11 | sheet_periodization_difference | NVDA April 2026 difference is lifecycle-date/roll periodization; IBKR events are valid covered-call wheel events, not over-inclusion. |
-| Per ticker | AAPL 2026 options P&L | $-320.20 | $164.60 | $484.80 | sheet_periodization_difference | AAPL April assignment option P&L is already realized by IBKR in prior roll events; sheet defers it to April assignment. |
-| Per ticker | FTNT 2026 options P&L | $85.98 | $599.25 | $513.27 | expected_ibkr_more_accurate | FTNT covered-call roll chain is now attached to assignment-derived shares; IBKR caps assigned holding at the covered strike. |
-| Per ticker | CROX 2026 options P&L | $200.97 | $550.42 | $349.45 | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
-| Per ticker | GOOGL 2026 options P&L | $150.40 | $410.20 | $259.80 | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
+| Dashboard | YTD realized P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
+| Dashboard | Current option unrealized | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
+| Dashboard | YTD total P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
+| Monthly | April 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | sheet_periodization_difference | April 2026 option P&L delta is driven mainly by CCJ/NVDA lifecycle-date inclusion and AAPL prior-roll realization. |
+| Monthly | May 2026 realized options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | known_contract_semantics_difference | May includes current-month IBKR lifecycle realized P&L plus projection semantics for open expiring premium. |
+| Monthly | May 2026 total realized P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | known_contract_semantics_difference | May includes current-month IBKR lifecycle realized P&L plus projection semantics for open expiring premium. |
+| Per ticker | CCJ 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | sheet_periodization_difference | CCJ April 2026 difference is lifecycle-date/roll periodization; IBKR events are valid covered-call wheel events, not over-inclusion. |
+| Per ticker | NVDA 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | sheet_periodization_difference | NVDA April 2026 difference is lifecycle-date/roll periodization; IBKR events are valid covered-call wheel events, not over-inclusion. |
+| Per ticker | AAPL 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | sheet_periodization_difference | AAPL April assignment option P&L is already realized by IBKR in prior roll events; sheet defers it to April assignment. |
+| Per ticker | FTNT 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | expected_ibkr_more_accurate | FTNT covered-call roll chain is now attached to assignment-derived shares; IBKR caps assigned holding at the covered strike. |
+| Per ticker | CROX 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
+| Per ticker | GOOGL 2026 options P&L | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] | needs_user_decision | Material source delta not tied to a known named reconciliation case; review before expecting exact sheet parity. |
 
 ## Largest Capital-Base Differences
 
@@ -40,22 +49,22 @@ These dominate raw dollar deltas but are expected because IBKR reconstructs capi
 
 | Surface | Key | Metric | Sheet | IBKR | IBKR - Sheet |
 |---|---:|---|---:|---:|---:|
-| monthly | 2024-01-31 | peak_capital | $21,000.00 | $70,843.37 | $49,843.37 |
-| monthly | 2024-07-31 | peak_capital | $125,162.00 | $76,427.47 | $-48,734.53 |
-| monthly | 2024-01-31 | avg_capital | $14,700.00 | $61,341.78 | $46,641.78 |
-| yearly | 2024.0 | peak_capital | $125,162.00 | $83,427.72 | $-41,734.28 |
-| monthly | 2025-07-31 | peak_capital | $204,564.36 | $166,064.36 | $-38,500.00 |
-| monthly | 2025-04-30 | peak_capital | $160,222.53 | $124,222.53 | $-36,000.00 |
-| monthly | 2025-07-31 | avg_capital | $178,448.44 | $143,174.24 | $-35,274.19 |
-| monthly | 2025-04-30 | avg_capital | $147,554.09 | $112,784.09 | $-34,770.00 |
+| monthly | 2024-01-31 | peak_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| monthly | 2024-07-31 | peak_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| monthly | 2024-01-31 | avg_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| yearly | 2024.0 | peak_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| monthly | 2025-07-31 | peak_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| monthly | 2025-04-30 | peak_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| monthly | 2025-07-31 | avg_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
+| monthly | 2025-04-30 | avg_capital | [private reconciliation amount] | [private reconciliation amount] | [private reconciliation amount] |
 
 ## Known Case Confirmations
 
 - FTNT: IBKR now has open `Call` strike `95.0` expiring `2026-09-18` with qty `1`.
-- FTNT assigned holding: `covered_shares=100`, `covered_strike=95.0`, `unrealized_pnl=$-250.00`.
+- FTNT assigned holding: `covered_shares=100`, `covered_strike=95.0`, `unrealized_pnl=[private reconciliation amount]`.
 - CCJ/NVDA April 2026: classified as `sheet_periodization_difference`; prior reconciliation showed valid assigned-put inventory and valid covered-call lifecycle events.
 - AAPL April 2026: classified as `sheet_periodization_difference`; IBKR realized the economics in prior roll events rather than on April assignment date.
-- ZM/monthly premium semantics: IBKR additive incremental premium `$3,492.70`, roll-adjusted display premium `$4,087.26`, projected month P&L `$4,196.03`.
+- ZM/monthly premium semantics: IBKR additive incremental premium `[private reconciliation amount]`, roll-adjusted display premium `[private reconciliation amount]`, projected month P&L `[private reconciliation amount]`.
 - SPY remains excluded from IBKR wheel totals: `True`.
 - ABR remains excluded from IBKR wheel totals: `True`.
 

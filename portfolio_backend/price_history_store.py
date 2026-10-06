@@ -133,6 +133,46 @@ class FirestorePriceHistoryStore(PriceHistoryStore):
             result[ticker_key] = lookup
         return result
 
+    def get_history_points(self, dates_by_ticker: Dict[str, list[pd.Timestamp]]) -> Dict[str, pd.Series]:
+        """Read horizon years first; preserve last-known-price fallback back to 2000."""
+        points = {ticker: sorted(set(pd.Timestamp(d).normalize() for d in dates))
+                  for ticker, dates in dates_by_ticker.items()}
+        pairs = {(ticker, d.year) for ticker, dates in points.items() for d in dates if d.year >= 2000}
+
+        def read_pairs(wanted):
+            refs = [self.client.collection(COLLECTION_PRICE_HISTORY_CHUNKS).document(_document_id(t, y))
+                    for t, y in sorted(wanted) if _document_id(t, y) not in self._doc_cache]
+            if refs:
+                for snapshot in self.client.get_all(refs):
+                    self._doc_cache[snapshot.id] = snapshot.to_dict() if snapshot.exists else None
+
+        read_pairs(pairs)
+        series = {(t, y): _series_from_doc(self._doc_cache.get(_document_id(t, y)) or {}, t)
+                  for t, y in pairs}
+        fallback = set()
+        for ticker, dates in points.items():
+            for dt in dates:
+                same_year = series.get((ticker, dt.year), pd.Series(dtype=float))
+                if same_year.empty or same_year[same_year.index <= dt].empty:
+                    fallback.update((ticker, year) for year in range(2000, dt.year))
+        read_pairs(fallback)
+        for t, y in fallback - pairs:
+            series[t, y] = _series_from_doc(self._doc_cache.get(_document_id(t, y)) or {}, t)
+        result = {}
+        for ticker, dates in points.items():
+            values = {}
+            for dt in dates:
+                for year in range(dt.year, 1999, -1):
+                    chunk = series.get((ticker, year))
+                    if chunk is None or chunk.empty:
+                        continue
+                    available = chunk[chunk.index <= dt]
+                    if not available.empty:
+                        values[dt] = float(available.iloc[-1])
+                        break
+            result[ticker] = pd.Series(values, dtype=float, name=ticker)
+        return result
+
     def upsert_history(self, ticker: str, series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> None:
         ticker_key = _ticker_key(ticker)
         clean = _clean_series(series, ticker_key)
@@ -233,17 +273,16 @@ def _series_from_doc(doc: Dict, ticker: str) -> pd.Series:
     rows = doc.get("prices") or []
     if not rows:
         return pd.Series(dtype=float, name=ticker)
-    dates = []
-    closes = []
-    for row in rows:
-        dt = pd.to_datetime(row.get("date"), errors="coerce")
-        close = pd.to_numeric(row.get("close"), errors="coerce")
-        if pd.notna(dt) and pd.notna(close):
-            dates.append(dt.normalize())
-            closes.append(float(close))
-    if not dates:
+    # Parse a whole year together rather than invoking pandas for each price.
+    # Mixed format parsing retains the scalar parser's per-value date handling.
+    dates = pd.to_datetime(
+        [row.get("date") for row in rows], errors="coerce", format="mixed",
+    ).normalize()
+    closes = pd.to_numeric(pd.Series([row.get("close") for row in rows]), errors="coerce")
+    valid = dates.notna() & closes.notna().to_numpy()
+    if not valid.any():
         return pd.Series(dtype=float, name=ticker)
-    series = pd.Series(closes, index=pd.DatetimeIndex(dates), name=ticker)
+    series = pd.Series(closes[valid].to_numpy(dtype=float), index=dates[valid], name=ticker)
     return _clean_series(series, ticker)
 
 

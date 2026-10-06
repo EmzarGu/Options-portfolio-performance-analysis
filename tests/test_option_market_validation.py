@@ -315,7 +315,7 @@ def test_decision_option_refresh_fetches_even_when_contracts_are_already_stored(
         configured = True
         called = False
 
-        def fetch_chain(self, request):
+        def fetch_chain(self, request, *, deadline=None):
             self.called = True
             return OptionMarketFetchResult(
                 request=request,
