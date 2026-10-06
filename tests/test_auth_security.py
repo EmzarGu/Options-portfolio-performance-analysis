@@ -15,6 +15,12 @@ from portfolio_backend import web_auth
 
 @pytest.fixture(autouse=True)
 def isolated_auth(monkeypatch):
+    # Authentication tests exercise real guards with inert data dependencies.
+    monkeypatch.setattr(mobile_api.context_service, "_available_sheets", lambda: ["IBKR Flex"])
+    monkeypatch.setattr(mobile_api.context_service.dashboard_app, "load_prefs", lambda: {})
+    monkeypatch.setattr(mobile_api, "load_monthly_target_band", lambda: {
+        "target_return": 0.015, "target_floor": 0.01, "source": "test",
+    })
     for name in ("MOBILE_API_KEY", "ALLOW_INSECURE_LOCAL_AUTH", "K_SERVICE", "CLOUD_RUN_JOB",
                  "WEB_DASHBOARD_PASSWORD", "WEB_DASHBOARD_COOKIE_SECRET", "WEB_GOOGLE_CLIENT_ID",
                  "WEB_AUTH_ALLOWED_EMAILS", "WEB_DASHBOARD_AUTH"):
