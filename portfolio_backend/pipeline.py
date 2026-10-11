@@ -292,7 +292,8 @@ def build_base_pipeline(
     record("pipeline_per_ticker_summary_ms", started_at)
 
     started_at = perf_counter()
-    benchmark_tickers = {"Cboe BXM": "^BXM", "PUTW ETF": "PUTW", "SCHD ETF": "SCHD"}
+    # WTPI is the current ticker for the fund formerly listed as PUTW.
+    benchmark_tickers = {"Cboe BXM": "^BXM", "WTPI ETF": "WTPI", "SCHD ETF": "SCHD"}
     strat_rets = monthly_returns_covered.copy()
     if not strat_rets.empty:
         strat_rets.index = pd.to_datetime(strat_rets.index).to_period("M").to_timestamp("M")

@@ -58,6 +58,7 @@ def test_release_order_and_rollback(monkeypatch, tmp_path, fail_at):
             deploy.main()
     else:
         deploy.main()
+    assert not any("option-market-history-import" in args for args in calls)
     moves = [x for x in calls if x[:3] == ("run", "services", "update-traffic")]
     if fail_at == "candidate":
         assert not any(any("--to-revisions=" in a for a in x) for x in moves)

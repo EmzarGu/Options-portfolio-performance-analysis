@@ -18,8 +18,7 @@ from pathlib import Path
 
 SERVICES = {"options-roi-mobile-api": ("mobile_api", "/v1/mobile/health", "/v1/mobile/config"),
             "options-roi-web": ("web_dashboard", "/health", "/api/dashboard")}
-JOBS = {"ibkr-flex-import": ["-m", "portfolio_backend.ibkr.import_job"],
-        "option-market-history-import": None}
+JOBS = {"ibkr-flex-import": ["-m", "portfolio_backend.ibkr.import_job"]}
 
 
 def run(*args, parse=False):

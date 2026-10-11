@@ -299,7 +299,8 @@ def test_pipeline_surfaces_ambiguous_mixed_leg_parse_issue(monkeypatch):
     assert state["lots"] == []
 
 
-def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
+@pytest.mark.parametrize("benchmark_available", [False, True])
+def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch, benchmark_available):
     df_opts = pd.DataFrame(
         [
             {
@@ -409,7 +410,21 @@ def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
             errors=[],
         ),
     )
-    monkeypatch.setattr(app, "align_benchmarks_monthly", lambda tickers, idx: {})
+    def align_benchmarks(tickers, idx):
+        assert tickers == {"Cboe BXM": "^BXM", "WTPI ETF": "WTPI", "SCHD ETF": "SCHD"}
+        if not benchmark_available:
+            return {}
+        import data_sources
+
+        months = pd.date_range(idx.min() - pd.DateOffset(months=2), idx.max(), freq="ME")
+        history = {
+            ticker: pd.Series([100.0 * 1.01 ** i for i in range(len(months))], index=months)
+            for ticker in ("^BXM", "WTPI", "SCHD")
+        }
+        monkeypatch.setattr(data_sources, "fetch_price_history_yf", lambda *args: (history, [], {}))
+        return data_source_align_benchmarks_monthly(tickers, idx, object())
+
+    monkeypatch.setattr(app, "align_benchmarks_monthly", align_benchmarks)
     app.get_cached_current_prices.clear()
 
     state = app.build_pipeline(
@@ -419,10 +434,12 @@ def test_pipeline_reference_summary_for_refactor_guardrail(monkeypatch):
         price_refresh_token=("reference-summary", 0),
     )
 
-    assert state["issues"] == [
+    assert state["issues"] == ([] if benchmark_available else [
         f"Benchmark unavailable: {name}; comparison data is missing."
-        for name in ("Cboe BXM", "PUTW ETF", "SCHD ETF")
-    ]
+        for name in ("Cboe BXM", "WTPI ETF", "SCHD ETF")
+    ])
+    if benchmark_available:
+        assert state["aligned_bench_returns"]["WTPI ETF"].dropna().tolist() == pytest.approx([0.01] * len(state["aligned_bench_returns"]["WTPI ETF"].dropna()))
     assert state["price_summary"] == {"stocks_requested": 2, "stocks_fetched": 2}
     assert len(state["open_options"]) == 1
     assert len(state["inv_df"]) == 2

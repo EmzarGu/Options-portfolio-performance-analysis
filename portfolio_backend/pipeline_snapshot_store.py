@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 COLLECTION_PIPELINE_SNAPSHOTS = "pipeline_snapshots"
 COLLECTION_APP_METADATA = "app_metadata"
 CHUNK_SUBCOLLECTION = "chunks"
-# Rebuild older snapshots so benchmark availability diagnostics reach both UIs.
-SNAPSHOT_SCHEMA_VERSION = 9
+# Rebuild older snapshots to replace the retired PUTW benchmark with WTPI.
+SNAPSHOT_SCHEMA_VERSION = 10
 CHUNK_SIZE = 700_000
 
 

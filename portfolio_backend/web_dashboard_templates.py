@@ -1554,7 +1554,7 @@ function renderPerformance(){
     ${sectionHead("Performance Charts")}
     ${rangePicker()}
     <div class="grid two-even">${lineChart("Cumulative Growth vs Benchmarks", benchmark, "Date", "Growth", "Series", v=>fmtDec(v,2)+"x")}${barChart("P&L by Options Cycle", pnlRows, "Date", "pnl")}</div>
-    ${sectionHead("Benchmark Metrics")}
+    ${sectionHead("Benchmark Metrics", "WTPI was formerly PUTW. Its investment policy changed on 4 April 2025; earlier returns reflect the former policy.")}
     ${dataTable("benchmark-metrics", benchmarkMetricRows(), [
       {key:"Series",label:"Series"},
       {key:"CAGR",label:"CAGR",format:fmtPct,num:true},
