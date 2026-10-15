@@ -933,9 +933,10 @@ function currentCandidateState(s){
 function candidateTable(rows, status={}){
   if (!rows || !rows.length) {
     const msg = status.message || "No actionable provider contract found for this ticker/action.";
-    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}</div>`;
+    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}${status.near_miss_message ? `<br>${safe(status.near_miss_message)}` : ""}</div>`;
   }
-  return dataTable("candidate-" + Math.random().toString(36).slice(2), rows || [], [
+  const nearMiss = status.near_miss_message ? `<div class="note" style="margin:8px 0 0">${safe(status.near_miss_message)}</div>` : "";
+  return nearMiss + dataTable("candidate-" + Math.random().toString(36).slice(2), rows || [], [
     {key:"action",label:"Action"},
     {key:"contract_count",label:"Contracts",format:v=>numeric(v)===null?"n/a":fmtNum(v),num:true},
     {key:"strike",label:"Strike",format:v=>numeric(v)===null?"n/a":fmtMoney(v,2),num:true},

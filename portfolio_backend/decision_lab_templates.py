@@ -125,9 +125,10 @@ function currentState(s){
 function candidateCompare(rows, status={}){
   if (!rows || !rows.length) {
     const msg = status.message || "No actionable provider contract found for this ticker/action.";
-    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}</div>`;
+    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}${status.near_miss_message ? `<br>${safe(status.near_miss_message)}` : ""}</div>`;
   }
-  return table("", rows || [], [
+  const nearMiss = status.near_miss_message ? `<div class="note" style="margin:8px 0 0">${safe(status.near_miss_message)}</div>` : "";
+  return nearMiss + table("", rows || [], [
     {key:"action",label:"Action"},
     {key:"contract_count",label:"Contracts",format:v=>num(v)===null?"n/a":fmtNum(v),num:true},
     {key:"strike",label:"Strike",format:v=>num(v)===null?"n/a":fmtMoney(v,2),num:true},

@@ -25,8 +25,10 @@ def plan_requests(groups, *, as_of: date):
         selections = []
         # Both legs of a roll must be priced. Include every current leg, not
         # merely the first option for a ticker.
+        # Pricing the same strike in later months lets the engine compare a
+        # plain roll-out, the usual wheel adjustment.
         for option in state.get("open_options") or []:
-            if str(option.get("expiry"))[:10] == request.expiry.isoformat() and str(option.get("type", "")).upper() == request.put_call:
+            if str(option.get("expiry"))[:10] <= request.expiry.isoformat() and str(option.get("type", "")).upper() == request.put_call:
                 if option.get("strike") is not None:
                     selections.append(Selection(strike=float(option["strike"])))
         selections += [Selection(delta=value) for value in (.15, .30)]
