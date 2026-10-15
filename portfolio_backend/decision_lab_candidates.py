@@ -9,6 +9,10 @@ from typing import Any, Optional
 ESTIMATED_OPTION_COMMISSION = 1.0
 MIN_ACTIONABLE_NET_PREMIUM = 25.0
 MAX_ACTIONABLE_SPREAD_RATIO = 0.35
+# Rows with no clean alternative may show wider-spread contracts, flagged.
+# Dated closing quotes are wider than intraday, so these are still useful.
+MAX_FLAGGED_SPREAD_RATIO = 0.75
+WIDE_SPREAD_LIQUIDITY = "wide spread"
 MAX_LOW_PREMIUM_ABS_SPREAD = 0.10
 MIN_INDICATIVE_OPEN_INTEREST = 20
 MIN_INDICATIVE_VOLUME = 5
@@ -175,9 +179,63 @@ def _real_contract_candidates(
     open_options = [row for row in state.get("open_options") or [] if str(row.get("type") or "").upper().startswith(put_call)]
     current_expiry = str(open_options[0].get("expiry") or "")[:10] if open_options else ""
     current_strike = _num(open_options[0].get("strike")) if open_options else None
-    candidates = []
     rejection_counts: Counter[str] = RejectionLog()
     rows = _filter_stale_chain_marks(rows, rejection_counts)
+
+    def build(log: Counter[str], spread_limit: float) -> list[dict[str, Any]]:
+        return _branch_candidates(
+            category, put_call, rows, group, status, reference_date, current_expiry, current_strike, log, spread_limit
+        )
+
+    candidates = build(rejection_counts, MAX_ACTIONABLE_SPREAD_RATIO)
+    wide = {
+        (str(row.get("expiry") or "")[:10], _num(row.get("strike")))
+        for reason, row in rejection_counts.near_misses
+        if reason == "wide spread"
+    }
+    if wide and sum(not row.get("is_current_position") for row in candidates) < 2:
+        # Fill empty alternative slots with wide-spread contracts that pass
+        # every other check, clearly flagged and ranked after clean ones.
+        known = {(row.get("action"), row.get("expiry"), row.get("strike")) for row in candidates}
+        for row in build(RejectionLog(), MAX_FLAGGED_SPREAD_RATIO):
+            key = (row.get("action"), row.get("expiry"), row.get("strike"))
+            if row.get("is_current_position") or key in known:
+                continue
+            if (str(row.get("expiry") or "")[:10], _num(row.get("strike"))) not in wide:
+                continue
+            candidates.append(_flag_wide_spread(row))
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any, Any]] = set()
+    for candidate in sorted(candidates, key=lambda row: (bool(row.get("wide_spread")), -row["score"])):
+        key = (candidate.get("action"), candidate.get("expiry"), candidate.get("strike"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+
+    current_rows = [row for row in deduped if row.get("is_current_position")]
+    proposal_rows = [row for row in deduped if not row.get("is_current_position")]
+    if current_rows:
+        selected = current_rows[:1] + proposal_rows[:2]
+    else:
+        selected = proposal_rows[:3]
+    return selected, _candidate_status(rows, selected, rejection_counts, status, put_call=put_call)
+
+
+def _branch_candidates(
+    category: str,
+    put_call: str,
+    rows: list[dict[str, Any]],
+    group: dict[str, Any],
+    status: dict[str, Any],
+    reference_date: date,
+    current_expiry: str,
+    current_strike: Optional[float],
+    rejection_counts: Counter[str],
+    spread_limit: float,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
 
     if put_call == "CALL" and category in {"Evaluate exit vs roll", "Roll to improve recovery", "Accept / monitor exit"}:
         current_contract = _matching_contract(rows, current_expiry, current_strike)
@@ -189,7 +247,7 @@ def _real_contract_candidates(
             for row in rows
             if _num(row.get("strike")) is not None
             and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
-            and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts, status, reference_date)
+            and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts, status, reference_date, spread_limit)
         ]
         candidates.extend(
             _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _covered_call_roll_candidate(row, current_contract, group, status, reference_date))
@@ -205,7 +263,7 @@ def _real_contract_candidates(
             if _num(row.get("strike")) is not None
             and current_strike is not None
             and _is_put_roll_target(row, current_expiry, current_strike)
-            and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts, status, reference_date)
+            and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts, status, reference_date, spread_limit)
         ]
         candidates.extend(
             _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _short_put_risk_reduction_candidate(row, current_contract, group, status, reference_date))
@@ -222,7 +280,7 @@ def _real_contract_candidates(
             and current_strike is not None
             and (_num(row.get("strike")) or 0) > current_strike
             and (not current_expiry or str(row.get("expiry") or "")[:10] == current_expiry)
-            and _contract_is_actionable(row, group, "Roll put up", rejection_counts, status, reference_date)
+            and _contract_is_actionable(row, group, "Roll put up", rejection_counts, status, reference_date, spread_limit)
         ]
         candidates.extend(
             _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _short_put_roll_candidate(row, current_contract, group, status, reference_date))
@@ -235,7 +293,7 @@ def _real_contract_candidates(
             # actionable checks; keep them as near-miss context only.
             kept = {id(row) for row in filtered}
             rejection_counts.near_misses.extend(("call strike below current price or basis", row) for row in rows if id(row) not in kept)
-        actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status, reference_date)]
+        actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status, reference_date, spread_limit)]
         candidates = [_candidate_from_live_contract(action, row, group, status, reference_date) for row in actionable]
         if put_call == "CALL" and not candidates:
             # Deeply underwater holdings have no listed call that clears the
@@ -245,7 +303,7 @@ def _real_contract_candidates(
             fallback = [
                 row
                 for row in rows
-                if _contract_is_actionable(row, group, BELOW_BASIS_CALL_ACTION, fallback_rejections, status, reference_date)
+                if _contract_is_actionable(row, group, BELOW_BASIS_CALL_ACTION, fallback_rejections, status, reference_date, spread_limit)
             ]
             candidates = [_candidate_from_live_contract(BELOW_BASIS_CALL_ACTION, row, group, status, reference_date) for row in fallback]
             if not candidates and fallback_rejections:
@@ -255,23 +313,17 @@ def _real_contract_candidates(
                 rejection_counts.update(fallback_rejections)
                 rejection_counts.near_misses = fallback_rejections.near_misses
         candidates = sorted(candidates, key=lambda row: row["score"], reverse=True)
+    return candidates
 
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[Any, Any, Any]] = set()
-    for candidate in sorted(candidates, key=lambda row: row["score"], reverse=True):
-        key = (candidate.get("action"), candidate.get("expiry"), candidate.get("strike"))
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(candidate)
 
-    current_rows = [row for row in deduped if row.get("is_current_position")]
-    proposal_rows = [row for row in deduped if not row.get("is_current_position")]
-    if current_rows:
-        selected = current_rows[:1] + proposal_rows[:2]
-    else:
-        selected = proposal_rows[:3]
-    return selected, _candidate_status(rows, selected, rejection_counts, status, put_call=put_call)
+def _flag_wide_spread(candidate: dict[str, Any]) -> dict[str, Any]:
+    reason = candidate.get("score_reason") or ""
+    return {
+        **candidate,
+        "wide_spread": True,
+        "liquidity": WIDE_SPREAD_LIQUIDITY,
+        "score_reason": f"Wide bid/ask spread; price with a limit order near the mid. {reason}".strip(),
+    }
 
 
 def _roll_results(
@@ -1121,6 +1173,7 @@ def _contract_is_actionable(
     rejection_counts: Counter[str],
     status: dict[str, Any],
     reference_date: date,
+    spread_limit: float = MAX_ACTIONABLE_SPREAD_RATIO,
 ) -> bool:
     bid = _num(contract.get("bid"))
     ask = _num(contract.get("ask"))
@@ -1137,7 +1190,7 @@ def _contract_is_actionable(
             return _reject(rejection_counts, "invalid spread", contract)
         spread = ask - bid
         mid = (bid + ask) / 2
-        if (mid < 0.25 and spread > MAX_LOW_PREMIUM_ABS_SPREAD) or (mid >= 0.25 and spread / mid > MAX_ACTIONABLE_SPREAD_RATIO):
+        if (mid < 0.25 and spread > MAX_LOW_PREMIUM_ABS_SPREAD) or (mid >= 0.25 and spread / mid > spread_limit):
             return _reject(rejection_counts, "wide spread", contract)
         premium = bid * 100 * contract_qty
     else:

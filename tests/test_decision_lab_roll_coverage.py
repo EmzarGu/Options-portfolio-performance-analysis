@@ -250,7 +250,7 @@ def test_recovery_call_near_miss_names_the_check_that_stopped_it():
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
         # Above the current price but below basis, so only the below-basis
         # path can offer it; its spread is what rules it out.
-        "contracts": [_call(65.0, 0.70, 1.40, 0.27)],
+        "contracts": [_call(65.0, 0.40, 1.40, 0.27)],
     }
 
     data = build_decision_lab_data(_underwater_payload(), option_market_data=option_market_data)
@@ -293,3 +293,49 @@ def test_standard_strike_rounds_away_from_the_money(strike, side, expected):
     from portfolio_backend.option_market.marketdata_local import standard_strike
 
     assert standard_strike(strike, side) == expected
+
+
+def test_row_without_clean_alternative_shows_flagged_wide_spread_contracts():
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
+        # 0.80/1.20 is a 40% spread: over the clean limit, under the flagged one.
+        "contracts": [_call(65.0, 0.80, 1.20, 0.27), _call(70.0, 0.05, 1.40, 0.15)],
+    }
+
+    data = build_decision_lab_data(_underwater_payload(), option_market_data=option_market_data)
+    group = data["recommendation_candidates"][0]
+
+    assert [(row["action"], row["strike"]) for row in group["candidates"]] == [("Sell covered call below basis", 65.0)]
+    flagged = group["recommended"]
+    assert flagged["wide_spread"] is True and flagged["liquidity"] == "wide spread"
+    assert flagged["score_reason"].startswith("Wide bid/ask spread")
+    assert "near_miss_message" not in group["candidate_status"]
+
+
+def test_flagged_wide_spread_rolls_rank_after_clean_ones():
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
+        "contracts": [
+            _put("2026-10-16", 50.0, 2.30, 2.40, -0.70),
+            _put("2026-11-20", 50.0, 3.40, 3.55, -0.58),
+            _put("2026-12-18", 50.0, 3.60, 5.60, -0.55),
+        ],
+    }
+
+    data = build_decision_lab_data(_itm_put_payload(), option_market_data=option_market_data)
+    group = data["recommendation_candidates"][0]
+    rolls = [row for row in group["candidates"] if not row.get("is_current_position")]
+
+    assert [(row["expiry"], bool(row.get("wide_spread"))) for row in rolls] == [("2026-11-20", False), ("2026-12-18", True)]
+
+
+def test_clean_alternatives_are_not_padded_with_wide_spreads():
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
+        "contracts": [_call(65.0, 1.10, 1.20, 0.27), _call(62.5, 1.50, 1.60, 0.33), _call(67.5, 0.60, 1.00, 0.20)],
+    }
+
+    data = build_decision_lab_data(_underwater_payload(), option_market_data=option_market_data)
+    group = data["recommendation_candidates"][0]
+
+    assert not any(row.get("wide_spread") for row in group["candidates"])
