@@ -38,7 +38,16 @@ Three causes were in the Lab itself rather than in market conditions.
 Replaying the selection plan for a saved 16-situation portfolio gave roughly the
 same number of Market Data selections as before (97 versus 96 for 6 October;
 107 versus 109 for 15 October), because unusable earlier months are dropped.
-The 90-credit ceiling, cooldown and time budgets are unchanged.
+
+Both numbers were already above the 90-credit ceiling. Each quote date and its
+credit window switch together at 9:30 New York, so a plan above 90 can never be
+fully downloaded, and the 7-day fallback (which needs a complete snapshot) never
+applies; production showed 36 of 107 selections ready on 15 October. The plan
+is therefore capped at 85 selections. Over the cap, every queue row first keeps
+its open-leg strike, the same-strike roll-out and the 0.30 delta; cost-basis
+call strikes come next and 0.15 delta last, with higher-priority rows first.
+The ranking is deterministic, so repeated fetches for one quote date reuse the
+same keys. The cooldown and time budgets are unchanged.
 
 ## Not changed
 
