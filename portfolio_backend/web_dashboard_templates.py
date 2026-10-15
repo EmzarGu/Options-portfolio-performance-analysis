@@ -933,15 +933,18 @@ function currentCandidateState(s){
 function candidateTable(rows, status={}){
   if (!rows || !rows.length) {
     const msg = status.message || "No actionable provider contract found for this ticker/action.";
-    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}</div>`;
+    return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}${status.near_miss_message ? `<br>${safe(status.near_miss_message)}` : ""}</div>`;
   }
-  return dataTable("candidate-" + Math.random().toString(36).slice(2), rows || [], [
+  const nearMiss = status.near_miss_message ? `<div class="note" style="margin:8px 0 0">${safe(status.near_miss_message)}</div>` : "";
+  return nearMiss + dataTable("candidate-" + Math.random().toString(36).slice(2), rows || [], [
     {key:"action",label:"Action"},
     {key:"contract_count",label:"Contracts",format:v=>numeric(v)===null?"n/a":fmtNum(v),num:true},
     {key:"strike",label:"Strike",format:v=>numeric(v)===null?"n/a":fmtMoney(v,2),num:true},
     {key:"expiry",label:"Expiry",format:fmtDate},
     {key:"dte",label:"DTE",num:true},
     {key:"premium",label:"Premium or new credit",format:fmtMoney,num:true,className:cls},
+    {key:"monthly_return",label:"Return per month",format:fmtPct,num:true},
+    {key:"collateral",label:"Collateral",format:fmtMoney,num:true},
     {key:"roll_close_cost",label:"Est. close cost",format:fmtMoney,num:true,className:cls},
     {key:"roll_new_credit",label:"Est. new credit",format:fmtMoney,num:true,className:cls},
     {key:"roll_net_credit",label:"Net credit after close",format:fmtMoney,num:true,className:cls},

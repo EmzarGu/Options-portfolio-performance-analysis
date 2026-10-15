@@ -11,6 +11,16 @@ Since September 30, incomplete new quote dates retain the newest valid complete
 snapshot covering the current selection plan, bounded to seven calendar days.
 The displayed quote date stays explicit; download completeness is separate from
 quote/Greek field presence. See [refresh continuity](decision-lab-refresh-continuity-2026-09-30.md).
+Since October 15, the selection plan follows each open leg: it requests the
+open expiry and the next monthly after it, prices the open strike in each of
+those months (same-strike roll-outs) and drops months before the open expiry.
+Per ticker and month it still uses the current strike, 0.15 and 0.30 delta and,
+for calls, the cost-basis strike. Optional watchlist tickers
+(`DECISION_LAB_PUT_WATCHLIST`, at most 10) add one 20–45 DTE monthly at 0.15,
+0.20 and 0.25 delta for new cash-secured puts. See
+[roll coverage](decision-lab-roll-coverage-2026-10-15.md) and
+[new puts](decision-lab-new-puts-2026-10-15.md).
+
 The following historical validation subsystem and CuteMarkets records remain
 separate; this release does not repair the historical import job.
 

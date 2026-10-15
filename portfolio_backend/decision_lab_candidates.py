@@ -14,6 +14,7 @@ MIN_INDICATIVE_OPEN_INTEREST = 20
 MIN_INDICATIVE_VOLUME = 5
 MIN_PUT_ROLL_UP_CREDIT = 75.0
 MIN_CALL_ROLL_CREDIT = 25.0
+MIN_PUT_ROLL_OUT_CREDIT = 25.0
 MIN_ACTIONABLE_NET_PREMIUM_PER_CONTRACT = 25.0
 MAX_PUT_ROLL_DELTA = 0.30
 MIN_CALL_ROLL_DELTA = 0.08
@@ -22,6 +23,21 @@ MAX_RECOVERY_CALL_DELTA = 0.45
 MAX_RECOVERY_CALL_STRIKE_ABOVE_BASIS = 0.15
 MAX_COVERED_CALL_DELTA = 0.65
 MAX_INDICATIVE_PRICE_AGE_DAYS = 7
+# Matches the actionable DTE ceiling in _contract_is_actionable.
+MAX_ROLL_REQUEST_DTE = 75
+NEAR_MISS_TARGET_DELTA = 0.25
+NEW_PUT_CATEGORY = "New cash-secured put"
+NEW_PUT_ACTION = "Sell cash-secured put"
+# Wheel entry rules: 0.15-0.25 delta, 20-45 DTE, about 1-2% a month. Delta
+# selections are nearest-neighbour, so the band allows a small tolerance.
+NEW_PUT_DELTAS = (0.15, 0.20, 0.25)
+MIN_NEW_PUT_DELTA = 0.12
+MAX_NEW_PUT_DELTA = 0.28
+MIN_NEW_PUT_DTE = 20
+MAX_NEW_PUT_DTE = 45
+TARGET_NEW_PUT_DTE = 35
+NEW_PUT_MONTHLY_TARGET_LOW = 0.01
+NEW_PUT_MONTHLY_TARGET_HIGH = 0.02
 
 
 def recommendation_candidates(ticker_situations: list[dict[str, Any]], *, as_of: Optional[date] = None) -> list[dict[str, Any]]:
@@ -53,35 +69,41 @@ def _contract_requests_for_situation(situation: dict[str, Any], reference_date: 
         put_call = "CALL"
     elif category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk"}:
         put_call = "PUT"
+    elif category == NEW_PUT_CATEGORY:
+        expiry = _new_put_expiry(reference_date)
+        return [{"expiry": expiry.isoformat(), "put_call": "PUT"}] if expiry else []
     else:
         return []
 
     expiries: list[str] = []
+    open_expiries: list[date] = []
     for row in open_rows:
         if _option_type(row).startswith(put_call.lower()):
-            expiry = str(row.get("expiration") or "")[:10]
-            if expiry:
-                expiries.append(expiry)
+            expiry = _parse_date(str(row.get("expiration") or "")[:10])
+            if expiry is None:
+                continue
+            open_expiries.append(expiry)
+            expiries.append(expiry.isoformat())
+            # Rolling out needs a month beyond the open leg, which the two
+            # monthlies counted from today do not always include.
+            later = _next_monthly_after(expiry) if category != "Harvest unused put risk" else None
+            if later is not None and (_days_until(later, reference_date) or 0) <= MAX_ROLL_REQUEST_DTE:
+                expiries.append(later.isoformat())
 
-    if category == "Recover with covered call":
-        expiries.extend(_standard_monthly_expiries(2, reference_date))
-    elif put_call == "CALL":
-        expiries.extend(_standard_monthly_expiries(2, reference_date))
-    elif category == "Harvest unused put risk":
-        for row in open_rows:
-            if _option_type(row).startswith("put"):
-                expiry = str(row.get("expiration") or "")[:10]
-                if expiry:
-                    expiries.append(expiry)
-        expiries.extend(_standard_monthly_expiries(2, reference_date))
-    else:
-        expiries.extend(_standard_monthly_expiries(2, reference_date))
+    expiries.extend(_standard_monthly_expiries(2, reference_date))
 
+    # Roll comparisons only use the open leg's expiry or later (same expiry
+    # only when harvesting), so earlier months would spend credits unused.
+    earliest_open = min(open_expiries) if open_expiries else None
     deduped = []
     seen = set()
     for expiry in expiries:
         parsed = _parse_date(expiry)
         if parsed is None:
+            continue
+        if earliest_open is not None and parsed < earliest_open:
+            continue
+        if category == "Harvest unused put risk" and open_expiries and parsed not in open_expiries:
             continue
         value = parsed.isoformat()
         key = (value, put_call)
@@ -131,7 +153,7 @@ def _real_contract_candidates(
     reference_date: date,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     category = str(group.get("category") or "")
-    put_call = "PUT" if category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk"} else "CALL"
+    put_call = "PUT" if category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk", NEW_PUT_CATEGORY} else "CALL"
     rows = contracts.get((ticker, put_call), [])
     if not rows:
         return [], {
@@ -145,7 +167,7 @@ def _real_contract_candidates(
     current_expiry = str(open_options[0].get("expiry") or "")[:10] if open_options else ""
     current_strike = _num(open_options[0].get("strike")) if open_options else None
     candidates = []
-    rejection_counts: Counter[str] = Counter()
+    rejection_counts: Counter[str] = RejectionLog()
     rows = _filter_stale_chain_marks(rows, rejection_counts)
 
     if put_call == "CALL" and category in {"Evaluate exit vs roll", "Roll to improve recovery", "Accept / monitor exit"}:
@@ -160,11 +182,9 @@ def _real_contract_candidates(
             and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
             and _contract_is_actionable(row, group, _roll_call_action(row, current_expiry, current_strike), rejection_counts, status, reference_date)
         ]
-        roll_candidates = [
-            _covered_call_roll_candidate(row, current_contract, group, status, reference_date)
-            for row in roll_pool
-        ]
-        candidates.extend([row for row in roll_candidates if row is not None])
+        candidates.extend(
+            _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _covered_call_roll_candidate(row, current_contract, group, status, reference_date))
+        )
     elif category in {"Reduce assignment risk", "Monitor assignment risk"}:
         current_contract = _matching_contract(rows, current_expiry, current_strike)
         baseline = _short_put_baseline(current_contract, group, status, reference_date)
@@ -175,14 +195,11 @@ def _real_contract_candidates(
             for row in rows
             if _num(row.get("strike")) is not None
             and current_strike is not None
-            and (_num(row.get("strike")) or 0) < current_strike
-            and (not current_expiry or str(row.get("expiry") or "")[:10] >= current_expiry)
+            and _is_put_roll_target(row, current_expiry, current_strike)
             and _contract_is_actionable(row, group, "Roll put down/out", rejection_counts, status, reference_date)
         ]
         candidates.extend(
-            row
-            for row in [_short_put_risk_reduction_candidate(row, current_contract, group, status, reference_date) for row in roll_pool]
-            if row is not None
+            _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _short_put_risk_reduction_candidate(row, current_contract, group, status, reference_date))
         )
     elif category == "Harvest unused put risk":
         current_contract = _matching_contract(rows, current_expiry, current_strike)
@@ -199,13 +216,19 @@ def _real_contract_candidates(
             and _contract_is_actionable(row, group, "Roll put up", rejection_counts, status, reference_date)
         ]
         candidates.extend(
-            row
-            for row in [_short_put_roll_candidate(row, current_contract, group, status, reference_date) for row in roll_pool]
-            if row is not None
+            _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _short_put_roll_candidate(row, current_contract, group, status, reference_date))
         )
+    elif category == NEW_PUT_CATEGORY:
+        actionable = [row for row in rows if _contract_is_actionable(row, group, NEW_PUT_ACTION, rejection_counts, status, reference_date)]
+        candidates = [_new_put_candidate(row, status, reference_date) for row in actionable]
     else:
         action = "Sell covered call" if put_call == "CALL" else "Roll down/out"
         filtered = _entry_contract_pool(rows, group, put_call)
+        if put_call == "CALL" and filtered is not rows:
+            # Strikes under the current price or basis never reach the
+            # actionable checks; keep them as near-miss context only.
+            kept = {id(row) for row in filtered}
+            rejection_counts.near_misses.extend(("call strike below current price or basis", row) for row in rows if id(row) not in kept)
         actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status, reference_date)]
         candidates = [_candidate_from_live_contract(action, row, group, status, reference_date) for row in actionable]
         candidates = sorted(candidates, key=lambda row: row["score"], reverse=True)
@@ -225,7 +248,25 @@ def _real_contract_candidates(
         selected = current_rows[:1] + proposal_rows[:2]
     else:
         selected = proposal_rows[:3]
-    return selected, _candidate_status(rows, selected, rejection_counts, status)
+    return selected, _candidate_status(rows, selected, rejection_counts, status, put_call=put_call)
+
+
+def _roll_results(
+    pool: list[dict[str, Any]],
+    current_contract: Optional[dict[str, Any]],
+    rejection_counts: Counter[str],
+    build: Any,
+) -> list[dict[str, Any]]:
+    """Build roll candidates, noting rolls that pass quote checks but not roll rules."""
+    results = []
+    near_misses = getattr(rejection_counts, "near_misses", None)
+    for row in pool:
+        candidate = build(row)
+        if candidate is not None:
+            results.append(candidate)
+        elif near_misses is not None and row is not current_contract:
+            near_misses.append(("roll does not beat keeping the current position", row))
+    return results
 
 
 def _entry_contract_pool(rows: list[dict[str, Any]], group: dict[str, Any], put_call: str) -> list[dict[str, Any]]:
@@ -312,6 +353,17 @@ def _option_close_cost(contract: Optional[dict[str, Any]]) -> Optional[float]:
     if ask is not None and ask > 0:
         return ask
     return mark
+
+
+def _is_put_roll_target(contract: dict[str, Any], current_expiry: str, current_strike: float) -> bool:
+    """A lower strike at the same or a later expiry, or the same strike later."""
+    strike = _num(contract.get("strike"))
+    expiry = str(contract.get("expiry") or "")[:10]
+    if strike is None or (current_expiry and expiry < current_expiry):
+        return False
+    if strike < current_strike:
+        return True
+    return abs(strike - current_strike) < 0.001 and bool(current_expiry) and expiry > current_expiry
 
 
 def _roll_call_action(contract: dict[str, Any], current_expiry: str, current_strike: Optional[float]) -> str:
@@ -809,12 +861,13 @@ def _short_put_risk_reduction_candidate(
     contract_qty = _option_contract_count(open_option, state)
     if current_strike is None or close_cost is None or new_credit is None or new_strike is None or current_price is None:
         return None
-    if new_strike >= current_strike:
+    current_expiry = str(open_option.get("expiry") or "")[:10]
+    new_expiry = str(new_contract.get("expiry") or "")[:10]
+    same_strike_roll_out = abs(new_strike - current_strike) < 0.001 and bool(current_expiry) and new_expiry > current_expiry
+    if new_strike >= current_strike and not same_strike_roll_out:
         return None
     if not _contract_price_usable_for_roll(current_contract, status) or not _contract_price_usable_for_roll(new_contract, status):
         return None
-    current_expiry = str(open_option.get("expiry") or "")[:10]
-    new_expiry = str(new_contract.get("expiry") or "")[:10]
     if _same_expiry(new_expiry, current_expiry) and _put_price_monotonicity_violated(
         current_strike=current_strike,
         current_price=close_cost,
@@ -826,15 +879,20 @@ def _short_put_risk_reduction_candidate(
     current_delta = abs(_num(current_contract.get("delta")) or 0) if current_contract and current_contract.get("delta") is not None else None
     if delta is None:
         return None
-    if current_delta is not None and delta >= current_delta:
-        return None
-    if delta > MAX_PUT_ROLL_DELTA:
-        return None
-
     net_credit = (new_credit - close_cost) * 100 * contract_qty
     assignment_risk_reduction = max(current_strike - new_strike, 0) * 100 * contract_qty
-    if net_credit < 0 and abs(net_credit) > min(250.0, assignment_risk_reduction * 0.12):
-        return None
+    if same_strike_roll_out:
+        # Keeps the same assignment exposure for more time, so it must be
+        # paid for with a real credit; delta limits for new risk do not apply.
+        if net_credit < MIN_PUT_ROLL_OUT_CREDIT:
+            return None
+    else:
+        if current_delta is not None and delta >= current_delta:
+            return None
+        if delta > MAX_PUT_ROLL_DELTA:
+            return None
+        if net_credit < 0 and abs(net_credit) > min(250.0, assignment_risk_reduction * 0.12):
+            return None
 
     dte_added = max(
         (_days_until(new_contract.get("expiry"), reference_date) or 0)
@@ -866,8 +924,14 @@ def _short_put_risk_reduction_candidate(
     if expected_value_vs_current is None or expected_value_vs_current <= 0:
         return None
     score = _candidate_ev_score(expected_value_vs_current, _contract_liquidity(new_contract), _days_until(new_contract.get("expiry"), reference_date))
+    action = "Roll put out same strike" if same_strike_roll_out else "Roll put down/out"
+    explanation = (
+        f"Keeps the {_money(current_strike, 2)} strike for {dte_added} more days for a net roll of {_money(net_credit)}."
+        if same_strike_roll_out
+        else f"Moves put strike down by {_money(assignment_risk_reduction)} while net roll is {_money(net_credit)}."
+    )
     return {
-        "action": "Roll put down/out",
+        "action": action,
         "strike": new_strike,
         "expiry": str(new_contract.get("expiry") or "")[:10],
         "dte": _days_until(new_contract.get("expiry"), reference_date),
@@ -877,7 +941,7 @@ def _short_put_risk_reduction_candidate(
         "liquidity": _contract_liquidity(new_contract),
         "tradeability": "quote-backed" if new_contract.get("bid") is not None and new_contract.get("ask") is not None else "indicative",
         "score": round(max(0, min(100, score)), 1),
-        "explanation": f"Moves put strike down by {_money(assignment_risk_reduction)} while net roll is {_money(net_credit)}.",
+        "explanation": explanation,
         "exit_pnl": net_credit,
         "upside_left": None,
         "upside_foregone": 0,
@@ -892,12 +956,98 @@ def _short_put_risk_reduction_candidate(
         "exercise_probability": _probability_from_delta(delta),
         "assignment_risk_reduction": assignment_risk_reduction,
         "contract_count": contract_qty,
-        "score_reason": f"Roll put down/out: scenario vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, assignment exposure reduced {_money(assignment_risk_reduction)}.",
+        "score_reason": f"{action}: scenario vs current {_money(expected_value_vs_current)}, net {_money(net_credit)}, assignment exposure reduced {_money(assignment_risk_reduction)}.",
         "provider": new_contract.get("provider") or status.get("provider"),
         "price_source": f"close: {_price_source(current_contract, 'ask')}; sell: {_price_source(new_contract)}",
         "quote_coverage": new_contract.get("bid") is not None and new_contract.get("ask") is not None,
         "fetch_timestamp": status.get("last_fetched_at"),
         "contract_symbol": new_contract.get("contract_symbol"),
+    }
+
+
+def _new_put_expiry(reference_date: date) -> Optional[date]:
+    """The standard monthly in the 20-45 DTE window closest to 35 DTE."""
+    options = [
+        parsed
+        for parsed in (_parse_date(value) for value in _standard_monthly_expiries(3, reference_date))
+        if parsed is not None and MIN_NEW_PUT_DTE <= (parsed - reference_date).days <= MAX_NEW_PUT_DTE
+    ]
+    if not options:
+        return None
+    return min(options, key=lambda value: abs((value - reference_date).days - TARGET_NEW_PUT_DTE))
+
+
+def _new_put_candidate(contract: dict[str, Any], status: dict[str, Any], reference_date: date) -> dict[str, Any]:
+    """Score a new one-contract cash-secured put by premium per month on collateral."""
+    strike = _num(contract.get("strike")) or 0.0
+    bid = _num(contract.get("bid"))
+    mark = _num(contract.get("mark"))
+    price = bid if bid is not None and bid > 0 else mark
+    premium = (price or 0.0) * 100
+    net_premium = premium - ESTIMATED_OPTION_COMMISSION
+    collateral = strike * 100
+    expiry = str(contract.get("expiry") or "")[:10]
+    dte = _days_until(expiry, reference_date)
+    monthly_return = net_premium / collateral * 30 / dte if collateral > 0 and dte else None
+    delta = abs(_num(contract.get("delta")) or 0) if contract.get("delta") is not None else None
+    underlying = _num(contract.get("underlying_price"))
+    liquidity = _contract_liquidity(contract)
+    outcomes = _put_roll_outcomes(net_credit=net_premium, strike=strike, current_price=underlying, contract_qty=1)
+    expected_value = _put_roll_ev(net_credit=net_premium, strike=strike, current_price=underlying, delta=delta, contract_qty=1)
+    if monthly_return is None:
+        target_label = "n/a"
+        base = 40.0
+    elif monthly_return < NEW_PUT_MONTHLY_TARGET_LOW:
+        target_label = "below 1%/month target"
+        base = 50.0 - (NEW_PUT_MONTHLY_TARGET_LOW - monthly_return) / NEW_PUT_MONTHLY_TARGET_LOW * 30
+    elif monthly_return <= NEW_PUT_MONTHLY_TARGET_HIGH:
+        target_label = "within 1-2%/month target"
+        base = 70.0 + (monthly_return - NEW_PUT_MONTHLY_TARGET_LOW) / NEW_PUT_MONTHLY_TARGET_LOW * 15
+    else:
+        # Rich premium usually means more risk than the wheel's delta band shows.
+        target_label = "above 2%/month target, check the reason"
+        base = 80.0
+    if delta is not None:
+        base -= abs(delta - 0.20) * 40
+    base += {"good": 6, "fair": 3, "indicative-good": 2, "indicative": 0, "weak": -6}.get(liquidity, 0)
+    otm = (underlying - strike) / underlying if underlying else None
+    return {
+        "action": NEW_PUT_ACTION,
+        "strike": strike,
+        "expiry": expiry,
+        "dte": dte,
+        "premium": premium,
+        "delta": delta,
+        "iv": _num(contract.get("volatility")) if contract.get("volatility") is not None else None,
+        "liquidity": liquidity,
+        "tradeability": "quote-backed" if contract.get("bid") is not None and contract.get("ask") is not None else "indicative",
+        "score": round(max(0, min(100, base)), 1),
+        "explanation": (
+            f"Collateral {_money(collateral)}; "
+            f"{'n/a' if monthly_return is None else f'{monthly_return * 100:.2f}%'} a month after commission"
+            f"{'' if otm is None else f', {otm * 100:.1f}% below the stock price'}."
+        ),
+        "exit_pnl": net_premium,
+        "upside_left": None,
+        "upside_foregone": 0,
+        "collateral": collateral,
+        "monthly_return": monthly_return,
+        "annualized_return": monthly_return * 12 if monthly_return is not None else None,
+        "out_of_money_pct": otm,
+        "expected_value": expected_value,
+        "expected_value_vs_current": expected_value,
+        "exercise_result": outcomes.get("exercise_result") if outcomes else None,
+        "no_exercise_result": outcomes.get("no_exercise_result") if outcomes else None,
+        "exercise_probability": _probability_from_delta(delta),
+        "contract_count": 1,
+        "score_reason": f"{NEW_PUT_ACTION}: {target_label}, {liquidity} liquidity"
+        + (f", {delta:.2f} delta" if delta is not None else "")
+        + ".",
+        "provider": contract.get("provider") or status.get("provider"),
+        "price_source": _price_source(contract),
+        "quote_coverage": contract.get("bid") is not None and contract.get("ask") is not None,
+        "fetch_timestamp": status.get("last_fetched_at"),
+        "contract_symbol": contract.get("contract_symbol"),
     }
 
 
@@ -1011,6 +1161,22 @@ def _put_price_monotonicity_violated(
     return False
 
 
+class RejectionLog(Counter):
+    """Rejection counts plus the contracts behind them, for near-miss notes."""
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.near_misses: list[tuple[str, dict[str, Any]]] = []
+
+
+def _reject(rejection_counts: Counter[str], reason: str, contract: dict[str, Any]) -> bool:
+    rejection_counts[reason] += 1
+    near_misses = getattr(rejection_counts, "near_misses", None)
+    if near_misses is not None:
+        near_misses.append((reason, contract))
+    return False
+
+
 def _contract_is_actionable(
     contract: dict[str, Any],
     group: dict[str, Any],
@@ -1029,50 +1195,47 @@ def _contract_is_actionable(
 
     if quoted:
         if bid is None or ask is None or bid <= 0 or ask <= 0:
-            rejection_counts["zero bid/ask"] += 1
-            return False
+            return _reject(rejection_counts, "zero bid/ask", contract)
         if ask < bid:
-            rejection_counts["invalid spread"] += 1
-            return False
+            return _reject(rejection_counts, "invalid spread", contract)
         spread = ask - bid
         mid = (bid + ask) / 2
         if (mid < 0.25 and spread > MAX_LOW_PREMIUM_ABS_SPREAD) or (mid >= 0.25 and spread / mid > MAX_ACTIONABLE_SPREAD_RATIO):
-            rejection_counts["wide spread"] += 1
-            return False
+            return _reject(rejection_counts, "wide spread", contract)
         premium = bid * 100 * contract_qty
     else:
         if mark is None or mark <= 0:
-            rejection_counts["missing price"] += 1
-            return False
+            return _reject(rejection_counts, "missing price", contract)
         if not _indicative_price_is_fresh(contract, status):
-            rejection_counts["stale indicative price"] += 1
-            return False
+            return _reject(rejection_counts, "stale indicative price", contract)
         oi = _num(contract.get("open_interest")) or 0
         volume = _num(contract.get("volume")) or 0
         if oi < MIN_INDICATIVE_OPEN_INTEREST and volume < MIN_INDICATIVE_VOLUME:
-            rejection_counts["low liquidity"] += 1
-            return False
+            return _reject(rejection_counts, "low liquidity", contract)
         premium = mark * 100 * contract_qty
 
     if premium - commission < MIN_ACTIONABLE_NET_PREMIUM:
-        rejection_counts["premium too small"] += 1
-        return False
+        return _reject(rejection_counts, "premium too small", contract)
     if premium / max(contract_qty, 1) - ESTIMATED_OPTION_COMMISSION < MIN_ACTIONABLE_NET_PREMIUM_PER_CONTRACT:
-        rejection_counts["premium too small"] += 1
-        return False
+        return _reject(rejection_counts, "premium too small", contract)
 
     delta = abs(_num(contract.get("delta")) or 0) if contract.get("delta") is not None else None
     if delta is None:
-        rejection_counts["missing delta"] += 1
-        return False
+        return _reject(rejection_counts, "missing delta", contract)
     if delta <= 0 or delta >= 0.95:
-        rejection_counts["implausible delta"] += 1
-        return False
+        return _reject(rejection_counts, "implausible delta", contract)
 
     dte = _days_until(contract.get("expiry"), reference_date)
     if dte is None or dte < 7 or dte > 75:
-        rejection_counts["outside DTE window"] += 1
-        return False
+        return _reject(rejection_counts, "outside DTE window", contract)
+
+    if action == NEW_PUT_ACTION:
+        if dte < MIN_NEW_PUT_DTE or dte > MAX_NEW_PUT_DTE:
+            return _reject(rejection_counts, "outside 20-45 DTE", contract)
+        if delta < MIN_NEW_PUT_DELTA:
+            return _reject(rejection_counts, "delta too low", contract)
+        if delta > MAX_NEW_PUT_DELTA:
+            return _reject(rejection_counts, "delta too high", contract)
 
     put_call = str(contract.get("put_call") or "").upper()
     if put_call == "CALL":
@@ -1081,22 +1244,17 @@ def _contract_is_actionable(
         cost = _num(state.get("cost_basis"))
         strike = _num(contract.get("strike"))
         if action == "Sell covered call" and strike is not None and current is not None and strike < current:
-            rejection_counts["call strike below current"] += 1
-            return False
+            return _reject(rejection_counts, "call strike below current", contract)
         if action == "Sell covered call" and strike is not None and cost is not None and strike < cost:
-            rejection_counts["call strike below basis"] += 1
-            return False
+            return _reject(rejection_counts, "call strike below basis", contract)
         if action == "Sell covered call" and strike is not None:
             anchor = max([value for value in [cost, current] if value is not None], default=0)
             if anchor and strike > anchor * (1 + MAX_RECOVERY_CALL_STRIKE_ABOVE_BASIS):
-                rejection_counts["call strike too far OTM"] += 1
-                return False
+                return _reject(rejection_counts, "call strike too far OTM", contract)
             if delta is not None and delta < MIN_RECOVERY_CALL_DELTA:
-                rejection_counts["delta too low"] += 1
-                return False
+                return _reject(rejection_counts, "delta too low", contract)
             if delta is not None and delta > MAX_RECOVERY_CALL_DELTA:
-                rejection_counts["delta too high"] += 1
-                return False
+                return _reject(rejection_counts, "delta too high", contract)
 
     return True
 
@@ -1106,10 +1264,16 @@ def _candidate_status(
     candidates: list[dict[str, Any]],
     rejection_counts: Counter[str],
     status: dict[str, Any],
+    *,
+    put_call: str = "",
 ) -> dict[str, Any]:
+    near_miss = None
+    if not any(not candidate.get("is_current_position") for candidate in candidates):
+        near_miss = _nearest_near_miss(getattr(rejection_counts, "near_misses", None) or [], put_call)
     if candidates:
         all_indicative = all(str(candidate.get("tradeability") or "") == "indicative" for candidate in candidates)
         return {
+            **_near_miss_fields(near_miss),
             "status": "indicative" if all_indicative else "eligible",
             "message": f"{len(candidates)} {'indicative' if all_indicative else 'actionable'} contract(s) found.",
             "raw_contract_count": len(raw_contracts),
@@ -1120,6 +1284,7 @@ def _candidate_status(
         }
     reason = _rejection_summary(rejection_counts)
     return {
+        **_near_miss_fields(near_miss),
         "status": "no_actionable_contracts",
         "message": f"No actionable contracts found{': ' + reason if reason else ''}.",
         "raw_contract_count": len(raw_contracts),
@@ -1128,6 +1293,37 @@ def _candidate_status(
         "provider": status.get("provider"),
         "last_fetched_at": status.get("last_fetched_at"),
     }
+
+
+def _nearest_near_miss(near_misses: list[tuple[str, dict[str, Any]]], put_call: str) -> Optional[dict[str, Any]]:
+    """Pick the rejected contract closest to the wheel's working delta."""
+    priced = [(reason, row) for reason, row in near_misses if _num(row.get("delta")) is not None]
+    if not priced:
+        return None
+    reason, row = min(
+        priced,
+        key=lambda item: (abs(abs(_num(item[1].get("delta")) or 0) - NEAR_MISS_TARGET_DELTA), str(item[1].get("expiry") or "")),
+    )
+    return {
+        "put_call": str(row.get("put_call") or put_call).upper(),
+        "strike": _num(row.get("strike")),
+        "expiry": str(row.get("expiry") or "")[:10],
+        "delta": abs(_num(row.get("delta")) or 0),
+        "bid": _num(row.get("bid")),
+        "ask": _num(row.get("ask")),
+        "reason": reason,
+    }
+
+
+def _near_miss_fields(near_miss: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not near_miss:
+        return {}
+    side = "call" if near_miss["put_call"] == "CALL" else "put"
+    message = (
+        f"No alternative passed the filters. Nearest: {near_miss['expiry']} {_money(near_miss['strike'], 2)} {side}, "
+        f"delta {near_miss['delta']:.2f}, rejected for {near_miss['reason']}."
+    )
+    return {"near_miss": near_miss, "near_miss_message": message}
 
 
 def _rejection_summary(rejection_counts: Counter[str]) -> str:
@@ -1369,6 +1565,22 @@ def _standard_monthly_expiries(count: int, reference_date: Optional[date] = None
             month = 1
             year += 1
     return expiries
+
+
+def _next_monthly_after(value: Optional[date]) -> Optional[date]:
+    """Return the first standard monthly expiry strictly after ``value``."""
+    if value is None:
+        return None
+    year, month = value.year, value.month
+    for _ in range(13):
+        expiry = _adjust_us_option_expiry_holiday(_third_friday(year, month))
+        if expiry > value:
+            return expiry
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return None
 
 
 def _third_friday(year: int, month: int) -> date:
