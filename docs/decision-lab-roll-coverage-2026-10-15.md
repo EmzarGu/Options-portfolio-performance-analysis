@@ -20,6 +20,14 @@ Three causes were in the Lab itself rather than in market conditions.
   status carries `near_miss` and `near_miss_message`: the rejected contract
   nearest 0.25 delta and the rule it failed. Both Lab views show the note.
 
+- **Calls for underwater holdings.** An assigned holding without a covered call
+  first looks for calls at or above the cost basis (0.12–0.45 delta, at most 15%
+  above basis). When the stock is too far below basis for any such call, the Lab
+  now offers calls at or above the current price in the same delta band as
+  "Sell covered call below basis". Their exit economics show the stock loss
+  realized if the shares are called away. The cost basis is the assignment
+  basis from the accounting rules; option premium is not netted into it.
+
 ## Credit budget
 
 Replaying the selection plan for a saved 16-situation portfolio gave roughly the

@@ -138,30 +138,48 @@ def test_same_strike_put_roll_needs_real_credit():
     assert status["near_miss_message"].startswith("No alternative passed the filters. Nearest: 2026-11-20 $50.00 put")
 
 
-def test_recovery_call_without_candidates_explains_nearest_contract():
+def _underwater_payload():
     payload = _itm_put_payload()
     payload["positions"]["open_option_shorts"] = []
     payload["positions"]["inventory"] = [
         {"ticker": "XYZ", "shares": 100, "cost_per_share": 80.0, "current_price": 60.0, "unrealized_pnl": -2000.0}
     ]
+    return payload
+
+
+def _call(strike, bid, ask, delta):
+    return {"provider": "marketdata", "ticker": "XYZ", "expiry": "2026-11-20", "put_call": "CALL", "strike": strike,
+            "bid": bid, "ask": ask, "underlying_price": 60.0, "delta": delta, "open_interest": 500, "volume": 50,
+            "raw": {"price_source": "quote_midpoint"}}
+
+
+def test_underwater_holding_still_gets_covered_calls_below_basis():
     option_market_data = {
         "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
-        "contracts": [
-            {"provider": "marketdata", "ticker": "XYZ", "expiry": "2026-11-20", "put_call": "CALL", "strike": 65.0,
-             "bid": 1.10, "ask": 1.20, "underlying_price": 60.0, "delta": 0.27, "open_interest": 500, "volume": 50,
-             "raw": {"price_source": "quote_midpoint"}},
-            {"provider": "marketdata", "ticker": "XYZ", "expiry": "2026-11-20", "put_call": "CALL", "strike": 80.0,
-             "bid": 0.05, "ask": 0.10, "underlying_price": 60.0, "delta": 0.03, "open_interest": 500, "volume": 50,
-             "raw": {"price_source": "quote_midpoint"}},
-        ],
+        "contracts": [_call(65.0, 1.10, 1.20, 0.27), _call(80.0, 0.05, 0.10, 0.03), _call(55.0, 6.00, 6.20, 0.80)],
     }
 
-    data = build_decision_lab_data(payload, option_market_data=option_market_data)
+    data = build_decision_lab_data(_underwater_payload(), option_market_data=option_market_data)
+    group = data["recommendation_candidates"][0]
+
+    assert group["category"] == "Recover with covered call"
+    assert [(row["action"], row["strike"]) for row in group["candidates"]] == [("Sell covered call below basis", 65.0)]
+    offered = group["recommended"]
+    assert offered["exit_pnl"] == pytest.approx((65.0 - 80.0) * 100 + 110.0)
+    assert "sold below basis" in offered["explanation"]
+    assert "near_miss_message" not in group["candidate_status"]
+
+
+def test_recovery_call_without_any_usable_call_explains_nearest_contract():
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
+        "contracts": [_call(80.0, 0.05, 0.10, 0.03), _call(70.0, 0.40, 0.90, 0.10)],
+    }
+
+    data = build_decision_lab_data(_underwater_payload(), option_market_data=option_market_data)
     group = data["recommendation_candidates"][0]
     status = group["candidate_status"]
 
-    assert group["category"] == "Recover with covered call"
     assert group["candidates"] == []
-    assert status["near_miss"]["strike"] == pytest.approx(65.0)
-    assert status["near_miss"]["reason"] == "call strike below current price or basis"
-    assert "Nearest: 2026-11-20 $65.00 call, delta 0.27" in status["near_miss_message"]
+    assert status["near_miss"]["strike"] == pytest.approx(70.0)
+    assert "Nearest: 2026-11-20 $70.00 call, delta 0.10" in status["near_miss_message"]

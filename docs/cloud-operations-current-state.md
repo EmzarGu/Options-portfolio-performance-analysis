@@ -24,6 +24,10 @@ the Lab shows partial data with an explicit notice until the next scheduled
 preparation (or a manual Fetch option data) completes them within the existing
 90-credit ceiling.
 
+A follow-up release the same day offers "Sell covered call below basis"
+alternatives for assigned holdings too far underwater for any call at or above
+basis, so every open position row has options when usable quotes exist.
+
 A watchlist-based new cash-secured put section shipped in the same build was
 removed the same day at the owner's request: suggestions must not depend on a
 manually maintained ticker list. It never had a watchlist configured, so it

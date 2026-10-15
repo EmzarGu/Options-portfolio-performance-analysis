@@ -21,6 +21,7 @@ MIN_CALL_ROLL_DELTA = 0.08
 MIN_RECOVERY_CALL_DELTA = 0.12
 MAX_RECOVERY_CALL_DELTA = 0.45
 MAX_RECOVERY_CALL_STRIKE_ABOVE_BASIS = 0.15
+BELOW_BASIS_CALL_ACTION = "Sell covered call below basis"
 MAX_COVERED_CALL_DELTA = 0.65
 MAX_INDICATIVE_PRICE_AGE_DAYS = 7
 # Matches the actionable DTE ceiling in _contract_is_actionable.
@@ -213,6 +214,17 @@ def _real_contract_candidates(
             rejection_counts.near_misses.extend(("call strike below current price or basis", row) for row in rows if id(row) not in kept)
         actionable = [row for row in filtered if _contract_is_actionable(row, group, action, rejection_counts, status, reference_date)]
         candidates = [_candidate_from_live_contract(action, row, group, status, reference_date) for row in actionable]
+        if put_call == "CALL" and not candidates:
+            # Deeply underwater holdings have no listed call that clears the
+            # basis at a usable delta. Still offer calls at or above the
+            # current price, labelled so the realized stock loss is explicit.
+            fallback_rejections: Counter[str] = RejectionLog()
+            fallback = [
+                row
+                for row in rows
+                if _contract_is_actionable(row, group, BELOW_BASIS_CALL_ACTION, fallback_rejections, status, reference_date)
+            ]
+            candidates = [_candidate_from_live_contract(BELOW_BASIS_CALL_ACTION, row, group, status, reference_date) for row in fallback]
         candidates = sorted(candidates, key=lambda row: row["score"], reverse=True)
 
     deduped: list[dict[str, Any]] = []
@@ -1135,6 +1147,13 @@ def _contract_is_actionable(
             return _reject(rejection_counts, "call strike below current", contract)
         if action == "Sell covered call" and strike is not None and cost is not None and strike < cost:
             return _reject(rejection_counts, "call strike below basis", contract)
+        if action == BELOW_BASIS_CALL_ACTION and strike is not None:
+            if current is not None and strike < current:
+                return _reject(rejection_counts, "call strike below current", contract)
+            if delta < MIN_RECOVERY_CALL_DELTA:
+                return _reject(rejection_counts, "delta too low", contract)
+            if delta > MAX_RECOVERY_CALL_DELTA:
+                return _reject(rejection_counts, "delta too high", contract)
         if action == "Sell covered call" and strike is not None:
             anchor = max([value for value in [cost, current] if value is not None], default=0)
             if anchor and strike > anchor * (1 + MAX_RECOVERY_CALL_STRIKE_ABOVE_BASIS):
@@ -1339,6 +1358,8 @@ def _candidate_from_live_contract(
 
 def _live_candidate_explanation(action: str, exit_pnl: Optional[float], upside_left: Optional[float]) -> str:
     parts = [action]
+    if action == BELOW_BASIS_CALL_ACTION:
+        parts.append("no call at or above the cost basis has a usable delta; if exercised, shares are sold below basis")
     if exit_pnl is not None:
         parts.append(f"exit economics {_money(exit_pnl)}")
     if upside_left is not None:
