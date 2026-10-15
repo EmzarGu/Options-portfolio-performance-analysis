@@ -26,7 +26,8 @@ preparation (or a manual Fetch option data) completes them within the existing
 
 A follow-up release the same day offers "Sell covered call below basis"
 alternatives for assigned holdings too far underwater for any call at or above
-basis, so every open position row has options when usable quotes exist.
+basis, and gives "Pause new entries" rows the comparison that fits their open
+position, so every action-queue row has options when usable quotes exist.
 
 A watchlist-based new cash-secured put section shipped in the same build was
 removed the same day at the owner's request: suggestions must not depend on a

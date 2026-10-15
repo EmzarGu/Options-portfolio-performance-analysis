@@ -183,3 +183,29 @@ def test_recovery_call_without_any_usable_call_explains_nearest_contract():
     assert group["candidates"] == []
     assert status["near_miss"]["strike"] == pytest.approx(70.0)
     assert "Nearest: 2026-11-20 $70.00 call, delta 0.10" in status["near_miss_message"]
+
+
+def test_pause_row_with_open_put_still_gets_roll_options():
+    payload = _itm_put_payload()
+    payload["positions"]["open_option_shorts"][0].update(
+        {"strike": 45.0, "current_price": 50.0, "moneyness": 0.10, "expiration": "2026-11-20", "days_to_expiration": 45}
+    )
+    payload["tickers"]["items"] = [{"ticker": "XYZ", "total_pnl": -500.0, "realized_options_pnl": 300.0, "unrealized_pnl": -800.0}]
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
+        "contracts": [
+            {**_put("2026-11-20", 45.0, 0.90, 1.00, -0.22), "underlying_price": 50.0},
+            {**_put("2026-12-18", 45.0, 1.60, 1.70, -0.25), "underlying_price": 50.0},
+        ],
+    }
+
+    data = build_decision_lab_data(payload, option_market_data=option_market_data)
+    situation = data["ticker_situations"][0]
+    group = data["recommendation_candidates"][0]
+
+    assert situation["category"] == "Pause new entries"
+    assert group["category"] == "Pause new entries"
+    assert [row["expiry"] for row in group["contract_requests"]] == ["2026-11-20", "2026-12-18"]
+    actions = [row["action"] for row in group["candidates"]]
+    assert actions[0] == "Keep current put"
+    assert "Roll put out same strike" in actions

@@ -33,13 +33,15 @@ def recommendation_candidates(ticker_situations: list[dict[str, Any]], *, as_of:
     reference_date = as_of or date.today()
     rows = []
     for situation in ticker_situations:
-        contract_requests = _contract_requests_for_situation(situation, reference_date)
+        option_category = _option_category(situation)
+        contract_requests = _contract_requests_for_situation({**situation, "category": option_category}, reference_date)
         if not contract_requests:
             continue
         rows.append(
             {
                 "ticker": situation["ticker"],
                 "category": situation["category"],
+                "option_category": option_category,
                 "objective": situation["objective"],
                 "current_state": situation.get("current_state") or {},
                 "contract_requests": contract_requests,
@@ -49,6 +51,27 @@ def recommendation_candidates(ticker_situations: list[dict[str, Any]], *, as_of:
             }
         )
     return rows
+
+
+def _option_category(situation: dict[str, Any]) -> str:
+    """The option comparison used for an action-queue row.
+
+    "Pause new entries" rows still hold a position, so they get the comparison
+    that fits it: rolls for an open put, rolls for an open call, or covered
+    calls for uncovered shares.
+    """
+    category = str(situation.get("category") or "")
+    if category != "Pause new entries":
+        return category
+    open_rows = situation.get("_open_rows") or []
+    if any(_option_type(row).startswith("put") for row in open_rows):
+        return "Monitor assignment risk"
+    if any(_option_type(row).startswith("call") for row in open_rows):
+        return "Evaluate exit vs roll"
+    state = situation.get("current_state") if isinstance(situation.get("current_state"), dict) else {}
+    if (_num(state.get("assigned_shares")) or 0) >= 100:
+        return "Recover with covered call"
+    return category
 
 
 def _contract_requests_for_situation(situation: dict[str, Any], reference_date: date) -> list[dict[str, Any]]:
@@ -138,7 +161,7 @@ def _real_contract_candidates(
     status: dict[str, Any],
     reference_date: date,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    category = str(group.get("category") or "")
+    category = str(group.get("option_category") or group.get("category") or "")
     put_call = "PUT" if category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk"} else "CALL"
     rows = contracts.get((ticker, put_call), [])
     if not rows:

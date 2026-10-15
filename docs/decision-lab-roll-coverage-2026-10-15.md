@@ -28,6 +28,11 @@ Three causes were in the Lab itself rather than in market conditions.
   realized if the shares are called away. The cost basis is the assignment
   basis from the accounting rules; option premium is not netted into it.
 
+- **Every action-queue row gets options.** "Pause new entries" rows previously
+  requested no contracts. They now get the comparison that fits the position
+  they hold: put rolls for an open put, call rolls for an open call, or covered
+  calls for uncovered shares. The row keeps its category and objective.
+
 ## Credit budget
 
 Replaying the selection plan for a saved 16-situation portfolio gave roughly the
