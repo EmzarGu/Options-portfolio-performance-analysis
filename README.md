@@ -33,6 +33,21 @@ production locks from an unrelated personal virtual environment.
 Starting a server does not configure its sources. See the [web runbook](docs/cloud-run-web-dashboard.md)
 and [mobile runbook](docs/mobile-api-local-runbook.md). Keep credentials outside Git.
 
+## Decision Lab configuration
+
+Decision Lab reads dated Market Data snapshots (`DECISION_LAB_PROVIDER=marketdata`,
+`MARKETDATA_API_TOKEN` from Secret Manager). For open positions it compares the
+current leg with rolls into the open expiry and the following monthly, including
+same-strike roll-outs; rows with no passing alternative name the nearest rejected
+contract and the rule it failed.
+
+New cash-secured put suggestions are off unless `DECISION_LAB_PUT_WATCHLIST`
+lists tickers (comma or space separated, at most 10). Set the same value on the
+web service and the `ibkr-flex-import` job, because the job prepares the
+selections the page reads. Keep the list in runtime configuration, not Git.
+See [roll coverage](docs/decision-lab-roll-coverage-2026-10-15.md) and
+[new puts](docs/decision-lab-new-puts-2026-10-15.md).
+
 ## Authentication
 
 - Mobile requires `MOBILE_API_KEY`. An explicitly local test server may set
@@ -79,7 +94,8 @@ Secret Manager binding and iOS configuration together, then verify an authentica
 read and rejection of the retired key. Keep the previous version available for
 rollback until verification passes; never put key values in Git or build logs.
 
-After release, check authenticated web/mobile payloads, both Decision Lab views,
+After release, check authenticated web/mobile payloads, both Decision Lab views
+(roll alternatives, near-miss notes and, when a watchlist is set, new-put rows),
 target image digests, and import-job health. Use saved revisions and immutable
 image digests for manual rollback; preserve the last known-good images in
 Artifact Registry. Build logs contain the source commit and final image digest.
