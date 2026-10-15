@@ -943,8 +943,6 @@ function candidateTable(rows, status={}){
     {key:"expiry",label:"Expiry",format:fmtDate},
     {key:"dte",label:"DTE",num:true},
     {key:"premium",label:"Premium or new credit",format:fmtMoney,num:true,className:cls},
-    {key:"monthly_return",label:"Return per month",format:fmtPct,num:true},
-    {key:"collateral",label:"Collateral",format:fmtMoney,num:true},
     {key:"roll_close_cost",label:"Est. close cost",format:fmtMoney,num:true,className:cls},
     {key:"roll_new_credit",label:"Est. new credit",format:fmtMoney,num:true,className:cls},
     {key:"roll_net_credit",label:"Net credit after close",format:fmtMoney,num:true,className:cls},

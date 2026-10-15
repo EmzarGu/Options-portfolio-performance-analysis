@@ -20,7 +20,7 @@ Implementation map checked: 2026-09-19, after the functionality-preserving refac
 | Web payload assembly | `portfolio_backend/web_dashboard_payloads.py` |
 | Mobile transport payload assembly | `portfolio_backend/mobile_api_service.py`, `portfolio_backend/mobile_payloads.py` |
 | Canonical accounting/projections | `portfolio_backend/ibkr/`, `portfolio_backend/calculations.py`, `portfolio_backend/performance.py`, `portfolio_backend/cycle_projection.py` |
-| Decision Lab analytics and candidate construction (rolls, near-miss notes, watchlist new puts) | `portfolio_backend/decision_lab.py`, `portfolio_backend/decision_lab_candidates.py` |
+| Decision Lab analytics and candidate construction (rolls, near-miss notes) | `portfolio_backend/decision_lab.py`, `portfolio_backend/decision_lab_candidates.py` |
 | Decision Lab Market Data selection plan | `portfolio_backend/option_market/marketdata_local.py` (`plan_requests`), `portfolio_backend/option_market/marketdata_production.py` |
 | Provider adapter, normalization, storage and option-data loading | `portfolio_backend/option_market/` |
 | Shared base snapshots / derived JSON payload storage | `portfolio_backend/pipeline_snapshot_store.py`, `portfolio_backend/derived_payload_cache.py` |

@@ -10,20 +10,24 @@ remain from the 2026-05-12 operational record and were not revalidated in this r
 ## Latest Decision Lab release — 2026-10-15
 
 Released through the main-branch Cloud Build trigger (`cloudbuild.yaml`, which
-runs the full suite, focused lint, runtime smoke and `scripts/deploy_verified.py`).
-Two changes ship together:
+runs the full suite, focused lint, runtime smoke and `scripts/deploy_verified.py`)
+as Cloud Build `d0eb0f0b-7d30-46f5-9c42-0e2147d50c75`, all steps successful:
 
 - [Roll coverage](decision-lab-roll-coverage-2026-10-15.md): rolls into the
   monthly after each open leg, same-strike roll-outs for calls and puts, fewer
   unused earlier months, and near-miss notes on rows with no alternative.
-- [New cash-secured puts](decision-lab-new-puts-2026-10-15.md): off until
-  `DECISION_LAB_PUT_WATCHLIST` is set on both the web service and the import job.
 
 No accounting rule, schedule, provider credential or credit ceiling changed. The
 selection plan for the 6 October portfolio stays about the same size (97 versus
-96 selections), so the first scheduled preparation after release requests the
-new selections within the existing 90-credit ceiling and the 7-day complete-
-dataset fallback covers the display meanwhile.
+96 selections). Because the plan includes selections no saved snapshot covers,
+the Lab shows partial data with an explicit notice until the next scheduled
+preparation (or a manual Fetch option data) completes them within the existing
+90-credit ceiling.
+
+A watchlist-based new cash-secured put section shipped in the same build was
+removed the same day at the owner's request: suggestions must not depend on a
+manually maintained ticker list. It never had a watchlist configured, so it
+produced no rows or provider requests while live.
 
 ## Previous completed-chain accounting release — 2026-10-01
 
