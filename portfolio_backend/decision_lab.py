@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import math
+import os
+import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from portfolio_backend.decision_lab_candidates import apply_option_market_candidates, recommendation_candidates
+from portfolio_backend.decision_lab_candidates import (
+    NEW_PUT_CATEGORY,
+    apply_option_market_candidates,
+    recommendation_candidates,
+)
 from portfolio_backend.option_market.history import historical_enrichment_to_probability_match
 
+
+NEW_PUT_WATCHLIST_ENV = "DECISION_LAB_PUT_WATCHLIST"
+# Each watchlist ticker costs about three Market Data credits per quote date.
+MAX_NEW_PUT_TICKERS = 10
 
 RISK_BUCKETS = [
     ("<=15%", None, 0.15),
@@ -28,13 +38,15 @@ def build_decision_lab_data(
     option_market_loader: Optional[
         Callable[[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
     ] = None,
+    put_watchlist: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     probability_matches = _combine_historical_matches(probability_matches or [], historical_enrichments or [])
     probability_matches = _enrich_probability_matches(dashboard_payload, probability_matches)
     as_of = _as_of_date(dashboard_payload)
     ticker_situations = _ticker_situations(dashboard_payload)
+    new_put_situations = _new_put_situations(dashboard_payload, ticker_situations, put_watchlist)
     active_cycle = _active_cycle(dashboard_payload)
-    candidate_groups = recommendation_candidates(ticker_situations, as_of=as_of)
+    candidate_groups = recommendation_candidates(ticker_situations + new_put_situations, as_of=as_of)
     if option_market_loader is not None:
         option_market_data = option_market_loader(ticker_situations, active_cycle, candidate_groups, dashboard_payload)
     recommendation_rows = apply_option_market_candidates(candidate_groups, option_market_data or {}, as_of=as_of)
@@ -50,6 +62,54 @@ def build_decision_lab_data(
         "strike_quality": _strike_quality(probability_matches),
         "coverage_notes": _coverage_notes(dashboard_payload, probability_matches, option_market_data or {}),
     }
+
+
+def new_put_watchlist(raw: Optional[str] = None) -> list[str]:
+    """Tickers to scan for new cash-secured puts, from DECISION_LAB_PUT_WATCHLIST.
+
+    The list is configuration, not repository data. Invalid symbols are ignored
+    and the list is capped so the free Market Data allowance is not exhausted.
+    """
+    value = os.getenv(NEW_PUT_WATCHLIST_ENV, "") if raw is None else raw
+    tickers: list[str] = []
+    for item in re.split(r"[\s,;]+", value.upper()):
+        if re.fullmatch(r"[A-Z][A-Z.\-]{0,9}", item) and item not in tickers:
+            tickers.append(item)
+    return tickers[:MAX_NEW_PUT_TICKERS]
+
+
+def _new_put_situations(
+    payload: dict[str, Any],
+    ticker_situations: list[dict[str, Any]],
+    watchlist: Optional[list[str]],
+) -> list[dict[str, Any]]:
+    """Entry situations for watchlist tickers with no open wheel position."""
+    tickers = new_put_watchlist() if watchlist is None else [str(item).upper() for item in watchlist][:MAX_NEW_PUT_TICKERS]
+    held = {str(row.get("ticker") or "").upper() for row in _open_short_rows(payload) + _inventory_rows(payload)}
+    held |= {str(row.get("ticker") or "").upper() for row in ticker_situations}
+    situations = []
+    for ticker in tickers:
+        if not ticker or ticker in held:
+            continue
+        situation = _situation(
+            ticker=ticker,
+            priority="low",
+            category=NEW_PUT_CATEGORY,
+            objective="Sell a 0.15-0.25 delta put at 20-45 DTE for about 1-2% a month on collateral",
+            reason="Watchlist ticker with no open position",
+            signal_label="Watchlist",
+            signal_value=None,
+            expiry=None,
+            dte=None,
+            recommendation="Compare new put strikes",
+            source="watchlist",
+            open_rows=[],
+            inventory_rows=[],
+            metrics={},
+            supporting_signals=[],
+        )
+        situations.append(situation)
+    return situations
 
 
 def _summary(

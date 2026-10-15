@@ -26,6 +26,18 @@ MAX_INDICATIVE_PRICE_AGE_DAYS = 7
 # Matches the actionable DTE ceiling in _contract_is_actionable.
 MAX_ROLL_REQUEST_DTE = 75
 NEAR_MISS_TARGET_DELTA = 0.25
+NEW_PUT_CATEGORY = "New cash-secured put"
+NEW_PUT_ACTION = "Sell cash-secured put"
+# Wheel entry rules: 0.15-0.25 delta, 20-45 DTE, about 1-2% a month. Delta
+# selections are nearest-neighbour, so the band allows a small tolerance.
+NEW_PUT_DELTAS = (0.15, 0.20, 0.25)
+MIN_NEW_PUT_DELTA = 0.12
+MAX_NEW_PUT_DELTA = 0.28
+MIN_NEW_PUT_DTE = 20
+MAX_NEW_PUT_DTE = 45
+TARGET_NEW_PUT_DTE = 35
+NEW_PUT_MONTHLY_TARGET_LOW = 0.01
+NEW_PUT_MONTHLY_TARGET_HIGH = 0.02
 
 
 def recommendation_candidates(ticker_situations: list[dict[str, Any]], *, as_of: Optional[date] = None) -> list[dict[str, Any]]:
@@ -57,6 +69,9 @@ def _contract_requests_for_situation(situation: dict[str, Any], reference_date: 
         put_call = "CALL"
     elif category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk"}:
         put_call = "PUT"
+    elif category == NEW_PUT_CATEGORY:
+        expiry = _new_put_expiry(reference_date)
+        return [{"expiry": expiry.isoformat(), "put_call": "PUT"}] if expiry else []
     else:
         return []
 
@@ -138,7 +153,7 @@ def _real_contract_candidates(
     reference_date: date,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     category = str(group.get("category") or "")
-    put_call = "PUT" if category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk"} else "CALL"
+    put_call = "PUT" if category in {"Reduce assignment risk", "Monitor assignment risk", "Harvest unused put risk", NEW_PUT_CATEGORY} else "CALL"
     rows = contracts.get((ticker, put_call), [])
     if not rows:
         return [], {
@@ -203,6 +218,9 @@ def _real_contract_candidates(
         candidates.extend(
             _roll_results(roll_pool, current_contract, rejection_counts, lambda row: _short_put_roll_candidate(row, current_contract, group, status, reference_date))
         )
+    elif category == NEW_PUT_CATEGORY:
+        actionable = [row for row in rows if _contract_is_actionable(row, group, NEW_PUT_ACTION, rejection_counts, status, reference_date)]
+        candidates = [_new_put_candidate(row, status, reference_date) for row in actionable]
     else:
         action = "Sell covered call" if put_call == "CALL" else "Roll down/out"
         filtered = _entry_contract_pool(rows, group, put_call)
@@ -947,6 +965,92 @@ def _short_put_risk_reduction_candidate(
     }
 
 
+def _new_put_expiry(reference_date: date) -> Optional[date]:
+    """The standard monthly in the 20-45 DTE window closest to 35 DTE."""
+    options = [
+        parsed
+        for parsed in (_parse_date(value) for value in _standard_monthly_expiries(3, reference_date))
+        if parsed is not None and MIN_NEW_PUT_DTE <= (parsed - reference_date).days <= MAX_NEW_PUT_DTE
+    ]
+    if not options:
+        return None
+    return min(options, key=lambda value: abs((value - reference_date).days - TARGET_NEW_PUT_DTE))
+
+
+def _new_put_candidate(contract: dict[str, Any], status: dict[str, Any], reference_date: date) -> dict[str, Any]:
+    """Score a new one-contract cash-secured put by premium per month on collateral."""
+    strike = _num(contract.get("strike")) or 0.0
+    bid = _num(contract.get("bid"))
+    mark = _num(contract.get("mark"))
+    price = bid if bid is not None and bid > 0 else mark
+    premium = (price or 0.0) * 100
+    net_premium = premium - ESTIMATED_OPTION_COMMISSION
+    collateral = strike * 100
+    expiry = str(contract.get("expiry") or "")[:10]
+    dte = _days_until(expiry, reference_date)
+    monthly_return = net_premium / collateral * 30 / dte if collateral > 0 and dte else None
+    delta = abs(_num(contract.get("delta")) or 0) if contract.get("delta") is not None else None
+    underlying = _num(contract.get("underlying_price"))
+    liquidity = _contract_liquidity(contract)
+    outcomes = _put_roll_outcomes(net_credit=net_premium, strike=strike, current_price=underlying, contract_qty=1)
+    expected_value = _put_roll_ev(net_credit=net_premium, strike=strike, current_price=underlying, delta=delta, contract_qty=1)
+    if monthly_return is None:
+        target_label = "n/a"
+        base = 40.0
+    elif monthly_return < NEW_PUT_MONTHLY_TARGET_LOW:
+        target_label = "below 1%/month target"
+        base = 50.0 - (NEW_PUT_MONTHLY_TARGET_LOW - monthly_return) / NEW_PUT_MONTHLY_TARGET_LOW * 30
+    elif monthly_return <= NEW_PUT_MONTHLY_TARGET_HIGH:
+        target_label = "within 1-2%/month target"
+        base = 70.0 + (monthly_return - NEW_PUT_MONTHLY_TARGET_LOW) / NEW_PUT_MONTHLY_TARGET_LOW * 15
+    else:
+        # Rich premium usually means more risk than the wheel's delta band shows.
+        target_label = "above 2%/month target, check the reason"
+        base = 80.0
+    if delta is not None:
+        base -= abs(delta - 0.20) * 40
+    base += {"good": 6, "fair": 3, "indicative-good": 2, "indicative": 0, "weak": -6}.get(liquidity, 0)
+    otm = (underlying - strike) / underlying if underlying else None
+    return {
+        "action": NEW_PUT_ACTION,
+        "strike": strike,
+        "expiry": expiry,
+        "dte": dte,
+        "premium": premium,
+        "delta": delta,
+        "iv": _num(contract.get("volatility")) if contract.get("volatility") is not None else None,
+        "liquidity": liquidity,
+        "tradeability": "quote-backed" if contract.get("bid") is not None and contract.get("ask") is not None else "indicative",
+        "score": round(max(0, min(100, base)), 1),
+        "explanation": (
+            f"Collateral {_money(collateral)}; "
+            f"{'n/a' if monthly_return is None else f'{monthly_return * 100:.2f}%'} a month after commission"
+            f"{'' if otm is None else f', {otm * 100:.1f}% below the stock price'}."
+        ),
+        "exit_pnl": net_premium,
+        "upside_left": None,
+        "upside_foregone": 0,
+        "collateral": collateral,
+        "monthly_return": monthly_return,
+        "annualized_return": monthly_return * 12 if monthly_return is not None else None,
+        "out_of_money_pct": otm,
+        "expected_value": expected_value,
+        "expected_value_vs_current": expected_value,
+        "exercise_result": outcomes.get("exercise_result") if outcomes else None,
+        "no_exercise_result": outcomes.get("no_exercise_result") if outcomes else None,
+        "exercise_probability": _probability_from_delta(delta),
+        "contract_count": 1,
+        "score_reason": f"{NEW_PUT_ACTION}: {target_label}, {liquidity} liquidity"
+        + (f", {delta:.2f} delta" if delta is not None else "")
+        + ".",
+        "provider": contract.get("provider") or status.get("provider"),
+        "price_source": _price_source(contract),
+        "quote_coverage": contract.get("bid") is not None and contract.get("ask") is not None,
+        "fetch_timestamp": status.get("last_fetched_at"),
+        "contract_symbol": contract.get("contract_symbol"),
+    }
+
+
 def _price_source(contract: Optional[dict[str, Any]], side: str = "bid") -> str:
     if not contract:
         return "n/a"
@@ -1124,6 +1228,14 @@ def _contract_is_actionable(
     dte = _days_until(contract.get("expiry"), reference_date)
     if dte is None or dte < 7 or dte > 75:
         return _reject(rejection_counts, "outside DTE window", contract)
+
+    if action == NEW_PUT_ACTION:
+        if dte < MIN_NEW_PUT_DTE or dte > MAX_NEW_PUT_DTE:
+            return _reject(rejection_counts, "outside 20-45 DTE", contract)
+        if delta < MIN_NEW_PUT_DELTA:
+            return _reject(rejection_counts, "delta too low", contract)
+        if delta > MAX_NEW_PUT_DELTA:
+            return _reject(rejection_counts, "delta too high", contract)
 
     put_call = str(contract.get("put_call") or "").upper()
     if put_call == "CALL":
