@@ -243,3 +243,53 @@ def test_plan_under_budget_is_unchanged():
     _, plan = plan_requests(groups, as_of=date(2026, 10, 6))
 
     assert len(plan) == 2 * 4  # open strike, 0.30, basis and 0.15 in both months
+
+
+def test_recovery_call_near_miss_names_the_check_that_stopped_it():
+    option_market_data = {
+        "status": {"provider": "cutemarkets", "source": "stored", "last_fetched_at": "2026-10-06T12:00:00+00:00"},
+        # Above the current price but below basis, so only the below-basis
+        # path can offer it; its spread is what rules it out.
+        "contracts": [_call(65.0, 0.70, 1.40, 0.27)],
+    }
+
+    data = build_decision_lab_data(_underwater_payload(), option_market_data=option_market_data)
+    status = data["recommendation_candidates"][0]["candidate_status"]
+
+    assert status["near_miss"]["reason"] == "wide spread"
+    assert status["rejection_counts"] == {"wide spread": 1}
+
+
+def test_fetch_order_covers_every_row_before_extras():
+    situations = [
+        {**_situation("Accept / monitor exit", "Call", "2026-11-20"), "ticker": f"T{chr(65 + index)}"}
+        for index in range(3)
+    ]
+    groups = recommendation_candidates(situations, as_of=date(2026, 10, 6))
+
+    _, plan = plan_requests(groups, as_of=date(2026, 10, 6))
+    order = [(request.ticker, request.expiry.isoformat(), selection) for request, selection in plan]
+
+    # A time-limited pass reaches the last row's open leg before any row's extras.
+    assert order.index(("TC", "2026-11-20", Selection(strike=100.0))) < order.index(("TA", "2026-11-20", Selection(delta=0.15)))
+
+
+def test_unlisted_strike_gets_one_standard_strike_request():
+    situation = _situation("Accept / monitor exit", "Call", "2026-11-20", strike=102.5)
+    groups = recommendation_candidates([situation], as_of=date(2026, 10, 6))
+
+    _, plan = plan_requests(groups, as_of=date(2026, 10, 6), unlisted={("XYZ", "CALL", "2026-12-18", 102.5)})
+    strikes = {(request.expiry.isoformat(), selection.strike) for request, selection in plan if selection.strike}
+
+    assert ("2026-12-18", 105.0) in strikes
+    assert ("2026-11-20", 105.0) not in strikes
+
+
+@pytest.mark.parametrize("strike,side,expected", [
+    (102.5, "PUT", 100.0), (102.5, "CALL", 105.0), (63.7, "CALL", 65.0),
+    (205.0, "CALL", 210.0), (21.0, "CALL", 22.5), (150.0, "CALL", None),
+])
+def test_standard_strike_rounds_away_from_the_money(strike, side, expected):
+    from portfolio_backend.option_market.marketdata_local import standard_strike
+
+    assert standard_strike(strike, side) == expected

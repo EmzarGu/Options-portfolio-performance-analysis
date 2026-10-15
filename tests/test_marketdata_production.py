@@ -279,3 +279,56 @@ def test_invalid_latest_record_is_refetched_before_display_switch():
     assert len(calls)==1
     assert out['status']['using_previous_complete'] is False
     assert out['status']['missing_request_count']==0
+
+
+def _no_data(r, s):
+    return OptionMarketFetchResult(r, [], [{'s': 'no_data'}], NOW.isoformat(), 1, 404)
+
+
+def test_one_failed_quote_does_not_stop_the_rest():
+    from portfolio_backend.option_market.marketdata import SelectionRequestError
+    store=Store();calls=[]
+    class Blip:
+        def fetch_selected(self,r,s,**kwargs):
+            calls.append(s)
+            if len(calls)==1: raise SelectionRequestError('Options service unavailable; reserved credit retained')
+            return _no_data(r,s)
+    out=prod.load_market_data(groups(),store=store,now=NOW,refresh=True,client_factory=lambda _:Blip())
+    assert len(calls)==3 and out['status']['missing_request_count']==1
+    assert 'could not be fetched' in out['status']['message'] and store.control['owner'] is None
+
+
+def test_repeated_failed_quotes_stop_the_pass():
+    from portfolio_backend.option_market.marketdata import SelectionRequestError
+    store=Store();calls=[]
+    class Down:
+        def fetch_selected(self,r,s,**kwargs):
+            calls.append(s); raise SelectionRequestError('Options service unavailable; reserved credit retained')
+    g=groups();g[0]['current_state']['open_options'].append({'type':'Call','strike':200,'expiry':'2026-10-16'})
+    out=prod.load_market_data(g,store=store,now=NOW,refresh=True,client_factory=lambda _:Down())
+    assert len(calls)==prod.MAX_FAILED_SELECTIONS
+    assert 'unavailable' in out['status']['message']
+
+
+def test_saved_quotes_beyond_the_budget_are_shown_without_fetching(monkeypatch):
+    store=Store();seed(store)
+    _,plan=prod.plan_requests(groups(),as_of=REQUEST.trade_date)
+    real=prod.plan_requests
+    monkeypatch.setattr(prod,'plan_requests',lambda g,**kw: real(g,**{**kw,'budget':1 if kw.get('budget') else None}))
+    out=prod.load_market_data(groups(),store=store,now=NOW,client_factory=lambda _:pytest.fail('no provider'))
+    assert out['status']['request_count']==1 and out['status']['missing_request_count']==0
+    assert out['status']['contract_count']==1
+
+
+def test_unlisted_strike_is_followed_by_standard_strike_in_same_refresh():
+    store=Store();calls=[]
+    g=[{**groups()[0],'current_state':{'open_options':[{'type':'Call','strike':187.5,'expiry':'2026-10-16'}]}}]
+    class Chain:
+        def fetch_selected(self,r,s,**kwargs):
+            calls.append(s)
+            if s.strike==187.5: return _no_data(r,s)
+            data=body()
+            return OptionMarketFetchResult(r,[],[data],NOW.isoformat(),1,203)
+    out=prod.load_market_data(g,store=store,now=NOW,refresh=True,client_factory=lambda _:Chain())
+    assert [s.strike for s in calls if s.strike] == [187.5, 190.0]
+    assert out['status']['missing_request_count']==0 and out['status']['contract_count']==1

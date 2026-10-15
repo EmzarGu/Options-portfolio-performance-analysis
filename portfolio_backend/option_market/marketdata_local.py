@@ -7,6 +7,7 @@ agreed. Saved selection responses make subsequent reads network-free.
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -23,7 +24,14 @@ from portfolio_backend.option_market.models import stable_hash
 MAX_PLAN_SELECTIONS = 85
 
 
-def plan_requests(groups, *, as_of: date, budget: int = MAX_PLAN_SELECTIONS):
+def plan_requests(groups, *, as_of: date, budget: int | None = MAX_PLAN_SELECTIONS, unlisted=frozenset()):
+    """Selections in fetch order: every row's current leg and main alternative
+    come before any row's extras, so a time-limited pass covers the whole queue.
+
+    ``unlisted`` holds (ticker, side, expiry, strike) answered with no_data this
+    session; each also gets one request for the nearest standard strike.
+    ``budget=None`` lists every selection, for showing quotes already saved.
+    """
     universe = build_decision_option_universe(groups, as_of=as_of, provider="marketdata")
     states = {g["ticker"]: g.get("current_state") or {} for g in groups}
     ranked = []
@@ -43,18 +51,40 @@ def plan_requests(groups, *, as_of: date, budget: int = MAX_PLAN_SELECTIONS):
                     selections[selection] = min(tier, selections.get(selection, tier))
         selections.setdefault(Selection(delta=.30), 1)
         # Basis may be an unlisted fractional strike. A no_data result is valid;
-        # never round it into a claim that the basis strike exists.
+        # the standard-strike request below is a separate, verified quote.
         if request.put_call == "CALL" and state.get("cost_basis"):
             selections.setdefault(Selection(strike=float(state["cost_basis"])), 2)
         selections.setdefault(Selection(delta=.15), 3)
+        for selection, tier in list(selections.items()):
+            if selection.strike is None:
+                continue
+            if (request.ticker, request.put_call, request.expiry.isoformat(), selection.strike) not in unlisted:
+                continue
+            standard = standard_strike(selection.strike, request.put_call)
+            if standard is not None:
+                selections.setdefault(Selection(strike=standard), tier)
         for selection, tier in selections.items():
             ranked.append((tier, order, request, selection))
     # Over budget, every queue row keeps its current leg and main alternative
     # before any row gets extras; within a tier, queue order (priority) wins.
     # Ranking is deterministic so repeated fetches for a session reuse keys.
-    kept = sorted(ranked, key=lambda row: (row[0], row[1]))[:budget]
-    kept.sort(key=lambda row: row[1])
+    kept = sorted(ranked, key=lambda row: (row[0], row[1]))
+    if budget is not None:
+        kept = kept[:budget]
     return universe, [(request, selection) for _, _, request, selection in kept]
+
+
+def standard_strike(strike: float, put_call: str) -> float | None:
+    """Nearest strike on the usual later-month grid, further out of the money.
+
+    Later months often list only $5 strikes ($2.50 under $25, $10 from $200),
+    so a $102.50 put leg has no same-strike roll there. None if on the grid.
+    """
+    step = 10.0 if strike >= 200 else 5.0 if strike >= 25 else 2.5
+    units = strike / step
+    rounded = math.ceil(units - 1e-9) if put_call == "CALL" else math.floor(units + 1e-9)
+    value = rounded * step
+    return None if abs(value - strike) < 1e-9 or value <= 0 else value
 
 
 def write_private_json(path: Path, data):

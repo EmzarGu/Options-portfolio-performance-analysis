@@ -8,12 +8,17 @@ from datetime import datetime, timedelta, timezone
 
 from portfolio_backend.gcp import firestore_client
 from portfolio_backend.market_calendar import is_us_market_trading_day
-from portfolio_backend.option_market.marketdata import MarketDataClient, MarketDataError, NY, latest_free_session, normalize_chain
-from portfolio_backend.option_market.marketdata_local import plan_requests
+from portfolio_backend.option_market.marketdata import (
+    MarketDataClient, MarketDataError, NY, SelectionRequestError, latest_free_session, normalize_chain,
+)
+from portfolio_backend.option_market.marketdata_local import MAX_PLAN_SELECTIONS, plan_requests
 from portfolio_backend.option_market.models import stable_hash
 
 COLLECTION = "decision_lab_marketdata"
 MAX_DISPLAY_QUOTE_AGE_DAYS = 7
+# A single failed quote skips that selection; repeated failures mean the
+# service itself is down, so the pass stops and keeps the remaining credits.
+MAX_FAILED_SELECTIONS = 3
 
 
 def quota_window(now):
@@ -165,16 +170,53 @@ def _validated_snapshot(responses, plan, session):
     return list(contracts.values()), missing, invalid
 
 
+def _unlisted_strikes(responses):
+    """Exact-strike selections the provider answered with no_data."""
+    unlisted = set()
+    for record in responses.values():
+        body, request, selection = record.get("body"), record.get("request"), record.get("selection")
+        if not (isinstance(body, dict) and isinstance(request, dict) and isinstance(selection, dict)):
+            continue
+        if body.get("s") != "no_data" or "strike" not in selection:
+            continue
+        try:
+            unlisted.add((request["ticker"], request["put_call"], str(request["expiry"])[:10], float(selection["strike"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return frozenset(unlisted)
+
+
+def _session_plan(groups, now, responses, *, budget=MAX_PLAN_SELECTIONS):
+    return plan_requests(groups, as_of=now.astimezone(NY).date(), budget=budget,
+                         unlisted=_unlisted_strikes(responses))
+
+
+def _saved_beyond_plan(groups, now, responses, plan):
+    # The budget limits what is fetched, not what is shown: quotes already
+    # saved for this session cost nothing to display.
+    planned = {selection_key(request, selection) for request, selection in plan}
+    _, full = _session_plan(groups, now, responses, budget=None)
+    return [(request, selection) for request, selection in full
+            if selection_key(request, selection) not in planned and selection_key(request, selection) in responses]
+
+
+def _with_saved_extras(values, responses, extras, session):
+    extra_values, _, _ = _validated_snapshot(responses, extras, session)
+    seen = {value["contract_symbol"] for value in values}
+    return values + [value for value in extra_values if value["contract_symbol"] not in seen]
+
+
 def load_market_data(groups, *, refresh=False, store=None, client_factory=None, now=None, time_limit=20):
     store = store or FirestoreMarketDataStore()
     now = now or datetime.now(timezone.utc)
     expected = latest_free_session(now)
-    universe, plan = plan_requests(groups, as_of=now.astimezone(NY).date())
     snapshot = store.load(expected)
     responses = dict(snapshot.get("responses") or {})
+    universe, plan = _session_plan(groups, now, responses)
     _, missing, _ = _validated_snapshot(responses, plan, expected)
     error = None
     refreshed = 0
+    failed = 0
     if refresh and missing:
         owner = uuid.uuid4().hex
         acquired = False
@@ -183,22 +225,40 @@ def load_market_data(groups, *, refresh=False, store=None, client_factory=None, 
             acquired = True
             # A previous writer may have finished between initial read and lease.
             responses = dict(store.load(expected).get("responses") or {})
-            _, missing, _ = _validated_snapshot(responses, plan, expected)
             credits = SharedCredits(store, owner)
             client = (client_factory or (lambda ledger: MarketDataClient(os.getenv("MARKETDATA_API_TOKEN", ""), ledger=ledger)))(credits)
             deadline = time.monotonic() + time_limit
-            for request, selection in plan:
-                key = selection_key(request, selection)
-                if key not in missing:
-                    continue
-                if time.monotonic() >= deadline:
-                    raise MarketDataError("Partial update saved; fetch again later to complete coverage")
-                result = client.fetch_selected(request, selection, deadline=deadline)
-                if any(c.trade_date != expected for c in result.contracts):
-                    raise MarketDataError("Provider quote date did not match the latest available session")
-                responses[key] = {"body": result.raw_pages[0], "fetched_at": result.fetched_at,
-                                  "request": request.as_dict(), "selection": selection.parameters()}
-                refreshed += 1
+            # A second pass requests standard strikes for exact strikes the
+            # first pass found unlisted, e.g. a $102.50 leg's later month.
+            # Each selection is requested at most once per pass: no retries.
+            attempted = set()
+            for _ in range(2):
+                universe, plan = _session_plan(groups, now, responses)
+                _, missing, _ = _validated_snapshot(responses, plan, expected)
+                missing -= attempted
+                if not missing:
+                    break
+                for request, selection in plan:
+                    key = selection_key(request, selection)
+                    if key not in missing:
+                        continue
+                    attempted.add(key)
+                    if time.monotonic() >= deadline:
+                        raise MarketDataError("Partial update saved; fetch again later to complete coverage")
+                    try:
+                        result = client.fetch_selected(request, selection, deadline=deadline)
+                    except SelectionRequestError:
+                        failed += 1
+                        if failed >= MAX_FAILED_SELECTIONS:
+                            raise MarketDataError("Options service unavailable; partial update saved") from None
+                        continue
+                    if any(c.trade_date != expected for c in result.contracts):
+                        raise MarketDataError("Provider quote date did not match the latest available session")
+                    responses[key] = {"body": result.raw_pages[0], "fetched_at": result.fetched_at,
+                                      "request": request.as_dict(), "selection": selection.parameters()}
+                    refreshed += 1
+            if failed:
+                error = f"{failed} quote(s) could not be fetched; fetch again later to complete coverage"
         except MarketDataError as exc:
             error = str(exc)
         finally:
@@ -208,7 +268,9 @@ def load_market_data(groups, *, refresh=False, store=None, client_factory=None, 
                         store.save(expected, responses, owner=owner)
                 finally:
                     _release(store, owner)
+    universe, plan = _session_plan(groups, now, responses)
     values, missing, invalid = _validated_snapshot(responses, plan, expected)
+    values = _with_saved_extras(values, responses, _saved_beyond_plan(groups, now, responses, plan), expected)
     missing_count = len(missing)
     if invalid and not error:
         error = "Some saved quotes failed validation and were excluded"
@@ -216,11 +278,14 @@ def load_market_data(groups, *, refresh=False, store=None, client_factory=None, 
     if missing_count:
         earliest = now.astimezone(NY).date() - timedelta(days=MAX_DISPLAY_QUOTE_AGE_DAYS)
         for session, previous in store.load_previous(expected, earliest=earliest):
-            older, older_missing, _ = _validated_snapshot(previous.get("responses") or {}, plan, session)
+            older_responses = previous.get("responses") or {}
+            _, older_plan = _session_plan(groups, now, older_responses)
+            older, older_missing, _ = _validated_snapshot(older_responses, older_plan, session)
             if not older_missing:
                 # Publish one coherent quote date, only when every selection for
                 # the current portfolio has a valid response (including no_data).
-                values, displayed_date = older, session
+                extras = _saved_beyond_plan(groups, now, older_responses, older_plan)
+                values, displayed_date = _with_saved_extras(older, older_responses, extras, session), session
                 break
     fallback = displayed_date != expected
     state = store.state()

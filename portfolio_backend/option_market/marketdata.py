@@ -28,6 +28,10 @@ class MarketDataError(RuntimeError):
     """Safe error message; never includes request headers or provider error text."""
 
 
+class SelectionRequestError(MarketDataError):
+    """One selection's request failed; later selections may still be requested."""
+
+
 def latest_free_session(now: datetime) -> date:
     local = now.astimezone(NY)
     # Identify the last session that has OPENED, then take its predecessor.
@@ -197,7 +201,7 @@ class MarketDataClient:
                 params=params, headers={"Authorization": f"Bearer {self._token}"},
                 timeout=(min(5, remaining / 2), remaining / 2), allow_redirects=False)
         except requests.RequestException:
-            raise MarketDataError("Options service unavailable; reserved credit retained") from None
+            raise SelectionRequestError("Options service unavailable; reserved credit retained") from None
         self.ledger.reconcile(response.headers)
         if response.status_code == 404:
             # Provider SDKs treat an absent contract as an empty result. An
@@ -209,10 +213,10 @@ class MarketDataClient:
         try:
             body = response.json()
         except ValueError:
-            raise MarketDataError("Options service returned invalid JSON") from None
+            raise SelectionRequestError("Options service returned invalid JSON") from None
         fetched = self.now()
         contracts = normalize_chain(body, request, fetched_at=fetched)
         if selection.strike is not None and any(c.strike != selection.strike for c in contracts):
-            raise MarketDataError("Response strike differs from requested strike")
+            raise SelectionRequestError("Response strike differs from requested strike")
         return OptionMarketFetchResult(request, contracts, [body], fetched.isoformat(),
             int((time.monotonic() - start) * 1000), response.status_code)

@@ -248,6 +248,12 @@ def _real_contract_candidates(
                 if _contract_is_actionable(row, group, BELOW_BASIS_CALL_ACTION, fallback_rejections, status, reference_date)
             ]
             candidates = [_candidate_from_live_contract(BELOW_BASIS_CALL_ACTION, row, group, status, reference_date) for row in fallback]
+            if not candidates and fallback_rejections:
+                # The below-basis checks saw every call and are what stopped
+                # them, so report their reasons, not the basis filter.
+                rejection_counts.clear()
+                rejection_counts.update(fallback_rejections)
+                rejection_counts.near_misses = fallback_rejections.near_misses
         candidates = sorted(candidates, key=lambda row: row["score"], reverse=True)
 
     deduped: list[dict[str, Any]] = []
