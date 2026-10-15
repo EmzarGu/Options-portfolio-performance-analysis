@@ -11,7 +11,6 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from portfolio_backend.decision_lab_candidates import NEW_PUT_CATEGORY, NEW_PUT_DELTAS
 from portfolio_backend.option_market.decision_data import build_decision_option_universe
 from portfolio_backend.option_market.marketdata import MarketDataError, Selection, latest_free_session, normalize_chain
 from portfolio_backend.option_market.models import stable_hash
@@ -20,7 +19,6 @@ from portfolio_backend.option_market.models import stable_hash
 def plan_requests(groups, *, as_of: date):
     universe = build_decision_option_universe(groups, as_of=as_of, provider="marketdata")
     states = {g["ticker"]: g.get("current_state") or {} for g in groups}
-    categories = {g["ticker"]: g.get("category") for g in groups}
     plan = []
     for request in universe.requests:
         state = states[request.ticker]
@@ -33,11 +31,7 @@ def plan_requests(groups, *, as_of: date):
             if str(option.get("expiry"))[:10] <= request.expiry.isoformat() and str(option.get("type", "")).upper() == request.put_call:
                 if option.get("strike") is not None:
                     selections.append(Selection(strike=float(option["strike"])))
-        if categories.get(request.ticker) == NEW_PUT_CATEGORY:
-            # New entries only need the wheel's own delta band.
-            selections += [Selection(delta=value) for value in NEW_PUT_DELTAS]
-        else:
-            selections += [Selection(delta=value) for value in (.15, .30)]
+        selections += [Selection(delta=value) for value in (.15, .30)]
         # Basis may be an unlisted fractional strike. A no_data result is valid;
         # never round it into a claim that the basis strike exists.
         if request.put_call == "CALL" and state.get("cost_basis"):
