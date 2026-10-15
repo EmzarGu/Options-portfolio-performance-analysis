@@ -39,7 +39,10 @@ Decision Lab reads dated Market Data snapshots (`DECISION_LAB_PROVIDER=marketdat
 `MARKETDATA_API_TOKEN` from Secret Manager). For open positions it compares the
 current leg with rolls into the open expiry and the following monthly, including
 same-strike roll-outs; rows with no passing alternative name the nearest rejected
-contract and the rule it failed. See
+contract and the rule it failed. Every row in the ticker-level action queue requests option comparisons,
+including "Pause new entries" rows. Assigned holdings without a covered call always
+get call options: at or above basis when possible, otherwise clearly labelled
+calls below basis. See
 [roll coverage](docs/decision-lab-roll-coverage-2026-10-15.md).
 
 ## Authentication
