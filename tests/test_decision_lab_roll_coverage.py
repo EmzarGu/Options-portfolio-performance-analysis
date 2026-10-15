@@ -209,3 +209,37 @@ def test_pause_row_with_open_put_still_gets_roll_options():
     actions = [row["action"] for row in group["candidates"]]
     assert actions[0] == "Keep current put"
     assert "Roll put out same strike" in actions
+
+
+def test_selection_plan_fits_daily_credit_budget_in_priority_order():
+    situations = [
+        {**_situation("Accept / monitor exit", "Call", "2026-11-20"), "ticker": f"T{chr(65 + index)}"}
+        for index in range(20)
+    ]
+    groups = recommendation_candidates(situations, as_of=date(2026, 10, 6))
+
+    _, full = plan_requests(groups, as_of=date(2026, 10, 6), budget=10_000)
+    _, plan = plan_requests(groups, as_of=date(2026, 10, 6))
+
+    assert len(full) > 85
+    assert len(plan) == 85
+    kept = {(request.ticker, request.expiry.isoformat(), selection) for request, selection in plan}
+    for index in range(20):
+        ticker = f"T{chr(65 + index)}"
+        # Every queue row keeps its open leg, the roll-out strike and the 0.30 delta.
+        assert (ticker, "2026-11-20", Selection(strike=100.0)) in kept
+        assert (ticker, "2026-12-18", Selection(strike=100.0)) in kept
+        assert (ticker, "2026-12-18", Selection(delta=0.30)) in kept
+    # Extras are trimmed from the lowest-priority rows first.
+    assert ("TA", "2026-11-20", Selection(strike=95.0)) in kept
+    assert ("TT", "2026-12-18", Selection(strike=95.0)) not in kept
+    assert not any(selection == Selection(delta=0.15) for _, _, selection in kept)
+
+
+def test_plan_under_budget_is_unchanged():
+    situation = _situation("Accept / monitor exit", "Call", "2026-11-20")
+    groups = recommendation_candidates([situation], as_of=date(2026, 10, 6))
+
+    _, plan = plan_requests(groups, as_of=date(2026, 10, 6))
+
+    assert len(plan) == 2 * 4  # open strike, 0.30, basis and 0.15 in both months

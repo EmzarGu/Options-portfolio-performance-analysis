@@ -17,6 +17,10 @@ those months (same-strike roll-outs) and drops months before the open expiry.
 Per ticker and month it still uses the current strike, 0.15 and 0.30 delta and,
 for calls, the cost-basis strike. See
 [roll coverage](decision-lab-roll-coverage-2026-10-15.md).
+The plan is capped at 85 selections (`MAX_PLAN_SELECTIONS`), because each quote
+date gets exactly one 90-credit window and a larger plan can never complete.
+When over the cap, every row first keeps its open strike, roll-out strike and
+0.30 delta; cost-basis calls come next and 0.15 delta last, in queue order.
 
 The following historical validation subsystem and CuteMarkets records remain
 separate; this release does not repair the historical import job.

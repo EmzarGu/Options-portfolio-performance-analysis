@@ -29,6 +29,11 @@ alternatives for assigned holdings too far underwater for any call at or above
 basis, and gives "Pause new entries" rows the comparison that fits their open
 position, so every action-queue row has options when usable quotes exist.
 
+A third release caps the Market Data selection plan at 85 (it had reached 107,
+above the 90 credits one quote date can use, so production stayed at 36 of 107
+selections ready and never completed). See the credit budget section of
+[roll coverage](decision-lab-roll-coverage-2026-10-15.md).
+
 A watchlist-based new cash-secured put section shipped in the same build was
 removed the same day at the owner's request: suggestions must not depend on a
 manually maintained ticker list. It never had a watchlist configured, so it

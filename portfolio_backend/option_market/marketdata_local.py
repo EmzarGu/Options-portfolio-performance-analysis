@@ -16,29 +16,45 @@ from portfolio_backend.option_market.marketdata import MarketDataError, Selectio
 from portfolio_backend.option_market.models import stable_hash
 
 
-def plan_requests(groups, *, as_of: date):
+# One quote session gets one 90-credit window (both switch at 9:30 New York),
+# and a selection costs about one credit. A larger plan can never complete, so
+# the 7-day complete-dataset fallback never applies either. Keep headroom for
+# retries and credits the provider reports differently.
+MAX_PLAN_SELECTIONS = 85
+
+
+def plan_requests(groups, *, as_of: date, budget: int = MAX_PLAN_SELECTIONS):
     universe = build_decision_option_universe(groups, as_of=as_of, provider="marketdata")
     states = {g["ticker"]: g.get("current_state") or {} for g in groups}
-    plan = []
-    for request in universe.requests:
+    ranked = []
+    for order, request in enumerate(universe.requests):
         state = states[request.ticker]
-        selections = []
+        selections = {}
         # Both legs of a roll must be priced. Include every current leg, not
         # merely the first option for a ticker.
         # Pricing the same strike in later months lets the engine compare a
         # plain roll-out, the usual wheel adjustment.
         for option in state.get("open_options") or []:
-            if str(option.get("expiry"))[:10] <= request.expiry.isoformat() and str(option.get("type", "")).upper() == request.put_call:
+            expiry = str(option.get("expiry"))[:10]
+            if expiry <= request.expiry.isoformat() and str(option.get("type", "")).upper() == request.put_call:
                 if option.get("strike") is not None:
-                    selections.append(Selection(strike=float(option["strike"])))
-        selections += [Selection(delta=value) for value in (.15, .30)]
+                    tier = 0 if expiry == request.expiry.isoformat() else 1
+                    selection = Selection(strike=float(option["strike"]))
+                    selections[selection] = min(tier, selections.get(selection, tier))
+        selections.setdefault(Selection(delta=.30), 1)
         # Basis may be an unlisted fractional strike. A no_data result is valid;
         # never round it into a claim that the basis strike exists.
         if request.put_call == "CALL" and state.get("cost_basis"):
-            selections.append(Selection(strike=float(state["cost_basis"])))
-        for selection in dict.fromkeys(selections):
-            plan.append((request, selection))
-    return universe, plan
+            selections.setdefault(Selection(strike=float(state["cost_basis"])), 2)
+        selections.setdefault(Selection(delta=.15), 3)
+        for selection, tier in selections.items():
+            ranked.append((tier, order, request, selection))
+    # Over budget, every queue row keeps its current leg and main alternative
+    # before any row gets extras; within a tier, queue order (priority) wins.
+    # Ranking is deterministic so repeated fetches for a session reuse keys.
+    kept = sorted(ranked, key=lambda row: (row[0], row[1]))[:budget]
+    kept.sort(key=lambda row: row[1])
+    return universe, [(request, selection) for _, _, request, selection in kept]
 
 
 def write_private_json(path: Path, data):
