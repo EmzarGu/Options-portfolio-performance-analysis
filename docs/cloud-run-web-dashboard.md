@@ -66,6 +66,16 @@ same statement date. If Cloud Run cannot even start the import container, the
 apps still flag stale data when the latest successful import `to_date` is older
 than `IBKR_IMPORT_STALE_DAYS` (default 3).
 
+## Today and Decision Cards Tabs
+
+Two preview tabs sit beside the existing ones: **Today** (cycle RoAC gauge,
+year-to-date pace, capital at work, the action queue grouped by urgency, risk
+map) and **Decision cards** (keep, close and the top two Decision Lab
+alternatives per ticker, checked against the Decision rules in Settings). They
+reuse `/api/dashboard` and `/api/decision-lab`, which now also return
+`action_queue`, `decision_cards` and `decision_rules`. See
+[the 22 October record](today-and-decision-cards-2026-10-22.md).
+
 ## Required Runtime Config
 
 Environment variables:

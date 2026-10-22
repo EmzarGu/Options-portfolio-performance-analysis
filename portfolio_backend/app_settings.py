@@ -148,3 +148,106 @@ def save_monthly_target_band(
     with _settings_cache_lock:
         _monthly_target_band_cache = (time(), dict(normalized))
     return normalized
+
+
+DECISION_RULES_DOCUMENT = "decision_rules"
+_decision_rules_cache: tuple[float, dict[str, Any]] | None = None
+
+# Wheel entry rules used by the Today and Decision cards tabs. They only drive
+# the rule checks shown beside each option; they never filter candidates or
+# change any accounting.
+DEFAULT_DECISION_RULES: dict[str, float] = {
+    "annual_target_return": 0.20,
+    "put_delta_min": 0.15,
+    "put_delta_max": 0.25,
+    "dte_min": 20.0,
+    "dte_max": 45.0,
+}
+
+
+def _coerce_bounded(value: object, low: float, high: float) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or not low <= number <= high:
+        return None
+    return number
+
+
+def normalize_decision_rules(data: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return complete, ordered decision rules, falling back to defaults per field."""
+    source = data or {}
+    bounds = {
+        "annual_target_return": (0.0, 1.0),
+        "put_delta_min": (0.0, 1.0),
+        "put_delta_max": (0.0, 1.0),
+        "dte_min": (0.0, 365.0),
+        "dte_max": (0.0, 365.0),
+    }
+    rules: dict[str, Any] = {}
+    for key, (low, high) in bounds.items():
+        value = _coerce_bounded(source.get(key), low, high)
+        rules[key] = float(DEFAULT_DECISION_RULES[key] if value is None else value)
+    if rules["put_delta_min"] > rules["put_delta_max"]:
+        rules["put_delta_min"], rules["put_delta_max"] = rules["put_delta_max"], rules["put_delta_min"]
+    if rules["dte_min"] > rules["dte_max"]:
+        rules["dte_min"], rules["dte_max"] = rules["dte_max"], rules["dte_min"]
+    rules["source"] = str(source.get("source") or "default")
+    rules["updated_at"] = source.get("updated_at")
+    rules["updated_by"] = source.get("updated_by")
+    return rules
+
+
+def load_decision_rules() -> dict[str, Any]:
+    global _decision_rules_cache
+    ttl_seconds = _settings_cache_seconds()
+    now = time()
+    if ttl_seconds > 0:
+        with _settings_cache_lock:
+            if _decision_rules_cache and now - _decision_rules_cache[0] <= ttl_seconds:
+                return dict(_decision_rules_cache[1])
+    rules = normalize_decision_rules(None)
+    try:
+        snapshot = (
+            firestore_client()
+            .collection(APP_SETTINGS_COLLECTION)
+            .document(DECISION_RULES_DOCUMENT)
+            .get(timeout=_settings_firestore_timeout_seconds())
+        )
+        if snapshot.exists:
+            data = snapshot.to_dict() or {}
+            rules = normalize_decision_rules({**data, "source": data.get("source") or "firestore"})
+    except Exception as exc:
+        logger.warning("decision_rules_load_failed error=%s", exc)
+    if ttl_seconds > 0:
+        with _settings_cache_lock:
+            _decision_rules_cache = (time(), dict(rules))
+    return rules
+
+
+def save_decision_rules(
+    values: Mapping[str, Any],
+    *,
+    updated_by: Optional[str] = None,
+    source: str = "user",
+) -> dict[str, Any]:
+    global _decision_rules_cache
+    normalized = normalize_decision_rules(
+        {
+            **{key: values.get(key) for key in DEFAULT_DECISION_RULES},
+            "source": source,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "updated_by": updated_by,
+        }
+    )
+    firestore_client().collection(APP_SETTINGS_COLLECTION).document(DECISION_RULES_DOCUMENT).set(
+        normalized,
+        merge=True,
+        timeout=_settings_firestore_timeout_seconds(),
+    )
+    with _settings_cache_lock:
+        _decision_rules_cache = (time(), dict(normalized))
+    return normalized

@@ -14,7 +14,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from portfolio_backend import web_auth, web_data_service as web_data
-from portfolio_backend.app_settings import load_monthly_target_band, save_monthly_target_band
+from portfolio_backend.app_settings import (
+    DEFAULT_DECISION_RULES,
+    load_decision_rules,
+    load_monthly_target_band,
+    save_decision_rules,
+    save_monthly_target_band,
+)
+from portfolio_backend.decision_cards import with_decision_cards
 from portfolio_backend.cloud_run_jobs import trigger_ibkr_import_job
 from portfolio_backend.decision_lab_templates import DECISION_LAB_HTML
 from portfolio_backend.mobile_api_service import build_mobile_refresh_payload
@@ -211,6 +218,8 @@ def refresh(request: Request) -> Response:
     section = request.query_params.get("section") or "dashboard"
     if section not in {
         "dashboard",
+        "today",
+        "decision_cards",
         "decision_lab",
         "performance",
         "monthly",
@@ -313,6 +322,7 @@ def decision_lab_json(request: Request) -> JSONResponse:
             target_floor=target_band["target_floor"],
         )
         response_payload = web_data._get_cached_decision_lab_payload(payload, force_refresh=False)
+        response_payload = with_decision_cards(response_payload, load_decision_rules())
         logger.info("web_decision_lab_timing total_ms=%.2f", (perf_counter() - started_at) * 1000)
         return JSONResponse(response_payload)
     except Exception as exc:
@@ -347,7 +357,8 @@ def decision_lab_options_refresh(request: Request) -> JSONResponse:
             target_floor=target_band["target_floor"],
         )
         web_data._clear_dashboard_data_cache()
-        return JSONResponse(web_data._get_cached_decision_lab_payload(payload, force_refresh=True))
+        refreshed = web_data._get_cached_decision_lab_payload(payload, force_refresh=True)
+        return JSONResponse(with_decision_cards(refreshed, load_decision_rules()))
     except Exception as exc:
         logger.warning("decision_lab_option_refresh_failed error=%s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -406,4 +417,47 @@ async def update_monthly_target_band_json(request: Request) -> JSONResponse:
         return JSONResponse(band)
     except Exception as exc:
         logger.warning("monthly_target_band_save_failed error=%s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+_DECISION_RULE_BOUNDS = {
+    "annual_target_return": (0.0, 1.0),
+    "put_delta_min": (0.0, 1.0),
+    "put_delta_max": (0.0, 1.0),
+    "dte_min": (0.0, 365.0),
+    "dte_max": (0.0, 365.0),
+}
+
+
+@app.get("/api/settings/decision-rules")
+def decision_rules_json(request: Request) -> JSONResponse:
+    if not web_auth._is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return JSONResponse(load_decision_rules())
+
+
+@app.post("/api/settings/decision-rules")
+async def update_decision_rules_json(request: Request) -> JSONResponse:
+    if not web_auth._is_authenticated(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "Expected a JSON object."}, status_code=400)
+        values: Dict[str, float] = {}
+        for key, (low, high) in _DECISION_RULE_BOUNDS.items():
+            raw = body.get(key, DEFAULT_DECISION_RULES[key])
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": f"{key} must be a number."}, status_code=400)
+            if not low <= value <= high:
+                return JSONResponse({"error": f"{key} must be between {low:g} and {high:g}."}, status_code=400)
+            values[key] = value
+        if values["put_delta_min"] > values["put_delta_max"] or values["dte_min"] > values["dte_max"]:
+            return JSONResponse({"error": "Each minimum must be at or below its maximum."}, status_code=400)
+        rules = save_decision_rules(values, updated_by=web_auth._authenticated_user(request), source="web")
+        return JSONResponse(rules)
+    except Exception as exc:
+        logger.warning("decision_rules_save_failed error=%s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)

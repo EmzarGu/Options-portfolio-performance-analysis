@@ -105,6 +105,32 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 .candidate-card{padding:14px;border:1px solid var(--line2);border-radius:8px;background:#11191c}.candidate-action{font-size:18px;font-weight:900}.state-title{margin-top:12px;color:var(--muted);font-weight:850;text-transform:uppercase;font-size:11px;letter-spacing:.04em}.state-grid{display:flex;flex-wrap:wrap;gap:7px;margin:6px 0 12px}.candidate-mini{padding:7px 8px;border-radius:7px;background:#0d1417;min-width:118px;max-width:260px;flex:0 1 auto}.candidate-mini.wide{min-width:220px;max-width:520px}.candidate-mini b{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.candidate-mini span{display:block;overflow:hidden;text-overflow:ellipsis}
 .loading-panel{min-height:220px;display:grid;place-items:center;text-align:center}.loading-panel h2{margin:0 0 8px}.loading-panel p{margin:0;color:var(--muted)}.retry-load{margin-top:14px}
 .view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating,body.is-loading .view-updating{opacity:1;transform:translateY(0)}
+.new-tag{display:inline-block;margin-left:5px;font-size:10px;font-weight:850;letter-spacing:.06em;color:var(--accent);vertical-align:1px}
+.td-fresh{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px;font-size:13px;color:var(--muted)}.td-fresh .td-chip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line2);border-radius:14px;padding:6px 12px;background:var(--color-surface-muted)}.td-fresh b{color:var(--text);font-weight:750}.td-dot{width:8px;height:8px;border-radius:50%;background:var(--color-positive)}.td-dot.warn{background:var(--color-attention)}.td-dot.bad{background:var(--color-negative)}
+.td-hero{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px}.td-kpi{padding:16px}.td-big{font-size:34px;font-weight:850;line-height:1;margin:8px 0 6px;font-variant-numeric:tabular-nums}.td-sub{color:var(--muted);font-size:13px}
+.td-gauge{position:relative;height:12px;border-radius:6px;background:var(--color-surface-muted);margin:16px 0 4px}.td-gauge .seg{position:absolute;top:0;height:100%;opacity:.3}.td-gauge .fill{position:absolute;top:3px;height:6px;border-radius:3px}.td-gauge .mk{position:absolute;top:-5px;width:2px;height:22px;background:var(--text)}.td-scale{position:relative;height:16px;font-size:11px;color:var(--muted)}.td-scale span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.td-build{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:10px}.td-build div{background:var(--color-surface-muted);border-radius:6px;padding:8px;min-width:0}.td-build b{display:block;font-variant-numeric:tabular-nums}.td-build span{display:block;font-size:11.5px;color:var(--muted);line-height:1.25}
+.td-line{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:5px 0;border-bottom:1px solid var(--line2)}.td-line:last-child{border-bottom:0}.td-line b{font-variant-numeric:tabular-nums}
+.td-pace{position:relative;height:10px;border-radius:5px;background:var(--color-surface-muted);margin:14px 0 4px}.td-pace .fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px}.td-pace .mk{position:absolute;top:-4px;width:2px;height:18px;background:var(--text)}
+.td-main{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(0,1fr);gap:12px;align-items:start}.td-side{display:grid;gap:12px;min-width:0}
+.td-ph{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;padding:14px 14px 0}.td-ph h3{margin:0}.td-ph span{color:var(--muted);font-size:12px}
+.td-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:12px 14px}.td-tabs button{background:transparent;border:1px solid var(--line2);color:var(--muted);border-radius:6px;padding:6px 10px;font-weight:750;font-size:12.5px;cursor:pointer}.td-tabs button.active{color:var(--text);background:var(--color-surface-raised);border-color:var(--color-border-strong)}
+.td-group{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:12px 14px 6px;border-top:1px solid var(--line2)}
+.td-row{display:grid;grid-template-columns:4px 70px minmax(0,1.4fr) minmax(0,1.3fr) 112px;gap:12px;align-items:center;width:100%;text-align:left;background:transparent;color:var(--text);border:0;border-top:1px solid var(--line2);padding:10px 14px 10px 0;cursor:pointer;font:inherit}.td-row:hover,.td-row.open{background:var(--color-surface-raised)}.td-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.td-row .stripe{align-self:stretch;border-radius:0 3px 3px 0;background:var(--color-info)}.td-row .stripe.now{background:var(--color-negative)}.td-row .stripe.plan{background:var(--color-attention)}
+.td-row .tk{font-weight:900;font-size:15px}.td-row .what b,.td-row .move b{display:block;font-size:13.5px}.td-row .what span,.td-row .move span{font-size:12.5px;color:var(--muted)}.td-row .val{text-align:right;font-variant-numeric:tabular-nums;font-weight:750}.td-row .val span{display:block;font-size:11px;color:var(--muted);font-weight:600}
+.td-more{color:var(--accent);font-weight:750}
+.dc{border:1px solid var(--color-border-strong);border-radius:8px;background:var(--color-bg);overflow:hidden}.td-inline{margin:0 14px 14px}
+.dc-head{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:baseline;padding:12px 14px;border-bottom:1px solid var(--line2)}.dc-head h4{margin:0;font-size:16px}.dc-head span{font-size:12.5px;color:var(--muted)}
+.dc-grid{display:grid;grid-template-columns:repeat(var(--cols,4),minmax(0,1fr))}.dc-opt{padding:12px 14px;border-right:1px solid var(--line2);min-width:0;display:flex;flex-direction:column;gap:5px}.dc-opt:last-child{border-right:0}.dc-opt.top{background:rgba(69,210,197,.07);box-shadow:inset 0 2px 0 var(--accent)}
+.dc-opt h5{margin:0;font-size:13.5px}.dc-opt h5 small{display:block;color:var(--muted);font-weight:650;font-size:12px;margin-top:2px}.dc-head-num{font-size:20px;font-weight:850;font-variant-numeric:tabular-nums;margin-top:4px}.dc-head-num small{display:block;font-size:11px;color:var(--muted);font-weight:600}
+.dc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:auto;padding-top:6px}.dc-chip{display:inline-flex;font-size:11px;font-weight:750;padding:3px 7px;border-radius:5px;border:1px solid var(--line2);color:var(--muted)}.dc-chip.ok{color:var(--color-positive);border-color:rgba(126,224,146,.45)}.dc-chip.fail{color:var(--color-negative);border-color:rgba(255,111,120,.45)}.dc-chip.near{color:var(--color-attention);border-color:rgba(246,194,91,.45)}
+.dc-verdict{padding:11px 14px;border-top:1px solid var(--line2);font-size:13px}.dc-verdict b{color:var(--accent)}.dc-verdict.neutral b{color:var(--text)}
+.dc-list{display:grid;gap:12px}.td-rules{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;color:var(--muted);font-size:13px}
+.td-svg{padding:6px 10px 10px}.td-svg svg{display:block;width:100%;height:auto}.td-svg text{font-size:10px;fill:var(--muted)}
+abbr.def{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
+@media(max-width:1160px){.td-hero{grid-template-columns:1fr 1fr}.td-hero>.panel:first-child{grid-column:1/-1}.td-main{grid-template-columns:1fr}.dc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dc-opt:nth-child(2n){border-right:0}.dc-opt{border-bottom:1px solid var(--line2)}}
+@media(max-width:760px){.td-hero{grid-template-columns:1fr}.td-row{grid-template-columns:4px 56px minmax(0,1fr) 90px}.td-row .stripe{grid-row:1/3}.td-row .tk,.td-row .what{grid-row:1}.td-row .val{grid-row:1;grid-column:4}.td-row .move{grid-column:3/5;grid-row:2}.dc-grid{grid-template-columns:1fr}.dc-opt{border-right:0}.td-build{grid-template-columns:1fr 1fr}}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
 @media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart,.chart-wrap{height:280px}}
 @media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.range-panel{align-items:flex-start;flex-direction:column}.range-panel .segmented{width:100%}.metric-value{font-size:22px}.chart,.chart-wrap{height:260px}}
@@ -136,6 +162,8 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
     </div>
   </section>
   <section id="dashboard" class="section active"></section>
+  <section id="today" class="section"></section>
+  <section id="decision_cards" class="section"></section>
   <section id="decision_lab" class="section"></section>
   <section id="assignment_quality" class="section"></section>
   <section id="monthly" class="section"></section>
@@ -171,16 +199,23 @@ const appState = {
   decisionLab: null,
   decisionLabLoading: false,
   decisionLabError: "",
+  todayGroup: "all",
+  todayOpen: null,
+  cardsGroup: "all",
+  decisionRulesSaved: null,
+  decisionRulesLoading: false,
   sort: {},
   renderTimer: null
 };
 const sections = [
-  ["dashboard","Dashboard"], ["decision_lab","Decision Lab"], ["assignment_quality","Assignment Quality Lab"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
+  ["dashboard","Dashboard"], ["today","Today"], ["decision_cards","Decision cards"], ["decision_lab","Decision Lab"], ["assignment_quality","Assignment Quality Lab"], ["performance","Performance"], ["monthly","Monthly"], ["tickers","Tickers"],
   ["settings","Settings"], ["diagnostics","Diagnostics"],
   ["methodology","Methodology"]
 ];
 const pageTitles = {
   dashboard: "Dashboard",
+  today: "Today",
+  decision_cards: "Decision cards",
   decision_lab: "Decision Lab",
   assignment_quality: "Assignment Quality Lab",
   performance: "Performance",
@@ -1028,7 +1063,7 @@ async function loadDecisionLab(){
   } finally {
     appState.decisionLabLoading = false;
     setUpdating(false);
-    if (appState.active === "decision_lab") render();
+    if (DECISION_SECTIONS.includes(appState.active)) render();
   }
 }
 function renderDecisionLab(){
@@ -1666,6 +1701,13 @@ function renderDiagnostics(){
   `;
 }
 function renderSettings(){
+  if (!appState.decisionRulesSaved && !appState.decisionRulesLoading) {
+    appState.decisionRulesLoading = true;
+    fetch("/api/settings/decision-rules", {credentials: "same-origin", headers: {"Accept": "application/json"}})
+      .then(response => response.ok ? response.json() : null)
+      .then(saved => { if (saved) { appState.decisionRulesSaved = saved; if (appState.active === "settings") render(); } })
+      .catch(() => {});
+  }
   const targetPct = fmtPctNumber(appState.targetReturn);
   const floorPct = fmtPctNumber(appState.targetFloor);
   $("settings").innerHTML = `
@@ -1693,6 +1735,8 @@ function renderSettings(){
         <div class="segmented" data-basis-control><button type="button" data-value="1" class="${appState.includeUnrealized ? "active" : ""}">With unrealized</button><button type="button" data-value="0" class="${!appState.includeUnrealized ? "active" : ""}">Realized only</button></div>
       </div>
     </div>
+    <div style="height:12px"></div>
+    ${decisionRulesPanel()}
   `;
 }
 function renderMethodology(){
@@ -1829,6 +1873,7 @@ function bindControls(){
       }
     }
   });
+  bindTodayControls();
   const optionFetch = $("fetchOptionData");
   if (optionFetch && !optionFetch.dataset.bound) {
     optionFetch.dataset.bound = "1";
@@ -1856,8 +1901,398 @@ function bindControls(){
     });
   }
 }
+const DECISION_SECTIONS = ["decision_lab", "today", "decision_cards"];
+const DEFAULT_DECISION_RULES = {annual_target_return: 0.20, put_delta_min: 0.15, put_delta_max: 0.25, dte_min: 20, dte_max: 45};
+const GLOSSARY = {
+  "RoAC": "Return on average capital: P&L divided by the average of put reserve plus share value.",
+  "Realized this cycle": "Completed-strategy P&L already recognized for options expiring in this cycle (realized cycle P&L).",
+  "Premium still open": "Net credit carried on open option chains expiring this cycle, after linked rolls and commissions (open strategy balance). It can be negative.",
+  "Stock P&L if ITM calls assign": "Assigned-stock P&L, capped at the call strike, for in-the-money covered calls expiring this cycle (ITM call stock P&L).",
+  "Loss if ITM puts assign": "Strike minus current price on in-the-money puts expiring this cycle (ITM put assignment P&L).",
+  "Put notional": "Strike x 100 x contracts for every open short put, whether or not it is in the money.",
+  "Cash if ITM puts assign": "Cash needed to take assignment of every put that is currently in the money.",
+  "Chain net credit": "The carried net credit of the open option chain, after every linked roll and commission.",
+  "Better or worse than keeping": "Scenario estimate of this option minus the scenario estimate of keeping the current position. Delta is used as a rough exercise weight; it is not a forecast."
+};
+function def(label){ const text = GLOSSARY[label]; return text ? `<abbr class="def" title="${safe(text)}">${safe(label)}</abbr>` : safe(label); }
+function decisionRules(){ return {...DEFAULT_DECISION_RULES, ...(decisionData().decision_rules || {})}; }
+function decisionReady(){
+  const decision = decisionData();
+  if (decision.deferred || (!appState.decisionLab && !decision.error)) {
+    if (!appState.decisionLabLoading && !appState.decisionLabError) setTimeout(loadDecisionLab, 0);
+    return false;
+  }
+  return true;
+}
+function decisionPending(id){
+  const target = $(id);
+  if (appState.decisionLabError) {
+    return `<div class="panel"><h3>Action queue unavailable</h3><p class="error">${safe(appState.decisionLabError)}</p><button class="secondary" type="button" data-retry-decision>Retry</button></div>`;
+  }
+  return `<div class="panel loading-panel" style="min-height:160px"><div><h3>Loading the action queue...</h3><p>Reading Decision Lab classifications and stored option quotes.</p></div></div>`;
+}
+function daysOld(value){
+  const d = parseDate(value);
+  if (!d) return null;
+  const asOf = parseDate(data.dashboard?.request?.as_of || data.generated_at) || new Date();
+  return Math.round((asOf - d) / 86400000);
+}
+function freshnessChip(){
+  const meta = data.source_metadata || {};
+  const fresh = data.dashboard?.data_freshness || {};
+  const coverage = fresh.price_coverage || {};
+  const issues = data.dashboard?.issue_summary?.total_count || 0;
+  const toDate = meta.ibkr_import_to_date;
+  const status = (decisionData().option_market_data || {}).status || {};
+  const quoteDate = status.quote_date || status.latest_quote_date || (status.last_fetched_at ? String(status.last_fetched_at).slice(0,10) : null);
+  const missing = coverage.missing_count ?? Math.max((coverage.required_count || 0) - (coverage.priced_count || 0), 0);
+  const age = daysOld(toDate);
+  let tone = "";
+  if (issues > 0 || missing > 0) tone = "bad";
+  else if (age === null || age > 3) tone = "warn";
+  const parts = [
+    `IBKR statement to <b>${safe(toDate ? fmtDate(toDate) : "unknown")}</b>`,
+    `prices <b>${safe(fmtLocalTime(fresh.prices_updated_at))}</b>${missing ? ` (${safe(missing)} missing)` : ""}`,
+    `quotes <b>${safe(quoteDate ? fmtDate(quoteDate) : "not fetched")}</b>`
+  ];
+  const extra = issues ? `<span class="td-chip"><span class="td-dot bad"></span>${safe(issues)} data issue${issues === 1 ? "" : "s"}, see Diagnostics</span>` : "";
+  return `<div class="td-fresh"><span class="td-chip"><span class="td-dot ${tone}"></span><span>${parts.join(" · ")}</span></span>${extra}</div>`;
+}
+function bandColorVar(v, floor, target){
+  if (numeric(v) === null) return "var(--muted)";
+  if (v < 0) return "var(--color-negative)";
+  if (floor !== null && v < floor) return "var(--color-attention)";
+  if (target !== null && v <= target) return "var(--color-positive)";
+  return "var(--color-info)";
+}
+function cycleHero(){
+  const c = decisionActiveCycle();
+  if (!c || !Object.keys(c).length) return `<div class="panel td-kpi"><div class="metric-label">Active cycle</div><p class="muted">No open options in an active expiry cycle.</p></div>`;
+  const target = numeric(c.target_return ?? targetReturn());
+  const floor = numeric(c.target_floor ?? targetFloor());
+  const proj = numeric(c.projected_return_roac);
+  const lo = Math.min(-0.005, proj ?? 0);
+  const hi = Math.max((target ?? 0.02) * 1.3, (proj ?? 0) + 0.002);
+  const x = v => `${((v - lo) / (hi - lo) * 100).toFixed(2)}%`;
+  const seg = (a, b, color) => b > a ? `<div class="seg" style="left:${x(a)};width:calc(${x(b)} - ${x(a)});background:${color}"></div>` : "";
+  const color = bandColorVar(proj, floor, target);
+  const gauge = `<div class="td-gauge" role="img" aria-label="Projected RoAC ${safe(fmtPct(proj))} against the ${safe(fmtPct(floor))} to ${safe(fmtPct(target))} band">
+    ${seg(lo, 0, "var(--color-negative)")}${floor !== null ? seg(0, floor, "var(--color-attention)") : ""}${floor !== null && target !== null ? seg(floor, target, "var(--color-positive)") : ""}${target !== null ? seg(target, hi, "var(--color-info)") : ""}
+    ${proj !== null ? `<div class="fill" style="left:${x(Math.min(0, proj))};width:calc(${x(Math.max(0, proj))} - ${x(Math.min(0, proj))});background:${color}"></div><div class="mk" style="left:${x(proj)}"></div>` : ""}
+  </div>
+  <div class="td-scale"><span style="left:${x(0)}">0</span>${floor !== null ? `<span style="left:${x(floor)}">${safe(fmtPct(floor))}</span>` : ""}${target !== null ? `<span style="left:${x(target)}">${safe(fmtPct(target))}</span>` : ""}</div>`;
+  const remaining = numeric(c.remaining_to_target);
+  const status = proj === null ? "" : proj < 0 ? "below zero" : floor !== null && proj < floor ? "below your band" : target !== null && proj <= target ? "inside your band" : "above your target";
+  const tile = (label, value) => `<div><b class="mono ${numeric(value) < 0 ? "neg" : ""}">${fmtMoney(value)}</b><span>${def(label)}</span></div>`;
+  return `<div class="panel td-kpi">
+    <div class="metric-label">${safe(c.cycle_label || "Active cycle")} · expiries ${safe((c.expiry_dates || []).map(fmtDate).join(", ") || "n/a")} · ${safe(c.min_dte ?? "n/a")}-${safe(c.max_dte ?? "n/a")} days left</div>
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap"><div class="td-big" style="color:${color}">${safe(fmtPct(proj))}</div>
+    <div class="td-sub">projected ${def("RoAC")} · ${safe(status)}${remaining !== null && remaining > 0 ? ` · <span class="warn-text mono">${fmtMoney(remaining)}</span> short of target` : ""}</div></div>
+    ${gauge}
+    <div class="td-build">${tile("Realized this cycle", c.realized_cycle_pnl)}${tile("Premium still open", c.open_premium_collected)}${tile("Stock P&L if ITM calls assign", c.itm_call_stock_pnl)}${tile("Loss if ITM puts assign", c.itm_put_unrealized_loss)}</div>
+  </div>`;
+}
+function ytdPanel(){
+  const rules = decisionRules();
+  const asOf = parseDate(data.dashboard?.request?.as_of || data.generated_at) || new Date();
+  const year = asOf.getUTCFullYear();
+  const row = (yearlyRows() || []).find(r => Number(r.year) === year) || {};
+  const roac = numeric(row.roac_year);
+  const start = Date.UTC(year, 0, 1), end = Date.UTC(year + 1, 0, 1);
+  const pace = numeric(rules.annual_target_return) === null ? null : rules.annual_target_return * ((asOf - start) / (end - start));
+  const gap = roac !== null && pace !== null ? roac - pace : null;
+  const scaleMax = Math.max(rules.annual_target_return || 0.2, roac || 0, 0.01);
+  const w = v => `${Math.max(0, Math.min(100, v / scaleMax * 100)).toFixed(2)}%`;
+  const snap = currentSnapshot();
+  return `<div class="panel td-kpi">
+    <div class="metric-label">${safe(year)} to date · ${def("RoAC")}</div>
+    <div class="td-big">${safe(fmtPct(roac))}</div>
+    <div class="td-sub">${safe(fmtPct(rules.annual_target_return))} a year means ${safe(fmtPct(pace))} by today${gap !== null ? ` · <span class="${gap < 0 ? "warn-text" : "pos"}">${safe((Math.abs(gap) * 100).toFixed(1))} pts ${gap < 0 ? "behind" : "ahead"}</span>` : ""}</div>
+    ${roac !== null ? `<div class="td-pace" role="img" aria-label="Year-to-date RoAC against pace"><div class="fill" style="width:${w(Math.max(roac, 0))};background:${gap !== null && gap < 0 ? "var(--color-attention)" : "var(--color-positive)"}"></div>${pace !== null ? `<div class="mk" style="left:${w(pace)}"></div>` : ""}</div>` : `<p class="muted">${safe(row.suppression_reason ? "RoAC is suppressed while capital history is incomplete." : "No RoAC for this year yet.")}</p>`}
+    <div class="td-sub" style="margin-top:8px">YTD P&L <span class="mono">${fmtMoney(snap.ytd_total_pnl)}</span>${snap.unrealized_adjusted ? `, of which unrealized <span class="mono">${fmtMoney(snap.current_unrealized_pnl)}</span>` : " (realized only)"}</div>
+  </div>`;
+}
+function capitalPanel(){
+  const c = decisionActiveCycle() || {};
+  const snap = currentSnapshot();
+  const inventory = data.positions?.inventory || [];
+  const atCost = inventory.reduce((sum, r) => sum + (numeric(r.shares) || 0) * (numeric(r.cost_per_share) || 0), 0);
+  const cash = numeric(snap.available_cash);
+  return `<div class="panel td-kpi">
+    <div class="metric-label">Capital at work</div>
+    <div class="td-big mono" style="font-size:28px">${fmtCompactMoney(c.portfolio_put_exposure)}</div>
+    <div class="td-sub" style="margin-bottom:8px">${def("Put notional")}</div>
+    <div class="td-line"><span>In the money</span><b class="${(numeric(c.portfolio_itm_put_exposure) || 0) > 0 ? "neg" : ""}">${fmtCompactMoney(c.portfolio_itm_put_exposure)}</b></div>
+    <div class="td-line"><span>${def("Cash if ITM puts assign")}</span><b>${fmtCompactMoney(snap.itm_put_cash_required ?? c.portfolio_itm_put_exposure)}</b></div>
+    <div class="td-line"><span>Assigned shares at cost</span><b>${fmtCompactMoney(atCost)}</b></div>
+    <div class="td-line"><span>Available cash</span><b class="${cash === null ? "muted" : ""}">${cash === null ? "not imported" : fmtCompactMoney(cash)}</b></div>
+  </div>`;
+}
+function decisionCardFor(ticker){
+  return (decisionData().decision_cards || []).find(card => String(card.ticker) === String(ticker));
+}
+function fmtCardValue(value, format){
+  if (format === "text") return safe(value);
+  if (numeric(value) === null) return "n/a";
+  if (format === "money") return fmtMoney(value);
+  if (format === "price") return fmtMoney(value, 2);
+  if (format === "delta") return Math.abs(Number(value)).toFixed(2);
+  if (format === "days") return `${fmtNum(value)}`;
+  if (format === "shares") return `${fmtNum(value)} sh`;
+  return safe(value);
+}
+function decisionCardHtml(card, inline=false){
+  if (!card) return "";
+  const options = card.options || [];
+  const cols = Math.max(2, Math.min(4, options.length));
+  const quote = card.quote_date ? ` · quotes ${safe(fmtDate(card.quote_date))}` : "";
+  const grid = options.length ? `<div class="dc-grid" style="--cols:${cols}">${options.map(opt => {
+    const head = opt.headline || {};
+    const tone = opt.kind === "close" || opt.kind === "proposal" ? cls(head.value) : "";
+    const metrics = (opt.metrics || []).map(m => `<div class="td-line"><span>${def(m.label)}</span><b class="mono">${fmtCardValue(m.value, m.format)}</b></div>`).join("");
+    const chips = (opt.checks || []).map(ch => `<span class="dc-chip ${ch.status === "ok" ? "ok" : ch.status === "fail" ? "fail" : ch.status === "near" ? "near" : ""}">${ch.status === "ok" ? "✓ " : ch.status === "fail" ? "✗ " : ch.status === "near" ? "≈ " : ""}${safe(ch.text)}</span>`).join("");
+    return `<div class="dc-opt ${opt.top ? "top" : ""}" title="${safe(opt.reason || "")}">
+      <h5>${safe(opt.title)}${opt.top ? ` <span class="dc-chip ok">top ranked</span>` : ""}<small>${safe(opt.contract || "")}</small></h5>
+      <div class="dc-head-num ${tone}">${fmtCardValue(head.value, head.format)}<small>${def(head.label === "chain net credit so far" ? "Chain net credit" : head.label)}</small></div>
+      ${metrics}
+      ${chips ? `<div class="dc-chips">${chips}</div>` : ""}
+    </div>`;
+  }).join("")}</div>` : "";
+  const verdict = card.verdict || {};
+  return `<div class="dc ${inline ? "td-inline" : ""}">
+    <div class="dc-head"><h4>${safe(card.ticker)} · ${safe(card.category)}</h4><span>${safe(card.objective || "")}${numeric(card.current_price) !== null ? ` · stock ${fmtMoney(card.current_price, 2)}` : ""}${quote}</span></div>
+    ${grid}
+    <div class="dc-verdict ${verdict.tone === "positive" ? "" : "neutral"}"><b>${verdict.tone === "positive" ? "Suggestion" : "Note"}:</b> ${safe(verdict.text || "No comparison available.")}</div>
+  </div>`;
+}
+function queueValue(row){
+  const value = numeric(row.signal_value);
+  return `<div class="val"><span class="mono ${value !== null && value < 0 ? "neg" : ""}">${fmtMoney(value)}</span><span>${safe(row.signal_label || "")}</span></div>`;
+}
+function queueRowHtml(row){
+  const open = appState.todayOpen === row.ticker;
+  const when = row.expiry ? `${fmtDate(row.expiry)}${numeric(row.dte) !== null ? ` · ${fmtNum(row.dte)} days` : ""}` : "no expiry";
+  const button = `<button type="button" class="td-row ${open ? "open" : ""}" data-today-row="${safe(row.ticker)}" aria-expanded="${open ? "true" : "false"}">
+    <span class="stripe ${safe(row.group)}"></span>
+    <span class="tk">${safe(row.ticker)}</span>
+    <span class="what"><b>${safe(row.category)}</b><span>${safe(row.reason || "")} · ${safe(when)}</span></span>
+    <span class="move"><b>${safe(row.recommendation || "")}</b><span>${row.has_card ? `<span class="td-more">${open ? "hide options ▴" : "compare options ▾"}</span>` : "no priced options yet"}</span></span>
+    ${queueValue(row)}
+  </button>`;
+  return open ? button + decisionCardHtml(decisionCardFor(row.ticker), true) : button;
+}
+function noActionCount(queue){
+  const active = new Set(queue.map(r => String(r.ticker)));
+  return (data.tickers?.items || []).filter(r => ((numeric(r.open_option_count) || 0) > 0 || (numeric(r.inventory_share_count) || 0) > 0) && !active.has(String(r.ticker))).length;
+}
+function queuePanel(){
+  const queue = decisionData().action_queue || [];
+  const filter = appState.todayGroup || "all";
+  const counts = {now: 0, plan: 0, monitor: 0};
+  queue.forEach(r => { counts[r.group] = (counts[r.group] || 0) + 1; });
+  const tabs = [["all", "All", queue.length], ["now", "Act now", counts.now], ["plan", "Plan this week", counts.plan], ["monitor", "Monitor", counts.monitor]];
+  const labels = {now: "Act now", plan: "Plan this week", monitor: "Monitor"};
+  let body = "";
+  ["now", "plan", "monitor"].forEach(group => {
+    if (filter !== "all" && filter !== group) return;
+    const rows = queue.filter(r => r.group === group);
+    if (!rows.length) return;
+    body += `<div class="td-group">${safe(labels[group])}</div>${rows.map(queueRowHtml).join("")}`;
+  });
+  if (!body) body = `<div class="empty">No tickers in this group.</div>`;
+  const idle = noActionCount(queue);
+  return `<div class="panel" style="padding:0">
+    <div class="td-ph"><h3>Action queue</h3><span>${safe(queue.length)} need a look${idle ? ` · ${safe(idle)} with no action` : ""} · click a row to compare options</span></div>
+    <div class="td-tabs">${tabs.map(([key, label, n]) => `<button type="button" data-today-group="${key}" class="${filter === key ? "active" : ""}">${safe(label)} ${safe(n)}</button>`).join("")}</div>
+    ${body}
+  </div>`;
+}
+function riskMapSvg(){
+  const rows = (data.positions?.open_option_shorts || data.open_shorts?.items || []).filter(r => numeric(r.moneyness) !== null && numeric(r.days_to_expiration) !== null);
+  if (!rows.length) return `<div class="empty">No open shorts with prices.</div>`;
+  const W = 360, H = 240, p = {l: 36, r: 12, t: 10, b: 40};
+  const maxD = Math.max(50, ...rows.map(r => Number(r.days_to_expiration)));
+  const ys = rows.map(r => Number(r.moneyness) * 100);
+  const yTop = Math.max(6, Math.ceil(Math.max(...ys) + 1)), yBot = Math.min(-15, Math.floor(Math.min(...ys) - 1));
+  const x = d => p.l + (Math.min(d, maxD) / maxD) * (W - p.l - p.r);
+  const y = v => p.t + ((yTop - v) / (yTop - yBot)) * (H - p.t - p.b);
+  let s = `<rect x="${p.l}" y="${y(yTop)}" width="${W - p.l - p.r}" height="${y(0) - y(yTop)}" fill="var(--color-negative)" opacity=".1"/>`;
+  s += `<rect x="${p.l}" y="${y(0)}" width="${W - p.l - p.r}" height="${y(-5) - y(0)}" fill="var(--color-attention)" opacity=".08"/>`;
+  const step = (yTop - yBot) > 30 ? 10 : 5;
+  for (let v = Math.ceil(yBot / step) * step; v <= yTop; v += step) {
+    s += `<line x1="${p.l}" x2="${W - p.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line2)" stroke-width="${v === 0 ? 1.2 : .6}"/><text x="${p.l - 5}" y="${y(v) + 3}" text-anchor="end">${v > 0 ? "+" : ""}${v}%</text>`;
+  }
+  const dStep = maxD > 60 ? 20 : 10;
+  for (let d = 0; d <= maxD; d += dStep) s += `<text x="${x(d)}" y="${H - p.b + 14}" text-anchor="middle">${d}d</text>`;
+  s += `<text x="${W - p.r}" y="${y(yTop) + 11}" text-anchor="end" style="fill:var(--color-negative)">in the money</text>`;
+  const placed = [];
+  rows.forEach(r => {
+    const v = Number(r.moneyness) * 100, d = Number(r.days_to_expiration);
+    const color = v >= 0 ? "var(--color-negative)" : v >= -5 ? "var(--color-attention)" : "var(--muted)";
+    const isCall = String(r.option_type || "").toLowerCase().startsWith("call");
+    const title = `<title>${safe(r.ticker)} ${safe(r.option_type)} ${safe(r.strike)} · ${safe(fmtDate(r.expiration))} · ${(v >= 0 ? v.toFixed(1) + "% ITM" : Math.abs(v).toFixed(1) + "% OTM")}</title>`;
+    s += isCall
+      ? `<rect x="${x(d) - 4.5}" y="${y(v) - 4.5}" width="9" height="9" fill="none" stroke="${color}" stroke-width="2">${title}</rect>`
+      : `<circle cx="${x(d)}" cy="${y(v)}" r="5" fill="${color}" stroke="var(--color-bg)" stroke-width="1.5">${title}</circle>`;
+    if (v > -5) {
+      let ly = y(v) + 3;
+      while (placed.some(([px, py]) => Math.abs(px - x(d)) < 40 && Math.abs(py - ly) < 11)) ly += 11;
+      placed.push([x(d), ly]);
+      s += `<text x="${x(d) + 8}" y="${ly}" style="fill:var(--text)">${safe(r.ticker)}</text>`;
+    }
+  });
+  s += `<circle cx="${p.l + 4}" cy="${H - 9}" r="4" fill="var(--muted)"/><text x="${p.l + 12}" y="${H - 6}">put</text><rect x="${p.l + 40}" y="${H - 13}" width="8" height="8" fill="none" stroke="var(--muted)" stroke-width="1.6"/><text x="${p.l + 52}" y="${H - 6}">call</text><text x="${W - p.r}" y="${H - 6}" text-anchor="end">days to expiry vs % to strike</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Open shorts by days to expiry and distance to strike">${s}</svg>`;
+}
+function ladderSvg(){
+  const puts = (data.positions?.open_option_shorts || data.open_shorts?.items || []).filter(r => String(r.option_type || "").toLowerCase().startsWith("put"));
+  const byExpiry = new Map();
+  puts.forEach(r => {
+    const key = fmtDate(r.expiration);
+    const g = byExpiry.get(key) || {total: 0, itm: 0};
+    const notional = numeric(r.notional_at_strike) ?? (Math.abs(numeric(r.quantity) || 0) * (numeric(r.strike) || 0) * 100);
+    g.total += notional;
+    if ((numeric(r.moneyness) || -1) >= 0) g.itm += notional;
+    byExpiry.set(key, g);
+  });
+  const rows = [...byExpiry.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  if (!rows.length) return `<div class="empty">No open puts.</div>`;
+  const W = 360, rowH = 34, p = {l: 70, r: 64};
+  const max = Math.max(...rows.map(([, g]) => g.total), 1);
+  const x = v => p.l + (v / max) * (W - p.l - p.r);
+  let s = "";
+  rows.forEach(([label, g], i) => {
+    const yy = 6 + i * rowH;
+    s += `<text x="0" y="${yy + 13}">${safe(dateLabel(label, "day-month"))}</text>`;
+    s += `<rect x="${p.l}" y="${yy + 2}" width="${Math.max(2, x(g.total) - p.l)}" height="15" rx="3" fill="var(--color-surface-muted)" stroke="var(--line2)"/>`;
+    if (g.itm > 0) s += `<rect x="${p.l}" y="${yy + 2}" width="${Math.max(2, x(g.itm) - p.l)}" height="15" rx="3" fill="var(--color-negative)" opacity=".85"/><text x="${p.l}" y="${yy + 30}" style="fill:var(--color-negative)">${safe(fmtCompactMoney(g.itm))} ITM</text>`;
+    s += `<text x="${x(g.total) + 6}" y="${yy + 14}" style="fill:var(--text)">${safe(fmtCompactMoney(g.total))}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${rows.length * rowH + 8}" role="img" aria-label="Put notional by expiry">${s}</svg>`;
+}
+function renderToday(){
+  const ready = decisionReady();
+  $("today").innerHTML = `
+    ${freshnessChip()}
+    <div class="td-hero">${cycleHero()}${ytdPanel()}${capitalPanel()}</div>
+    <div class="td-main">
+      <div>${ready ? queuePanel() : decisionPending("today")}</div>
+      <div class="td-side">
+        <div class="panel" style="padding:0"><div class="td-ph"><h3>Risk map</h3><span>open shorts</span></div><div class="td-svg">${riskMapSvg()}</div></div>
+        <div class="panel" style="padding:0"><div class="td-ph"><h3>Put notional by expiry</h3><span>in the money in red</span></div><div class="td-svg">${ladderSvg()}</div></div>
+      </div>
+    </div>
+    <p class="footnote">New layout preview. It reads the same data as Dashboard and Decision Lab and changes no calculations. Hover a dotted label for its definition.</p>`;
+}
+function renderDecisionCards(){
+  const ready = decisionReady();
+  const rules = decisionRules();
+  const status = (decisionData().option_market_data || {}).status || {};
+  const head = `${freshnessChip()}
+    <div class="td-rules"><span>Rule checks: put delta ${safe(fmtDec(rules.put_delta_min, 2))}-${safe(fmtDec(rules.put_delta_max, 2))} · ${safe(fmtNum(rules.dte_min))}-${safe(fmtNum(rules.dte_max))} DTE · spread within 35% of mid.</span><a href="?section=settings" data-goto-section="settings">Edit in Settings</a>
+    <button class="action-btn" type="button" data-fetch-options>Fetch option data</button><span class="mono">${safe(status.provider ? optionDataStatusText() : "")}</span></div>`;
+  if (!ready) { $("decision_cards").innerHTML = head + decisionPending("decision_cards"); return; }
+  const cards = decisionData().decision_cards || [];
+  const filter = appState.cardsGroup || "all";
+  const shown = cards.filter(c => filter === "all" || c.group === filter);
+  const counts = {now: 0, plan: 0, monitor: 0};
+  cards.forEach(c => { counts[c.group] = (counts[c.group] || 0) + 1; });
+  const tabs = [["all", "All", cards.length], ["now", "Act now", counts.now], ["plan", "Plan this week", counts.plan], ["monitor", "Monitor", counts.monitor]];
+  const without = (decisionData().action_queue || []).filter(r => !r.has_card);
+  $("decision_cards").innerHTML = `${head}
+    <div class="td-tabs" style="padding:0 0 12px">${tabs.map(([key, label, n]) => `<button type="button" data-cards-group="${key}" class="${filter === key ? "active" : ""}">${safe(label)} ${safe(n)}</button>`).join("")}</div>
+    <div class="dc-list">${shown.length ? shown.map(card => decisionCardHtml(card)).join("") : `<div class="panel empty">No decision cards in this group.</div>`}</div>
+    ${without.length ? `<p class="footnote">No option comparison for ${without.map(r => `${safe(r.ticker)} (${safe(r.category)})`).join(", ")}: the Decision Lab does not price options for these situations.</p>` : ""}
+    <p class="footnote">Keep and Close come from the current position; alternatives are the Decision Lab's top two scored candidates. Scenario values use delta as a rough exercise weight and are not forecasts.</p>`;
+}
+async function fetchOptionDataFrom(button){
+  button.disabled = true;
+  button.textContent = "Fetching...";
+  setUpdating(true, "Fetching option data...");
+  try {
+    const response = await fetch("/api/decision-lab/options/refresh" + window.location.search, {method: "POST", credentials: "same-origin", headers: {"Accept": "application/json"}});
+    const refreshed = await readDecisionLabResponse(response);
+    data.decision_lab = refreshed;
+    appState.decisionLab = refreshed;
+    render();
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = "Fetch option data";
+    appState.decisionLabError = "";
+    alert(err && err.message || err);
+  } finally {
+    setUpdating(false);
+  }
+}
+function bindTodayControls(){
+  const scope = document.querySelector(".section.active") || document;
+  scope.querySelectorAll("[data-today-row]").forEach(btn => btn.addEventListener("click", () => {
+    appState.todayOpen = appState.todayOpen === btn.dataset.todayRow ? null : btn.dataset.todayRow;
+    render();
+  }));
+  scope.querySelectorAll("[data-today-group]").forEach(btn => btn.addEventListener("click", () => { appState.todayGroup = btn.dataset.todayGroup; render(); }));
+  scope.querySelectorAll("[data-cards-group]").forEach(btn => btn.addEventListener("click", () => { appState.cardsGroup = btn.dataset.cardsGroup; render(); }));
+  scope.querySelectorAll("[data-retry-decision]").forEach(btn => btn.addEventListener("click", () => { appState.decisionLabError = ""; loadDecisionLab(); }));
+  scope.querySelectorAll("[data-fetch-options]").forEach(btn => btn.addEventListener("click", () => fetchOptionDataFrom(btn)));
+  scope.querySelectorAll("[data-goto-section]").forEach(link => link.addEventListener("click", (e) => {
+    e.preventDefault();
+    appState.active = link.dataset.gotoSection;
+    updateUrlState();
+    render();
+    window.scrollTo({top: 0, behavior: "instant"});
+  }));
+  const rulesForm = $("decisionRulesForm");
+  if (rulesForm && !rulesForm.dataset.bound) {
+    rulesForm.dataset.bound = "1";
+    rulesForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = new FormData(rulesForm);
+      const body = {
+        annual_target_return: Number(form.get("annual_target_pct")) / 100,
+        put_delta_min: Number(form.get("put_delta_min")),
+        put_delta_max: Number(form.get("put_delta_max")),
+        dte_min: Number(form.get("dte_min")),
+        dte_max: Number(form.get("dte_max"))
+      };
+      const button = rulesForm.querySelector("button[type='submit']");
+      if (button) { button.disabled = true; button.textContent = "Saving..."; }
+      try {
+        const response = await fetch("/api/settings/decision-rules", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json", "Accept": "application/json"}, body: JSON.stringify(body)});
+        const saved = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(saved.error || `HTTP ${response.status}`);
+        appState.decisionRulesSaved = saved;
+        appState.decisionLab = null;
+        data.decision_lab = {deferred: true};
+        render();
+      } catch (err) {
+        alert(`Could not save decision rules: ${(err && err.message) || err}`);
+      } finally {
+        if (button) { button.disabled = false; button.textContent = "Apply"; }
+      }
+    });
+  }
+}
+function decisionRulesPanel(){
+  const rules = {...decisionRules(), ...(appState.decisionRulesSaved || {})};
+  const input = (name, label, value, step, min, max) => `<label><span class="control-label">${safe(label)}</span><input name="${name}" id="rule-${name}" type="number" min="${min}" max="${max}" step="${step}" value="${safe(value)}" style="min-width:110px"></label>`;
+  return `<div class="panel">
+    <h3>Decision rules</h3>
+    <p class="muted">Used by the Today and Decision cards tabs to check each option against your entry rules, and for the yearly pace. They do not filter candidates or change any calculation.</p>
+    <form id="decisionRulesForm" class="toolbar" style="align-items:end">
+      ${input("annual_target_pct", "Annual target %", fmtPctNumber(rules.annual_target_return), "0.5", 0, 100)}
+      ${input("put_delta_min", "Put delta min", rules.put_delta_min, "0.01", 0, 1)}
+      ${input("put_delta_max", "Put delta max", rules.put_delta_max, "0.01", 0, 1)}
+      ${input("dte_min", "DTE min", rules.dte_min, "1", 0, 365)}
+      ${input("dte_max", "DTE max", rules.dte_max, "1", 0, 365)}
+      <button class="primary" type="submit">Apply</button>
+    </form>
+  </div>`;
+}
+
 const sectionRenderers = {
   dashboard: renderDashboard,
+  today: renderToday,
+  decision_cards: renderDecisionCards,
   decision_lab: renderDecisionLab,
   assignment_quality: renderAssignmentQuality,
   monthly: renderMonthly,
@@ -1922,7 +2357,8 @@ function renderSection(id, fn){
   }
 }
 function initNav(){
-  $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}">${safe(label)}</button>`).join("");
+  const newSections = new Set(["today","decision_cards"]);
+  $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}">${safe(label)}${newSections.has(id) ? `<span class="new-tag">NEW</span>` : ""}</button>`).join("");
   [...$("nav").children].forEach(btn => btn.addEventListener("click", () => {
     appState.active = btn.dataset.section;
     updateUrlState();
