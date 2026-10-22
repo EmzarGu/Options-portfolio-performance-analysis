@@ -37,6 +37,7 @@ Refactor and gaps reviewed: 2026-09-19. Earlier structural audit: 2026-06-13.
 | Web dashboard routes, auth, lazy loads, settings, monthly UI shape | `tests/test_web_dashboard.py` |
 | Shared web/mobile runtime, financial payload parity, prototype integration and table records | `tests/test_shared_dashboard_runtime.py` |
 | Decision Lab analytics and candidate behavior | `tests/test_decision_lab.py` |
+| Today and Decision cards view model, decision rules setting and routes | `tests/test_decision_cards.py` |
 | Option-market provider/store/validation/history path | `tests/test_option_market_validation.py` |
 | Data source caching and price/dividend providers | `tests/test_data_sources.py`, `tests/test_price_history_store.py`, `tests/test_dividend_history_store.py` |
 | Firestore snapshot stores | `tests/test_pipeline_snapshot_store.py` |

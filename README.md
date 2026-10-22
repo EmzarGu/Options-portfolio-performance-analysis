@@ -92,7 +92,7 @@ read and rejection of the retired key. Keep the previous version available for
 rollback until verification passes; never put key values in Git or build logs.
 
 After release, check authenticated web/mobile payloads, both Decision Lab views
-(roll alternatives and near-miss notes),
+(roll alternatives and near-miss notes), the Today and Decision cards tabs,
 target image digests, and import-job health. Use saved revisions and immutable
 image digests for manual rollback; preserve the last known-good images in
 Artifact Registry. Build logs contain the source commit and final image digest.

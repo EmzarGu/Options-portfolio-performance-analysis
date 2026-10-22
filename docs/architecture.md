@@ -24,6 +24,7 @@ Implementation map checked: 2026-09-19, after the functionality-preserving refac
 | Decision Lab Market Data selection plan | `portfolio_backend/option_market/marketdata_local.py` (`plan_requests`), `portfolio_backend/option_market/marketdata_production.py` |
 | Provider adapter, normalization, storage and option-data loading | `portfolio_backend/option_market/` |
 | Shared base snapshots / derived JSON payload storage | `portfolio_backend/pipeline_snapshot_store.py`, `portfolio_backend/derived_payload_cache.py` |
+| Today / Decision cards view model (urgency groups, option comparison, rule checks) | `portfolio_backend/decision_cards.py`, rules in `portfolio_backend/app_settings.py` |
 | Web rendering | `portfolio_backend/web_dashboard_templates.py`, `portfolio_backend/decision_lab_templates.py` |
 
 Web payload assembly and mobile routes call `context_runtime.get_context` and
