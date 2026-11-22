@@ -70,6 +70,13 @@ from the locked runtime layer, runs the full regression suite and focused lint,
 then independently checks the production image. Production contains neither
 Streamlit nor pytest and runs as UID 10001. A failing stage prevents deployment.
 
+The release step runs in a fixed version of Google's `cloud-sdk` image
+(`590.0.0-slim`). The floating `slim` tag stopped providing `python3` from
+592.0.0 on, which made the release step fail on 2026-11-22 before any deploy
+command ran. To move to a newer version, start the script with the Python
+bundled in the image (`/usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3`)
+and confirm its HTTPS checks work before relying on it.
+
 `scripts/deploy_verified.py` resolves the tested image digest, stages both web
 and mobile without moving traffic, checks health/login/access denial, verifies
 that production password login and documentation are unavailable, promotes
