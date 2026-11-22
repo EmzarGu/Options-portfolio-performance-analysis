@@ -38,6 +38,18 @@ The server separates HTTP handling from shared data services:
 This module separation was [deployed on 2026-09-19](production-deployment-2026-09-19.md).
 Routes, configuration, authentication rules and provider selection are unchanged.
 
+Layout rules (2026-11-22 display audit): the template must fit every tab at
+360 px without a sideways page scroll. Active-cycle rows stack below 760 px.
+Tables with up to four columns fit their container; wider tables keep every
+column, scroll sideways and pin the row label (the ticker column, else the
+first column; Decision Lab candidate tables pin action, strike and expiry).
+Below 1420 px the tabs take their own row and only that row stays pinned while
+the page scrolls; a fade and an arrow show when more tabs are off-screen. On
+phones tables scroll with the page and a copy of the column headings is held
+under the tab row. Sorted columns carry an arrow and `aria-sort`, and a redraw
+keeps keyboard focus and each table's scroll position. Errors are shown in the
+page, not in browser pop-ups.
+
 The dashboard uses the shared mobile snapshot semantics for unrealized P&L:
 open ITM put assignment gaps are included in option unrealized exposure, held
 stock unrealized includes only shares currently owned, and the Dashboard current

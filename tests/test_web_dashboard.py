@@ -213,9 +213,58 @@ def test_web_dashboard_uses_one_semantic_visual_system():
     assert "--band-above:var(--color-info)" in DASHBOARD_HTML
     assert 'Number(v) < 0 ? "risk-otm-text"' in DASHBOARD_HTML
     assert 'projected < 0 ? "bad" : projected < floor ? "warn" : projected <= target ? "good" : "blue"' in DASHBOARD_HTML
-    assert 'c.key === "ticker" ? "sticky-col"' in DASHBOARD_HTML
+    assert 'columns.find(c => c.key === "ticker") || columns[0]' in DASHBOARD_HTML
     assert ".pill.low,.pill.blue" in DASHBOARD_HTML
     assert "border-radius:var(--radius-control)" in DASHBOARD_HTML
+
+
+def test_web_dashboard_layout_fits_phones_and_keeps_tabs_reachable():
+    # Active-cycle rows stack on narrow screens instead of forcing the page wider than the phone.
+    assert ".water-row{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}" in DASHBOARD_HTML
+    assert ".water-row>.bar-track{grid-column:1/-1;grid-row:2}" in DASHBOARD_HTML
+    assert ".option-controls{flex-direction:column;align-items:stretch}" in DASHBOARD_HTML
+    # Tabs get their own row below 1420px, and a hint shows when more tabs are off-screen.
+    assert "@media(max-width:1419px){.topbar-inner{display:grid;" in DASHBOARD_HTML
+    assert "function fitTopbar()" in DASHBOARD_HTML
+    assert 'inner.classList.toggle("nav-more-right", nav.scrollLeft < max - 4)' in DASHBOARD_HTML
+    assert ".nav-more-right::after" in DASHBOARD_HTML
+    assert 'aria-current="page"' in DASHBOARD_HTML
+    # Phones let the page do the vertical scrolling and hold a copy of the column headings.
+    assert ".table-scroll{max-height:none!important}" in DASHBOARD_HTML
+    assert 'id="floatHead"' in DASHBOARD_HTML
+    assert "function updateFloatHead()" in DASHBOARD_HTML
+
+
+def test_web_dashboard_tables_keep_row_labels_and_show_sort_state():
+    # Small tables fit their container; wide tables keep their columns and pin the row label.
+    assert 'const fit = columns.length <= 4 ? "fit-table" : "";' in DASHBOARD_HTML
+    assert ".compact-table table,.fit-table table{min-width:100%;table-layout:auto}" in DASHBOARD_HTML
+    assert 'pin:["action","strike","expiry"]' in DASHBOARD_HTML
+    assert "function layoutPinnedColumns()" in DASHBOARD_HTML
+    assert "Math.random()" not in DASHBOARD_HTML
+    assert 'aria-sort="${descending ? "descending" : "ascending"}"' in DASHBOARD_HTML
+    assert 'class="sort-arrow"' in DASHBOARD_HTML
+    assert "th button{all:unset;cursor:pointer;display:block;width:100%;" in DASHBOARD_HTML
+    assert "function restoreViewState(state)" in DASHBOARD_HTML
+
+
+def test_web_dashboard_controls_are_labelled_and_errors_stay_in_page():
+    assert "alert(" not in DASHBOARD_HTML
+    assert 'id="optionFetchError" role="alert"' in DASHBOARD_HTML
+    assert 'id="targetSettingsError" role="alert"' in DASHBOARD_HTML
+    assert 'aria-label="Filter open option shorts by ticker, strike or expiry"' in DASHBOARD_HTML
+    assert 'const dots = control === "risk" ? {itm:"dot-bad", near:"dot-warn", clear:"dot-blue"} : {};' in DASHBOARD_HTML
+    assert 'aria-pressed="${o === selected}"' in DASHBOARD_HTML
+    assert 'class="chart-canvas" role="img" aria-label=' in DASHBOARD_HTML
+    assert "input::placeholder{color:var(--muted);opacity:1}" in DASHBOARD_HTML
+    assert "font-size:11px" not in DASHBOARD_HTML
+    assert "font-size:11.5px" not in DASHBOARD_HTML
+
+
+def test_login_page_keeps_a_side_margin_on_phones():
+    from portfolio_backend.web_dashboard_templates import BASE_CSS
+
+    assert "@media(max-width:560px){.login{margin:8vh 16px;padding:24px}" in BASE_CSS
 
 
 def test_web_dashboard_uses_shared_chart_palette():

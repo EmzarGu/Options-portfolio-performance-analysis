@@ -27,6 +27,8 @@ a{color:var(--accent)}button,input{font:inherit}.login{max-width:520px;margin:14
 .login button,.primary{background:var(--accent);color:#06201b;border:0;border-radius:var(--radius-control);padding:12px 16px;font-weight:750;cursor:pointer}.secondary{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:var(--radius-control);padding:10px 13px;cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--color-info);outline-offset:2px}button:disabled{opacity:.55;cursor:not-allowed}
 .signin-block{margin:18px 0}.google-login-button{display:inline-flex;align-items:center;gap:12px;background:#fff;color:#202124;border:1px solid #dadce0;border-radius:4px;padding:10px 16px;font-weight:700;text-decoration:none;box-shadow:0 1px 2px rgba(0,0,0,.18)}.google-login-icon{display:inline-grid;place-items:center;width:20px;height:20px;font-weight:900;color:#4285f4}.fallback-login{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.fallback-login summary{cursor:pointer;color:var(--muted);font-weight:750}.auth-user{color:var(--muted);font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .error{color:var(--bad);font-weight:700}.error-panel{border-color:#5d2a2d;background:#211113}
+input::placeholder{color:var(--muted);opacity:1}
+@media(max-width:560px){.login{margin:8vh 16px;padding:24px}.login h1{font-size:28px}}
 """
 
 GOOGLE_REDIRECT_CALLBACK_HTML = """<!doctype html>
@@ -78,12 +80,15 @@ DASHBOARD_HTML = """<!doctype html>
 __BASE_CSS__
 :root{--bg2:var(--color-bg);--panel3:var(--color-surface);--panel4:var(--color-surface-raised);--line2:var(--color-border);--blue:var(--color-info);--amber:var(--color-attention);--red:var(--color-negative);--green:var(--color-positive);--teal:var(--color-accent)}
 body{background:var(--color-bg);color:var(--text)}
-.topbar{position:sticky;top:0;z-index:40;background:rgba(8,12,15,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line2)}
-.topbar-inner{max-width:1420px;margin:0 auto;padding:9px 18px;display:flex;gap:16px;align-items:center;justify-content:space-between}
-.brand{font-size:18px;font-weight:850;letter-spacing:.01em;white-space:nowrap}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:650;margin-top:-2px}
-.nav{display:flex;gap:2px;flex:1;justify-content:flex-start;min-width:0;overflow:auto;scrollbar-width:none;border-left:1px solid var(--line2);padding-left:12px}.nav::-webkit-scrollbar{display:none}.nav button{background:transparent;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:9px 9px 7px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+.topbar{position:sticky;top:0;z-index:40;background:rgba(8,12,15,.94);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line2)}.topbar.tabs-pinned{background:var(--color-bg)}
+.topbar-inner{position:relative;max-width:1420px;margin:0 auto;padding:9px 18px;display:flex;gap:12px;align-items:center;justify-content:space-between}
+.brand{font-size:18px;font-weight:850;letter-spacing:.01em;white-space:nowrap}.brand small{display:block;color:var(--muted);font-size:12px;font-weight:650;margin-top:-2px}
+.nav{display:flex;gap:1px;flex:1;justify-content:flex-start;min-width:0;overflow:auto;scrollbar-width:none;border-left:1px solid var(--line2);padding-left:12px}.nav::-webkit-scrollbar{display:none}.nav button{background:transparent;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:9px 5px 7px;cursor:pointer;font-weight:750;white-space:nowrap}.nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+.topbar-inner.nav-own-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav-own-row .nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.nav-own-row .nav button{padding:8px}
+.nav-more-right .nav{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 52px),transparent calc(100% - 14px));mask-image:linear-gradient(to right,#000 calc(100% - 52px),transparent calc(100% - 14px))}.nav-more-left .nav{-webkit-mask-image:linear-gradient(to left,#000 calc(100% - 52px),transparent calc(100% - 14px));mask-image:linear-gradient(to left,#000 calc(100% - 52px),transparent calc(100% - 14px))}.nav-more-left.nav-more-right .nav{-webkit-mask-image:linear-gradient(to right,transparent 14px,#000 52px,#000 calc(100% - 52px),transparent calc(100% - 14px));mask-image:linear-gradient(to right,transparent 14px,#000 52px,#000 calc(100% - 52px),transparent calc(100% - 14px))}
+.nav-more-right::after,.nav-more-left::before{position:absolute;bottom:9px;height:38px;width:16px;display:grid;place-items:center;color:var(--text);font-size:20px;font-weight:800;line-height:1;pointer-events:none}.nav-more-right::after{content:"\\203A";right:4px}.nav-more-left::before{content:"\\2039";left:4px}
 .segmented button,.segmented a{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:750;white-space:nowrap}.segmented button.active,.segmented a.active{color:#061a18;background:var(--accent);border-color:transparent}
-.actions{display:flex;gap:7px;align-items:center;flex:0 0 auto;border-left:1px solid var(--line2);padding-left:12px}.actions form{margin:0}.actions .primary,.actions .secondary{padding:9px 11px}.actions button[disabled]{opacity:.72;cursor:wait}.auth-user{display:none;color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actions{display:flex;gap:6px;align-items:center;flex:0 0 auto;border-left:1px solid var(--line2);padding-left:12px}.actions form{margin:0}.actions .primary,.actions .secondary{padding:9px 9px}.actions button[disabled]{opacity:.72;cursor:wait}.auth-user{display:none;color:var(--muted);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shell{max-width:1420px;margin:0 auto;padding:22px 18px 64px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin:4px 0 16px}
 .hero h1{font-size:34px;line-height:1.05;margin:0 0 8px}.sub{color:var(--muted);font-size:14px}.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
 .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:var(--color-surface-raised);border-radius:var(--radius-control);padding:5px 9px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap}.badge.good{color:#c6f6ce;border-color:#2f6941}.badge.warn{color:#ffe3a3;border-color:#73551d}.badge.bad{color:#ffc0c5;border-color:#70303b}.badge.blue{color:#cfe0ff;border-color:#355189}
@@ -95,19 +100,21 @@ body{background:var(--color-bg);color:var(--text)}
 h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{display:none}.section.active{display:block}.section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin:20px 0 10px}.section-head h2{margin:0}.section-note{color:var(--muted);font-size:13px;margin-top:4px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}.toolbar input,.toolbar select,.section-head select{background:#0b1113;color:var(--text);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;min-height:38px}.toolbar input{min-width:260px}.toolbar .segmented button{padding:7px 10px}
 .table-card{background:var(--panel3);border:1px solid var(--line2);border-radius:var(--radius-panel);overflow:hidden}.table-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line2);background:var(--color-surface-raised)}.table-title strong{font-size:15px}.table-title span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-.table-scroll{overflow:auto;max-height:620px;scrollbar-color:var(--color-border-strong) var(--color-surface-muted)}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}tbody tr:hover td{background:rgba(122,167,255,.055)}th{position:sticky;top:0;z-index:3;background:#0f171a;color:#c4d0cc;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}th button{all:unset;cursor:pointer}th button:focus-visible{outline:2px solid var(--color-info);outline-offset:2px}td.num,th.num{text-align:right}th.sticky-col,td.sticky-col{position:sticky;left:0}th.sticky-col{z-index:5;background:#0f171a}td.sticky-col{z-index:1;background:var(--color-surface)}tbody tr:nth-child(even) td.sticky-col{background:#11181c}tbody tr:hover td.sticky-col{background:#172126}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.compact-table table{min-width:100%;table-layout:auto}.col-compact{width:1%;max-width:96px}.empty{padding:18px;color:var(--muted)}
-.risk-row-itm td{background:rgba(255,111,120,.10)}.risk-row-near td{background:rgba(246,194,91,.09)}.risk-row-clear td{background:rgba(122,167,255,.07)}.risk-row-itm td:first-child{box-shadow:inset 3px 0 0 var(--risk-itm)}.risk-row-near td:first-child{box-shadow:inset 3px 0 0 var(--risk-near)}.risk-row-clear td:first-child{box-shadow:inset 3px 0 0 var(--risk-otm)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--risk-itm)}.dot-warn{background:var(--risk-near)}.dot-good,.dot-blue{background:var(--risk-otm)}
-.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:var(--color-surface-raised);border:1px solid var(--line2);border-radius:var(--radius-panel);padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:11px;border-radius:var(--radius-control);padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.high,.pill.bad{background:#3a171d;color:#ffc4c9}.pill.medium,.pill.warn{background:#4a330f;color:#ffe1a0}.pill.low,.pill.blue{background:#17243c;color:#cadcff}.pill.good{background:#143420;color:#bff3c7}
+.table-scroll{overflow:auto;max-height:620px;scrollbar-color:var(--color-border-strong) var(--color-surface-muted)}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:820px;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #213034;vertical-align:middle;white-space:nowrap}tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}tbody tr:hover td{background:rgba(122,167,255,.055)}th{position:sticky;top:0;z-index:3;background:#0f171a;color:#c4d0cc;font-size:12px;text-transform:uppercase;letter-spacing:.04em}th.sortable{padding:0}th button{all:unset;cursor:pointer;display:block;width:100%;box-sizing:border-box;padding:8px 10px}th button:focus-visible{outline:2px solid var(--color-info);outline-offset:-2px}th[aria-sort]{color:var(--text)}.sort-arrow{display:inline-block;margin-left:5px;color:var(--accent);font-size:10px}td.num,th.num{text-align:right}th.sticky-col,td.sticky-col{position:sticky;left:0}th.sticky-col{z-index:5;background:#0f171a}td.sticky-col{z-index:1;background:var(--color-surface)}tbody tr:nth-child(even) td.sticky-col{background:#11181c}tbody tr:hover td.sticky-col{background:#172126}th.pin-edge,td.pin-edge{border-right:1px solid transparent}.is-scrolled-x th.pin-edge,.is-scrolled-x td.pin-edge{border-right-color:var(--color-border-strong)}.small-table table{min-width:620px}.wide-table table{min-width:1120px}.compact-table table,.fit-table table{min-width:100%;table-layout:auto}.col-compact{width:1%;max-width:96px}.empty{padding:18px;color:var(--muted)}
+.risk-row-itm td{background:rgba(255,111,120,.10)}.risk-row-near td{background:rgba(246,194,91,.09)}.risk-row-clear td{background:rgba(122,167,255,.07)}.risk-row-itm td.sticky-col{background:linear-gradient(rgba(255,111,120,.10),rgba(255,111,120,.10)),var(--color-surface)}.risk-row-near td.sticky-col{background:linear-gradient(rgba(246,194,91,.09),rgba(246,194,91,.09)),var(--color-surface)}.risk-row-clear td.sticky-col{background:linear-gradient(rgba(122,167,255,.07),rgba(122,167,255,.07)),var(--color-surface)}.risk-row-itm td:first-child{box-shadow:inset 3px 0 0 var(--risk-itm)}.risk-row-near td:first-child{box-shadow:inset 3px 0 0 var(--risk-near)}.risk-row-clear td:first-child{box-shadow:inset 3px 0 0 var(--risk-otm)}.risk-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}.dot-bad{background:var(--risk-itm)}.dot-warn{background:var(--risk-near)}.dot-good,.dot-blue{background:var(--risk-otm)}.segmented button.active .risk-dot{box-shadow:0 0 0 2px #061a18}
+.float-head{position:fixed;z-index:35;overflow:hidden;background:#0f171a;border-bottom:1px solid var(--color-border-strong);box-shadow:0 8px 16px rgba(0,0,0,.4)}.float-head[hidden]{display:none}.float-head table{min-width:0;width:auto;table-layout:fixed}.float-head th{position:relative;border-bottom:0}
+.risk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.risk-card{background:var(--color-surface-raised);border:1px solid var(--line2);border-radius:var(--radius-panel);padding:12px}.risk-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.risk-title{font-weight:900}.risk-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;color:var(--muted);font-size:12px}.pill{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;max-width:150px;min-height:22px;line-height:1.05;font-size:12px;border-radius:var(--radius-control);padding:4px 8px;background:#1c2a2d;color:var(--muted);font-weight:850;white-space:nowrap}.pill.high,.pill.bad{background:#3a171d;color:#ffc4c9}.pill.medium,.pill.warn{background:#4a330f;color:#ffe1a0}.pill.low,.pill.blue{background:#17243c;color:#cadcff}.pill.good{background:#143420;color:#bff3c7}
 .chart-card{background:var(--panel3);border:1px solid var(--line2);border-radius:8px;padding:14px;min-width:0;overflow:hidden}.chart-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.chart-title strong{font-size:16px}.chart-title .muted{font-size:13px}.chart-wrap{height:310px;position:relative;min-width:0}.chart-canvas{width:100%!important;height:100%!important}.chart{width:100%;height:285px;display:block}.chart text{fill:#c0cbc7;font-size:15px;font-weight:650}.axis{stroke:#42585d;stroke-width:1.2}.grid-line{stroke:#26383c;stroke-width:1}.line{fill:none;stroke-width:3}.bar-pos{fill:#66d37a}.bar-neg{fill:#ff7078}.bar-label{fill:#d7e3de;font-size:12px;font-weight:750}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.legend-item{font-size:13px;color:var(--muted);display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:11px;height:11px;border-radius:2px}.chart-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:#c0cbc7!important;font-size:13px;font-weight:700}.chart-legend span{display:inline-flex;align-items:center;gap:6px;color:#c0cbc7!important}.chart-legend i{display:inline-block;width:12px;height:12px;border-radius:2px}
 .note-list{display:grid;gap:8px}.note{border-left:3px solid var(--accent);background:var(--panel3);border-radius:8px;padding:10px 12px}.note strong{display:block}details{border:1px solid var(--line2);border-radius:8px;padding:12px;background:var(--panel3)}summary{cursor:pointer;font-weight:850}.footnote{font-size:12px;color:var(--muted);margin-top:8px}
 .waterfall{display:grid;gap:8px}.water-row{display:grid;grid-template-columns:210px minmax(140px,1fr) 112px;gap:10px;align-items:center}.bar-track{height:18px;border-radius:999px;background:#1b282b;overflow:hidden}.bar{height:100%;border-radius:999px}.bar.pos{background:var(--green)}.bar.neg{background:var(--red)}.bar.warn-text{background:var(--amber)}.bar.blue{background:var(--blue)}
 .option-controls{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:0 0 14px;padding:12px 14px;background:var(--panel3);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.18)}.option-status{color:var(--muted);font-size:13px}.action-btn{border:0;border-radius:8px;background:var(--accent);color:#06201b;font-weight:900;padding:9px 12px;cursor:pointer;white-space:nowrap}.action-btn:disabled{opacity:.55;cursor:wait}
-.candidate-card{padding:14px;border:1px solid var(--line2);border-radius:8px;background:#11191c}.candidate-action{font-size:18px;font-weight:900}.state-title{margin-top:12px;color:var(--muted);font-weight:850;text-transform:uppercase;font-size:11px;letter-spacing:.04em}.state-grid{display:flex;flex-wrap:wrap;gap:7px;margin:6px 0 12px}.candidate-mini{padding:7px 8px;border-radius:7px;background:#0d1417;min-width:118px;max-width:260px;flex:0 1 auto}.candidate-mini.wide{min-width:220px;max-width:520px}.candidate-mini b{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.candidate-mini span{display:block;overflow:hidden;text-overflow:ellipsis}
+.candidate-card{padding:14px;border:1px solid var(--line2);border-radius:8px;background:#11191c}.candidate-action{font-size:18px;font-weight:900}.state-title{margin-top:12px;color:var(--muted);font-weight:850;text-transform:uppercase;font-size:12px;letter-spacing:.04em}.state-grid{display:flex;flex-wrap:wrap;gap:7px;margin:6px 0 12px}.candidate-mini{padding:7px 8px;border-radius:7px;background:#0d1417;min-width:118px;max-width:260px;flex:0 1 auto}.candidate-mini.wide{min-width:220px;max-width:520px}.candidate-mini b{display:block;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.candidate-mini span{display:block;overflow:hidden;text-overflow:ellipsis}
 .loading-panel{min-height:220px;display:grid;place-items:center;text-align:center}.loading-panel h2{margin:0 0 8px}.loading-panel p{margin:0;color:var(--muted)}.retry-load{margin-top:14px}
 .view-updating{position:fixed;right:18px;bottom:18px;z-index:90;background:#11201d;border:1px solid #2d4b46;color:#c8fff6;border-radius:999px;padding:8px 12px;font-weight:850;box-shadow:0 10px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .12s ease,transform .12s ease;pointer-events:none}body.is-rendering .view-updating,body.is-loading .view-updating{opacity:1;transform:translateY(0)}
+@media(max-width:1419px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.nav button{padding:8px}}
 @media(max-width:1160px){.topbar-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero h1{font-size:28px}.brand small{display:none}.nav button{padding:8px}.actions .secondary,.actions .primary{padding:8px 10px}}
 @media(max-width:980px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.two-even,.three{grid-template-columns:1fr}.chart,.chart-wrap{height:280px}}
-@media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.range-panel{align-items:flex-start;flex-direction:column}.range-panel .segmented{width:100%}.metric-value{font-size:22px}.chart,.chart-wrap{height:260px}}
+@media(max-width:760px){.topbar-inner{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}.brand{width:100%;font-size:18px;line-height:1.1;overflow:visible}.brand small{display:none}.actions{order:2;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.actions form{margin:0;min-width:0}.actions .primary,.actions .secondary{width:100%;padding:8px 7px;font-size:14px}.nav{order:3;grid-column:auto;grid-row:auto;width:100%;justify-content:flex-start;gap:6px}.nav button{padding:8px 10px}.shell{padding:18px 12px 64px}.hero{margin-top:6px}.status-strip{justify-content:flex-start}.basis-control{justify-content:flex-start}.metrics{grid-template-columns:1fr}.toolbar input{min-width:100%;width:100%}.range-panel{align-items:flex-start;flex-direction:column}.range-panel .segmented{width:100%}.metric-value{font-size:22px}.chart,.chart-wrap{height:260px}.actions .primary,.actions .secondary{min-height:44px}.waterfall{gap:10px}.water-row{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}.water-row>strong{grid-column:1;grid-row:1}.water-row>.mono{grid-column:2;grid-row:1;text-align:right}.water-row>.bar-track{grid-column:1/-1;grid-row:2}.option-controls{flex-direction:column;align-items:stretch}.option-controls .action-btn{width:100%;text-align:center;padding:12px}.chart-title{flex-direction:column;align-items:flex-start;gap:2px}.table-scroll{max-height:none!important}th button{padding:12px 10px}.badge{white-space:normal}}
 </style>
 </head>
 <body>
@@ -115,7 +122,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
 <div class="topbar">
   <div class="topbar-inner">
     <div class="brand">Options ROI<small>IBKR dashboard</small></div>
-    <nav class="nav" id="nav"></nav>
+    <nav class="nav" id="nav" aria-label="Dashboard sections"></nav>
     <div class="actions">
       <span class="auth-user">__AUTH_USER__</span>
       <form id="refreshForm" method="post" action="/refresh"><button class="primary" type="submit">Refresh data</button></form>
@@ -124,6 +131,7 @@ h2{font-size:21px;margin:22px 0 10px}h3{font-size:16px;margin:0 0 10px}.section{
     </div>
   </div>
 </div>
+<div class="float-head" id="floatHead" aria-hidden="true" hidden></div>
 <main class="shell">
   <section class="hero">
     <div>
@@ -284,10 +292,13 @@ function sectionHead(title, note="", right=""){
 }
 function segmentedControl(control, options, selected){
   const labels = {all:"All", itm:"ITM", near:"Near", clear:"Clear", puts:"Puts", calls:"Calls"};
-  return `<div class="segmented" data-open-control="${control}">${options.map(o => `<button type="button" data-value="${safe(o)}" class="${o === selected ? "active" : ""}">${safe(labels[o] || o)}</button>`).join("")}</div>`;
+  // The risk filter doubles as the key for the row dots in Open option shorts.
+  const dots = control === "risk" ? {itm:"dot-bad", near:"dot-warn", clear:"dot-blue"} : {};
+  const groupLabel = control === "risk" ? "Filter by risk" : "Filter by option type";
+  return `<div class="segmented" data-open-control="${control}" role="group" aria-label="${groupLabel}">${options.map(o => `<button type="button" data-value="${safe(o)}" class="${o === selected ? "active" : ""}" aria-pressed="${o === selected}">${dots[o] ? `<span class="risk-dot ${dots[o]}" aria-hidden="true"></span>` : ""}${safe(labels[o] || o)}</button>`).join("")}</div>`;
 }
 function rangePicker(){
-  return `<div class="range-panel"><div class="control-label">Period</div><div class="segmented rangeControl">${rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}">${safe(o)}</button>`).join("")}</div></div>`;
+  return `<div class="range-panel"><div class="control-label">Period</div><div class="segmented rangeControl" role="group" aria-label="Period">${rangeOptions.map(o => `<button type="button" data-value="${safe(o)}" class="${o === appState.range ? "active" : ""}" aria-pressed="${o === appState.range}">${safe(o)}</button>`).join("")}</div></div>`;
 }
 function updateUrlState(){
   const url = new URL(window.location.href);
@@ -357,7 +368,7 @@ function renderBasisControl(){
     return;
   }
   const include = appState.includeUnrealized;
-  target.innerHTML = `<div class="segmented" data-basis-control><button type="button" data-value="1" class="${include ? "active" : ""}">With unrealized</button><button type="button" data-value="0" class="${!include ? "active" : ""}">Realized only</button></div>`;
+  target.innerHTML = `<div class="segmented" data-basis-control role="group" aria-label="Display basis"><button type="button" data-value="1" class="${include ? "active" : ""}" aria-pressed="${include}">With unrealized</button><button type="button" data-value="0" class="${!include ? "active" : ""}" aria-pressed="${!include}">Realized only</button></div>`;
 }
 function currentSnapshot(){
   const snapshots = data.views?.snapshots || {};
@@ -391,7 +402,8 @@ function rowRiskClass(row){
 }
 function dot(row){
   const tone = riskTone(row);
-  return `<span class="risk-dot ${tone === "bad" ? "dot-bad" : tone === "warn" ? "dot-warn" : tone === "blue" ? "dot-blue" : "dot-good"}"></span>`;
+  const label = tone === "bad" ? "ITM" : tone === "warn" ? "Near" : "Clear";
+  return `<span class="risk-dot ${tone === "bad" ? "dot-bad" : tone === "warn" ? "dot-warn" : tone === "blue" ? "dot-blue" : "dot-good"}" role="img" aria-label="${label}" title="${label}"></span>`;
 }
 function compareValues(a,b){
   const na = numeric(a), nb = numeric(b);
@@ -415,9 +427,18 @@ function dataTable(tableId, rows, columns, opts={}){
   const tableRows = sortedRows(tableId, rows || [], columns);
   const title = opts.title ? `<div class="table-title"><div><strong>${safe(opts.title)}</strong>${opts.subtitle ? `<span>${safe(opts.subtitle)}</span>` : ""}</div>${opts.count === false ? "" : badge(`${fmtNum(tableRows.length)} rows`,"blue")}</div>` : "";
   if (!tableRows.length) return `<div class="table-card ${opts.small ? "small-table" : ""}">${title}<div class="empty">No rows.</div></div>`;
+  // Pinned columns keep the row label in view while a wide table scrolls sideways:
+  // opts.pin when given, else the ticker column, else the first column.
+  const pinKeys = opts.pin || [(columns.find(c => c.key === "ticker") || columns[0] || {}).key];
+  const pinClass = key => !pinKeys.includes(key) ? "" : pinKeys.length === 1 ? "sticky-col pin-edge" : "sticky-col";
+  const pinAttr = key => pinKeys.includes(key) ? ` data-pin="${pinKeys.indexOf(key)}"` : "";
+  const sortState = appState.sort[tableId] || {};
   const head = `<tr>${columns.map(c => {
-    const thClass = [c.num ? "num" : "", c.compact ? "col-compact" : "", c.key === "ticker" ? "sticky-col" : "", c.thClass || ""].filter(Boolean).join(" ");
-    return `<th class="${thClass}"><button type="button" onclick="sortTable('${tableId}','${c.key}')">${safe(c.label)}</button></th>`;
+    const sorted = sortState.key === c.key;
+    const descending = sortState.dir === "desc";
+    const thClass = ["sortable", c.num ? "num" : "", c.compact ? "col-compact" : "", pinClass(c.key), c.thClass || ""].filter(Boolean).join(" ");
+    const arrow = sorted ? `<span class="sort-arrow" aria-hidden="true">${descending ? "▼" : "▲"}</span>` : "";
+    return `<th class="${thClass}"${pinAttr(c.key)}${sorted ? ` aria-sort="${descending ? "descending" : "ascending"}"` : ""}><button type="button" data-sort-key="${safe(c.key)}" onclick="sortTable('${tableId}','${c.key}')">${safe(c.label)}${arrow}</button></th>`;
   }).join("")}</tr>`;
   const body = tableRows.map(row => `<tr class="${opts.rowClass ? opts.rowClass(row) : ""}">${columns.map(c => {
     const raw = c.value ? c.value(row) : get(row, c.key);
@@ -425,13 +446,15 @@ function dataTable(tableId, rows, columns, opts={}){
     const cellClass = [
       c.num ? "num" : "",
       c.compact ? "col-compact" : "",
-      c.key === "ticker" ? "sticky-col" : "",
+      pinClass(c.key),
       c.cellClass || "",
       c.className ? c.className(raw,row) : ""
     ].filter(Boolean).join(" ");
-    return `<td class="${cellClass}">${value}</td>`;
+    return `<td class="${cellClass}"${pinAttr(c.key)}>${value}</td>`;
   }).join("")}</tr>`).join("");
-  return `<div class="table-card ${opts.small ? "small-table" : ""} ${opts.wide ? "wide-table" : ""} ${opts.compact ? "compact-table" : ""}">${title}<div class="table-scroll" style="${opts.maxHeight ? `max-height:${opts.maxHeight}px` : ""}"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
+  // Tables with up to four columns fit their container instead of forcing a sideways scroll.
+  const fit = columns.length <= 4 ? "fit-table" : "";
+  return `<div class="table-card ${opts.small ? "small-table" : ""} ${opts.wide ? "wide-table" : ""} ${opts.compact ? "compact-table" : ""} ${fit}" data-table="${safe(tableId)}">${title}<div class="table-scroll" style="${opts.maxHeight ? `max-height:${opts.maxHeight}px` : ""}"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
 }
 function sortTable(tableId,key){
   const current = appState.sort[tableId] || {};
@@ -484,7 +507,7 @@ function dateLabel(value, mode="auto"){
 function chartRegister(title, subtitle, config, footer=""){
   const id = `chart-${++chartSeq}`;
   pendingCharts.push({id, config});
-  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong>${subtitle ? `<span class="muted">${safe(subtitle)}</span>` : ""}</div><div class="chart-wrap"><canvas id="${id}" class="chart-canvas"></canvas></div>${footer}</div>`;
+  return `<div class="chart-card"><div class="chart-title"><strong>${safe(title)}</strong>${subtitle ? `<span class="muted">${safe(subtitle)}</span>` : ""}</div><div class="chart-wrap"><canvas id="${id}" class="chart-canvas" role="img" aria-label="${safe(subtitle ? `${title}. ${subtitle}` : title)}"></canvas></div>${footer}</div>`;
 }
 function chartCommonOptions(valueFormatter){
   return {
@@ -779,7 +802,7 @@ function openShortToolbar(){
   return `<div class="toolbar">
     ${segmentedControl("risk",["all","itm","near","clear"],appState.openRisk)}
     ${segmentedControl("type",["all","puts","calls"],appState.openType)}
-    <input data-open-search value="${safe(appState.openSearch)}" placeholder="Filter ticker, strike, expiry">
+    <input data-open-search value="${safe(appState.openSearch)}" placeholder="Filter ticker, strike, expiry" aria-label="Filter open option shorts by ticker, strike or expiry">
   </div>`;
 }
 function riskPill(row){
@@ -896,7 +919,7 @@ function optionDataControls(){
   const status = ((decisionData().option_market_data || {}).status) || {};
   const notice = status.message ? `<div class="option-status">${safe(status.message)}</div>` : "";
   const dated = status.provider === "marketdata" ? `<div class="option-status mono"><strong>Quotes: ${safe(fmtDate(status.quote_date))}</strong> · ${fmtNum(status.credits_used)} / ${fmtNum(status.account_daily_limit)} daily credits used</div><div>Download for ${safe(fmtDate(status.latest_quote_date || status.quote_date))}: ${fmtNum(status.prepared_request_count ?? ((status.request_count || 0) - (status.missing_request_count || 0)))} / ${fmtNum(status.request_count)} selections ready${status.missing_request_count ? ` · ${fmtNum(status.missing_request_count)} pending` : ""}</div>` : "";
-  return `<div class="option-controls"><div><div class="metric-label">Option data</div>${dated}<div class="option-status mono">${optionDataStatusText()}</div>${notice}</div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
+  return `<div class="option-controls"><div><div class="metric-label">Option data</div>${dated}<div class="option-status mono">${optionDataStatusText()}</div>${notice}<div class="error" id="optionFetchError" role="alert"></div></div><button id="fetchOptionData" class="action-btn" type="button">Fetch option data</button></div>`;
 }
 function decisionActionRows(){
   return dataTable("decision-actions", decisionData().ticker_situations || [], [
@@ -930,13 +953,14 @@ function currentCandidateState(s){
     ${mini("Open options", open || `${fmtNum(s.open_contracts || 0)} contracts`, "", true)}
   </div>`;
 }
-function candidateTable(rows, status={}){
+function candidateTable(rows, status={}, tableKey=""){
   if (!rows || !rows.length) {
     const msg = status.message || "No actionable provider contract found for this ticker/action.";
     return `<div class="panel empty" style="margin:8px 0 0">${safe(msg)}${status.near_miss_message ? `<br>${safe(status.near_miss_message)}` : ""}</div>`;
   }
   const nearMiss = status.near_miss_message ? `<div class="note" style="margin:8px 0 0">${safe(status.near_miss_message)}</div>` : "";
-  return nearMiss + dataTable("candidate-" + Math.random().toString(36).slice(2), rows || [], [
+  const tableId = "candidate-" + String(tableKey).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return nearMiss + dataTable(tableId, rows || [], [
     {key:"action",label:"Action"},
     {key:"contract_count",label:"Contracts",format:v=>numeric(v)===null?"n/a":fmtNum(v),num:true},
     {key:"strike",label:"Strike",format:v=>numeric(v)===null?"n/a":fmtMoney(v,2),num:true},
@@ -961,11 +985,11 @@ function candidateTable(rows, status={}){
     {key:"price_source",label:"Price source"},
     {key:"score",label:"Score",num:true},
     {key:"score_reason",label:"Score reason"}
-  ], {wide:true, compact:true, count:false});
+  ], {wide:true, compact:true, count:false, pin:["action","strike","expiry"]});
 }
 function candidateCard(row){
   const rows = row.candidates || [row.recommended, ...(row.alternatives || [])].filter(Boolean);
-  return `<div class="candidate-card"><div><div class="candidate-action">${safe(row.ticker)} · ${safe(row.category)}</div><div class="sub">${safe(row.objective)}</div></div>${currentCandidateState(row.current_state || {})}${candidateTable(rows, row.candidate_status || {})}</div>`;
+  return `<div class="candidate-card"><div><div class="candidate-action">${safe(row.ticker)} · ${safe(row.category)}</div><div class="sub">${safe(row.objective)}</div></div>${currentCandidateState(row.current_state || {})}${candidateTable(rows, row.candidate_status || {}, `${row.ticker}-${row.category}`)}</div>`;
 }
 function decisionCandidates(){
   const rows = decisionData().recommendation_candidates || [];
@@ -1475,7 +1499,7 @@ function renderTickers(){
   const yearly = (data.tables.per_ticker_yearly || []).filter(r => (appState.tickerYear === "all" || String(r.year) === appState.tickerYear) && (!q || String(r.ticker || "").toUpperCase().includes(q)));
   $("tickers").innerHTML = `
     ${sectionHead("Per-Ticker P&L", "Ticker totals include realized options, realized stock, dividends, unrealized snapshot, and total P&L.")}
-    <div class="toolbar"><input id="tickerSearch" value="${safe(appState.tickerSearch)}" placeholder="Filter ticker"></div>
+    <div class="toolbar"><input id="tickerSearch" value="${safe(appState.tickerSearch)}" placeholder="Filter ticker" aria-label="Filter tickers"></div>
     ${dataTable("ticker-totals", filtered, [
       {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
       {key:"realized_options_pnl",label:"Options P&L",format:fmtMoney,num:true,className:cls},
@@ -1488,7 +1512,7 @@ function renderTickers(){
       {key:"open_option_count",label:"Open options",num:true,compact:true},
       {key:"inventory_share_count",label:"Shares",num:true,compact:true}
     ], {title:"Ticker totals", subtitle:"Cumulative ticker results.", compact:true})}
-    ${sectionHead("Per-Year Ticker Realized P&L", "Year filter applies to this table.", `<select id="tickerYear">${years.map(y=>`<option value="${safe(y)}" ${y===appState.tickerYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
+    ${sectionHead("Per-Year Ticker Realized P&L", "Year filter applies to this table.", `<select id="tickerYear" aria-label="Year for the per-year ticker table">${years.map(y=>`<option value="${safe(y)}" ${y===appState.tickerYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
     ${dataTable("ticker-yearly", yearly, [
       {key:"year",label:"Year",num:true,compact:true},
       {key:"ticker",label:"Ticker",format:v=>`<strong>${safe(v)}</strong>`,compact:true},
@@ -1569,7 +1593,7 @@ function renderPerformance(){
       {key:"Return 1Y",label:"1Y",format:fmtPct,num:true},
       {key:"Return SI",label:"Since inception",format:fmtPct,num:true}
     ], {title:"Key performance metrics versus benchmarks", wide:true})}
-    ${sectionHead("Expectancy Analysis", "", `<select id="expectancyYear">${expectancyYears.map(y=>`<option value="${safe(y)}" ${y===appState.expectancyYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
+    ${sectionHead("Expectancy Analysis", "", `<select id="expectancyYear" aria-label="Year for the expectancy analysis">${expectancyYears.map(y=>`<option value="${safe(y)}" ${y===appState.expectancyYear?"selected":""}>${safe(y==="all"?"All years":y)}</option>`).join("")}</select>`)}
     <div class="grid two-even">
       ${dataTable("expectancy", data.tables.expectancy || [], [
         {key:"Category",label:"Category"},
@@ -1685,12 +1709,13 @@ function renderSettings(){
           </label>
           <button class="primary" type="submit">Apply</button>
         </form>
+        <div class="error" id="targetSettingsError" role="alert"></div>
         <div class="footnote">Current target band: ${safe(fmtPct(targetFloor()))}-${safe(fmtPct(targetReturn()))}. Negative is red; 0-${safe(fmtPct(targetFloor()))} is yellow; above ${safe(fmtPct(targetReturn()))} is blue.</div>
       </div>
       <div class="panel">
         <h3>Display Basis</h3>
         <p class="muted">The realized/unrealized switch is used only on Dashboard where the top-level snapshot changes meaning.</p>
-        <div class="segmented" data-basis-control><button type="button" data-value="1" class="${appState.includeUnrealized ? "active" : ""}">With unrealized</button><button type="button" data-value="0" class="${!appState.includeUnrealized ? "active" : ""}">Realized only</button></div>
+        <div class="segmented" data-basis-control role="group" aria-label="Display basis"><button type="button" data-value="1" class="${appState.includeUnrealized ? "active" : ""}" aria-pressed="${appState.includeUnrealized}">With unrealized</button><button type="button" data-value="0" class="${!appState.includeUnrealized ? "active" : ""}" aria-pressed="${!appState.includeUnrealized}">Realized only</button></div>
       </div>
     </div>
   `;
@@ -1821,7 +1846,8 @@ function bindControls(){
       updateUrlState();
       await loadDashboardData();
     } catch (err) {
-      alert(`Could not save target band: ${(err && err.message) || err}`);
+      const saveError = $("targetSettingsError");
+      if (saveError) saveError.textContent = `Could not save target band: ${(err && err.message) || err}`;
     } finally {
       if (button) {
         button.disabled = false;
@@ -1849,7 +1875,8 @@ function bindControls(){
       } catch (err) {
         optionFetch.disabled = false;
         optionFetch.textContent = "Fetch option data";
-        alert(err && err.message || err);
+        const fetchError = $("optionFetchError");
+        if (fetchError) fetchError.textContent = `Could not fetch option data: ${(err && err.message) || err}`;
       } finally {
         setUpdating(false);
       }
@@ -1867,6 +1894,144 @@ const sectionRenderers = {
   diagnostics: renderDiagnostics,
   methodology: renderMethodology
 };
+function focusKey(el){
+  // Identifies a control by what it does, so focus can return to it after its section is redrawn.
+  if (!el || !el.closest || !el.closest(".section")) return "";
+  const table = el.closest("[data-table]"), control = el.closest("[data-open-control]");
+  return [el.tagName, el.id, el.name || "", el.dataset.value || "", el.dataset.sortKey || "", table ? table.dataset.table : "", control ? control.dataset.openControl : "", el.parentElement ? el.parentElement.className : ""].join("|");
+}
+function captureViewState(){
+  // Remember keyboard focus and each table's scroll position before a redraw.
+  const focused = document.activeElement;
+  const state = {focus: focused && !["INPUT","TEXTAREA"].includes(focused.tagName) ? focusKey(focused) : "", scroll: {}};
+  document.querySelectorAll(".section.active [data-table] > .table-scroll").forEach(scroll => {
+    state.scroll[scroll.parentElement.dataset.table] = [scroll.scrollLeft, scroll.scrollTop];
+  });
+  return state;
+}
+function restoreViewState(state){
+  const scope = document.querySelector(".section.active");
+  if (!scope || !state) return;
+  scope.querySelectorAll("[data-table] > .table-scroll").forEach(scroll => {
+    const saved = state.scroll[scroll.parentElement.dataset.table];
+    if (!saved) return;
+    scroll.scrollLeft = saved[0];
+    scroll.scrollTop = saved[1];
+    scroll.classList.toggle("is-scrolled-x", scroll.scrollLeft > 0);
+  });
+  if (state.focus && (!document.activeElement || document.activeElement === document.body)) {
+    const next = [...scope.querySelectorAll("button,select,a[href]")].find(el => focusKey(el) === state.focus);
+    if (next) next.focus({preventScroll:true});
+  }
+}
+function layoutPinnedColumns(){
+  // Tables that pin several columns need each one offset by the widths before it.
+  // On phones only the first pinned column stays in place, to leave room for the data.
+  const phone = window.matchMedia("(max-width:760px)").matches;
+  document.querySelectorAll(".section.active table").forEach(table => {
+    const heads = [...table.querySelectorAll("thead th[data-pin]")].sort((a,b) => a.cellIndex - b.cellIndex);
+    if (heads.length < 2) return;
+    const pinned = phone ? heads.slice(0, 1) : heads;
+    let left = 0;
+    heads.forEach(th => {
+      const on = pinned.includes(th), last = th === pinned[pinned.length - 1];
+      const width = th.getBoundingClientRect().width;
+      table.querySelectorAll(`tr > :nth-child(${th.cellIndex + 1})`).forEach(cell => {
+        cell.style.position = on ? "" : "static";
+        cell.style.left = on ? `${left}px` : "";
+        cell.classList.toggle("pin-edge", on && last);
+      });
+      if (on) left += width;
+    });
+  });
+}
+let floatHeadSource = null;
+let floatHeadFrame = 0;
+function updateFloatHead(){
+  // On phones tables scroll with the page, so a copy of the column headings is held
+  // under the top bar while a long table passes beneath it.
+  const bar = $("floatHead");
+  if (!bar) return;
+  const topbar = document.querySelector(".topbar");
+  const limit = topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0;
+  let source = null;
+  if (window.matchMedia("(max-width:760px)").matches) {
+    for (const scroll of document.querySelectorAll(".section.active .table-scroll")) {
+      const head = scroll.querySelector("thead");
+      if (!head) continue;
+      const rect = scroll.getBoundingClientRect();
+      if (rect.top < limit && rect.bottom - head.offsetHeight * 2 > limit) { source = scroll; break; }
+    }
+  }
+  if (!source) {
+    if (floatHeadSource) bar.innerHTML = "";
+    floatHeadSource = null;
+    bar.hidden = true;
+    return;
+  }
+  if (floatHeadSource !== source) {
+    floatHeadSource = source;
+    const table = source.querySelector("table"), head = table.querySelector("thead");
+    const widths = [...head.querySelectorAll("th")].map(th => th.getBoundingClientRect().width);
+    const clone = head.cloneNode(true);
+    [...clone.querySelectorAll("th")].forEach((th, i) => {
+      th.style.width = `${widths[i]}px`;
+      th.style.position = "relative";
+      th.style.left = "";
+    });
+    const copy = document.createElement("table");
+    copy.style.width = `${table.getBoundingClientRect().width}px`;
+    copy.appendChild(clone);
+    bar.innerHTML = "";
+    bar.appendChild(copy);
+  }
+  const rect = source.getBoundingClientRect();
+  bar.hidden = false;
+  bar.style.top = `${limit}px`;
+  bar.style.left = `${rect.left}px`;
+  bar.style.width = `${rect.width}px`;
+  bar.classList.toggle("is-scrolled-x", source.scrollLeft > 0);
+  const copy = bar.firstChild;
+  copy.style.transform = `translateX(${-source.scrollLeft}px)`;
+  copy.querySelectorAll("th.sticky-col").forEach(th => {
+    const held = !th.dataset.pin || th.dataset.pin === "0";
+    th.style.transform = held ? `translateX(${source.scrollLeft}px)` : "";
+  });
+}
+function scheduleFloatHead(){
+  if (floatHeadFrame) return;
+  floatHeadFrame = window.requestAnimationFrame(() => { floatHeadFrame = 0; updateFloatHead(); });
+}
+function updateNavHint(){
+  // Shows a fade and an arrow on the side where more tabs are waiting.
+  const inner = document.querySelector(".topbar-inner"), nav = $("nav");
+  if (!inner || !nav) return;
+  const max = nav.scrollWidth - nav.clientWidth;
+  inner.classList.toggle("nav-more-left", nav.scrollLeft > 4);
+  inner.classList.toggle("nav-more-right", nav.scrollLeft < max - 4);
+}
+function showActiveTab(){
+  const nav = $("nav"), active = nav && nav.querySelector("button.active");
+  if (!active) return;
+  if (nav.scrollWidth > nav.clientWidth + 1) {
+    nav.scrollLeft = Math.max(0, active.offsetLeft - nav.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2);
+  }
+  updateNavHint();
+}
+function fitTopbar(){
+  // Gives the tabs their own row whenever they do not fit beside the buttons. When the
+  // tabs sit on their own row, the name and buttons scroll away and only the tabs stay pinned.
+  const bar = document.querySelector(".topbar"), inner = document.querySelector(".topbar-inner"), nav = $("nav");
+  if (!bar || !inner || !nav) return;
+  inner.classList.remove("nav-own-row");
+  // Below 1420px the stylesheet already stacks the tabs; this covers wider screens with wider fonts.
+  if (window.matchMedia("(min-width:1420px)").matches && nav.scrollWidth > nav.clientWidth + 1) inner.classList.add("nav-own-row");
+  const rowsAbove = nav.offsetTop - 4;
+  bar.style.top = rowsAbove > 16 ? `-${rowsAbove}px` : "";
+  // A solid background keeps page content from showing through the pinned tab row.
+  bar.classList.toggle("tabs-pinned", rowsAbove > 16);
+  showActiveTab();
+}
 function setUpdating(isUpdating, message="Updating view..."){
   const indicator = $("viewUpdating");
   if (indicator) indicator.textContent = message;
@@ -1884,9 +2049,14 @@ function scheduleRender(){
 function render(){
   const renderStarted = performance.now();
   pendingCharts = [];
+  const viewState = captureViewState();
   try {
     renderHeader();
-    [...$("nav").children].forEach(b => b.classList.toggle("active", b.dataset.section === appState.active));
+    [...$("nav").children].forEach(b => {
+      const current = b.dataset.section === appState.active;
+      b.classList.toggle("active", current);
+      if (current) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
     if (!dashboardLoaded) {
       const target = $(appState.active) || $("dashboard");
       if (target) target.innerHTML = loadingPanel();
@@ -1900,6 +2070,10 @@ function render(){
     document.querySelectorAll(".section").forEach(s => s.classList.toggle("active", s.id === appState.active));
     bindControls();
     initCharts();
+    layoutPinnedColumns();
+    restoreViewState(viewState);
+    floatHeadSource = null;
+    updateFloatHead();
   } catch (err) {
     const target = $(appState.active);
     if (target) {
@@ -1922,13 +2096,25 @@ function renderSection(id, fn){
   }
 }
 function initNav(){
-  $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}">${safe(label)}</button>`).join("");
+  $("nav").innerHTML = sections.map(([id,label]) => `<button type="button" data-section="${id}" class="${id === appState.active ? "active" : ""}"${id === appState.active ? ` aria-current="page"` : ""}>${safe(label)}</button>`).join("");
   [...$("nav").children].forEach(btn => btn.addEventListener("click", () => {
     appState.active = btn.dataset.section;
     updateUrlState();
     render();
     window.scrollTo({top:0,behavior:"instant"});
+    showActiveTab();
   }));
+  $("nav").addEventListener("scroll", updateNavHint, {passive:true});
+  window.addEventListener("resize", () => { fitTopbar(); layoutPinnedColumns(); floatHeadSource = null; updateFloatHead(); });
+  window.addEventListener("scroll", scheduleFloatHead, {passive:true});
+  // Scroll events do not bubble, so table scrolling is observed in the capture phase.
+  document.addEventListener("scroll", (event) => {
+    const el = event.target;
+    if (!el || !el.classList || !el.classList.contains("table-scroll")) return;
+    el.classList.toggle("is-scrolled-x", el.scrollLeft > 0);
+    if (el === floatHeadSource) updateFloatHead();
+  }, true);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitTopbar);
 }
 const initialSection = new URLSearchParams(window.location.search).get("section");
 if (initialSection === "positions") {
@@ -1937,6 +2123,7 @@ if (initialSection === "positions") {
   appState.active = initialSection;
 }
 initNav();
+fitTopbar();
 render();
 loadDashboardData();
 </script>
