@@ -23,8 +23,10 @@ steps:
   - id: PushTestedImage
     name: gcr.io/cloud-builders/docker
     args: [push, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}']
+  # Fixed version on purpose: the floating `slim` tag dropped the system python3
+  # from 592.0.0 on, which stopped this step before the deploy script could run.
   - id: DeployAndVerify
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:590.0.0-slim
     entrypoint: python3
     args: [scripts/deploy_verified.py, --project, '${_AR_PROJECT_ID}', --region, '${_DEPLOY_REGION}', --image, '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/options-portfolio-performance-analysis/${_IMAGE_NAME}:${COMMIT_SHA}', --commit, '${COMMIT_SHA}']
 options:

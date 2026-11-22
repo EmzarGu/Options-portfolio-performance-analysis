@@ -1,5 +1,7 @@
 """A failed candidate must not move traffic; partial promotions roll back."""
+import re
 import sys
+from pathlib import Path
 
 import pytest
 from scripts import deploy_verified as deploy
@@ -70,3 +72,20 @@ def test_release_order_and_rollback(monkeypatch, tmp_path, fail_at):
         assert set(deploy.JOBS) == promoted
         first_promotion = next(i for i, x in enumerate(calls) if any("-new=100" in a for a in x))
         assert sum(x[:3] == ("run", "revisions", "describe") for x in calls[:first_promotion]) == 2
+
+
+CLOUDBUILD = Path(__file__).resolve().parents[1] / "cloudbuild.yaml"
+
+
+@pytest.mark.skipif(not CLOUDBUILD.exists(), reason="cloudbuild.yaml is not copied into the test image")
+def test_release_step_uses_a_fixed_tool_image_that_can_start_the_script():
+    """A floating tool image once lost python3 and stopped the release step."""
+    text = CLOUDBUILD.read_text()
+    step = text[text.index("- id: DeployAndVerify"):]
+    image = re.search(r"name:\s*(\S+)", step).group(1)
+    assert re.fullmatch(r"gcr\.io/google\.com/cloudsdktool/cloud-sdk:\d+\.\d+\.\d+-slim", image), image
+    version = tuple(int(part) for part in image.rsplit(":", 1)[1].removesuffix("-slim").split("."))
+    # From 592.0.0 the slim image no longer has python3 on PATH; a newer image
+    # needs the entrypoint changed together with the version.
+    if "entrypoint: python3" in step:
+        assert version < (592, 0, 0), image
